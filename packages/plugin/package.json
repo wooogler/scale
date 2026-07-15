@@ -1,0 +1,6 @@
+{
+  "name": "@scale/plugin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SCALE Claude Code plugin bundle (hooks + skills). Static — no build step; hook scripts are plain .mjs Node scripts."
+}

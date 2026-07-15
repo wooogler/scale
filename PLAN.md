@@ -1,0 +1,262 @@
+# SCALE — Implementation Plan
+
+**S**caffolded **C**overage-**A**ware **L**earning **E**ngine.
+A system that helps a junior engineer build genuine comprehension of a codebase while working on it with Claude Code, guided by a coverage memory built by a high-capability LLM (Mode B) and visualized as a territory map.
+
+Research prototype targeting UIST. Study logging / condition assignment infra is **out of scope for now** (deferred), but **all four intervention conditions must be fully functional** and switchable by config.
+
+---
+
+## 1. Principles
+
+1. **Learning-first.** The system exists to improve the junior engineer's comprehension of the codebase. Every mechanic must map to a comprehension construct. The strategy-game metaphor (territories, conquest) is a *UI skin only* — schemas and code use neutral terms (`component`, `coverage`, `staleness`), never game terms.
+2. **Minimal interruption.** The junior's Claude Code flow is sacred. In-flow interventions fire only at natural boundaries, under a strict deterministic budget, and are always deferrable. All passive signal collection is async and adds no perceptible latency.
+3. **Files, not databases.** The coverage memory is markdown in the target repo (git-versioned). Per-user state is JSON/JSONL under `~/.scale/`. No DB, no hosted server; `scale serve` is a local process.
+4. **Grounded and stale-aware.** Every component anchors to source files at a git SHA. Code drift is detected and surfaces as staleness ("rebellion") requiring re-validation.
+5. **Stock Claude Code.** Junior and senior both use unmodified Claude Code; SCALE ships as one plugin (hooks + skills) plus a CLI. Ecological validity for the study, one-step install for participants.
+
+## 2. Terminology
+
+| Schema / code (canonical) | Map UI skin (English) | Map UI skin (Korean) |
+|---|---|---|
+| component | castle / territory | 성 / 영지 |
+| top-level feature group | province | 주(州) |
+| coverage state: `fog` | unexplored (fog) | 미탐사 |
+| coverage state: `explored` | scouted | 정찰됨 |
+| coverage state: `validated` | conquered | 정복 |
+| coverage state: `stale` | rebellion | 반란 |
+| dims: structure / concepts / rationale | development stats | 내정 3스탯 |
+| weighted total coverage | unification progress | 천하통일 진행도 |
+
+Koei Sangokushi is inspiration, not spec. v1 mechanics = fog / conquest / 3 dev stats / rebellion / importance-sized nodes. No officers, no battles animation, no AI factions, no leaderboards.
+
+## 3. Architecture
+
+```mermaid
+flowchart LR
+    subgraph pilot [Pilot repo]
+        CODE[source code]
+        MEM[.scale/ markdown papers + map.json]
+    end
+    subgraph cc [Claude Code + SCALE plugin]
+        HOOKS[hooks: capture + gate]
+        SKILLS[skills: scale-map builder, scale-tutor]
+    end
+    CLI[scale CLI — state engine]
+    subgraph state [~/.scale/repo-id/]
+        COV[coverage.json]
+        EVID[evidence.jsonl]
+        QUESTS[quests.json]
+        CFG[config.json — condition]
+    end
+    WEB[scale serve → map web app]
+
+    SKILLS -- Mode B build/sync --> MEM
+    CODE --- MEM
+    HOOKS --> CLI
+    SKILLS -- record results --> CLI
+    CLI <--> state
+    CLI -- reads --> MEM
+    WEB -- reads/writes via CLI core --> state
+    WEB -- reads --> MEM
+```
+
+Monorepo (pnpm workspaces, TypeScript everywhere):
+
+```
+scale/
+├── PLAN.md
+├── packages/
+│   ├── core/        # shared: schema types (zod), state engine, coverage model,
+│   │                #   file→component index, layout, drift detection
+│   ├── cli/         # `scale` CLI wrapping core (also used by hooks)
+│   ├── web/         # React + Vite + SVG map app (served by `scale serve`)
+│   └── plugin/      # Claude Code plugin: hooks.json + hook scripts,
+│                    #   skills (scale-map, scale-tutor), commands
+└── pilot/           # pinned fork/clone of the pilot repo (fixed SHA)
+```
+
+Single language (TS) so CLI, hooks, and web share the schema types in `core`.
+
+## 4. Coverage memory (`.scale/` in the pilot repo)
+
+Derived from cluedoc (MIT) — capability tree of markdown "papers", one folder per component — with SCALE extensions.
+
+### 4.1 Paper format
+
+Layout: `.scale/README.md` (root) + `<province>/README.md` + `<province>/<component>/README.md`. Target **20–60 components** across **5–9 provinces**.
+
+Frontmatter (extends cluedoc's `title`/`sources`):
+
+```yaml
+---
+id: session-management        # stable slug — coverage key; NEVER renamed
+title: Session Management
+sources:                      # file-granularity code anchors
+  - src/server/auth/sessions.ts
+  - src/server/middleware/session.ts
+concepts:                     # named, quizzable concept units
+  - id: server-side-sessions
+    name: Server-side session store, cookie carries only the id
+  - id: session-rotation
+    name: Rotation on privilege change
+rationale:
+  - decision: Sessions are server-side; the cookie is an opaque id
+    why: Revocation must be immediate for shared-document access control
+    alternatives: JWT-in-cookie (rejected — revocation complexity)
+    provenance: inferred      # inferred | prompt:<ref> | interview:<ref>
+---
+```
+
+Body sections (cluedoc's six + one): hero visual (mermaid) → Abstract → Introduction → Related Work (cross-paper links = the graph) → Description → **Rationale** (new; prose form of the frontmatter entries) → Conclusion. cluedoc's prose rules kept: no code symbols/paths/snippets in the body; anchoring lives in `sources` only.
+
+### 4.2 `map.json` — frozen spatial layout
+
+Spatial stability is the point of a map (survey knowledge / method-of-loci): layout is computed **once** at build time and frozen. New components are placed incrementally near their neighbors without moving existing nodes.
+
+```json
+{
+  "version": 1,
+  "builtFromSha": "abc1234",
+  "provinces": [{ "id": "auth", "name": "Authentication" }],
+  "nodes": [{ "id": "session-management", "province": "auth",
+              "x": 0.62, "y": 0.31, "importance": 0.8 }],
+  "edges": [{ "from": "session-management", "to": "sharing", "kind": "reference" }]
+}
+```
+
+- Layout: d3-force with province clustering, run offline by `scale map layout`, coordinates normalized 0–1.
+- `importance`: dependency-graph centrality × git churn (drives node size and unification weighting).
+- `edges.kind`: `hierarchy` (parent/child) | `reference` (Related Work links).
+- Generated artifacts: `map.json` committed; `index.json` (file→component reverse index from all `sources`) regenerated on demand, gitignored.
+
+### 4.3 Mode B builder — `scale-map` skill (senior side, delegated to Opus)
+
+A Claude Code skill run once in the pilot repo (with Opus or better), then in sync mode after changes:
+
+1. **Survey** — propose provinces (5–9) and component list (20–60) with `sources`, as a plan for approval.
+2. **Write** — subagent fan-out per province; write every paper (structure/concepts prose + hero visuals + *inferred* rationale, `provenance: inferred`).
+3. **Link** — Related Work cross-links; verify no dead links.
+4. **Layout** — run `scale map layout` (deterministic, CLI) to freeze coordinates + importance.
+5. **Sync mode** (later runs) — given a diff, update affected papers up/down the tree (cluedoc's progressive model); `scale map drift` flags components whose `sources` changed since `builtFromSha`.
+
+Senior-side interviewer (rationale Q&A to replace `inferred` provenance) is **deferred**; schema already carries provenance so it slots in later.
+
+## 5. Per-user state (`~/.scale/<repo-id>/`)
+
+Single local user for the prototype (multi-user later = separate state dirs).
+
+- **`coverage.json`** — per component: `state` (fog|explored|validated|stale), `dims {structure, concepts, rationale}` ∈ [0,1], `lastValidatedSha`, `loyalty` ∈ [0,1].
+- **`evidence.jsonl`** — append-only raw signals (kept raw so the coverage model can be re-fit later without data loss):
+  - `prompt` (component mentions extracted by keyword/slug match), `touch` (files edited → components via index), `diff_review` (proposal→execution latency per Edit), `paper_read` (opened in web), `quiz_result` / `socratic_result` (per-dim scores), `intervention` (shown/deferred/completed).
+- **`quests.json`** — pending web quests: `{id, componentId, modality, items, origin: session|rebellion|voluntary, status}`.
+- **`config.json`** — `condition: {timing: inflow|postsession, modality: quiz|socratic}`, `inflow.triggers` (§6.1), budgets/thresholds (all tunable), user label.
+
+### 5.1 Coverage model v1 (simple, config-tunable constants)
+
+- **Passive signals explore, never conquer.** `touch`/`prompt` → fog→explored, small structure credit (cap 0.3 from passive alone). `paper_read` → cap 0.4. Diff-review latency: logged only, not modeled in v1.
+- **Active validation conquers.** Quiz items are tagged with a dim; result updates that dim by EMA (`dim ← 0.7·dim + 0.3·score`). Socratic yields rubric scores per dim touched. `validated` when weighted dims ≥ 0.6 with ≥ 2 active validations; sets `lastValidatedSha`.
+- **Staleness.** `loyalty = 1 − min(1, churn(sources since lastValidatedSha) / size)`; recomputed by `scale map drift` (async at SessionStart, and on web refresh). Previously-validated component with loyalty < 0.5 → `stale` → re-validation quest.
+- **Unification progress** = Σ(importance × mean dims) / Σ(importance).
+
+## 6. Interventions — the 2×2, all four implemented
+
+Condition is read from `config.json`; each cell is fully functional.
+
+| | **Quiz** (lightweight, LingoQ-style) | **Socratic** (dialogic, comprehension-demanding) |
+|---|---|---|
+| **In-flow** (in Claude Code, at boundaries) | tutor skill asks 1–2 grounded MCQ/short items in chat | tutor skill runs a capped dialogue (≤ 3 exchanges) in chat |
+| **Post-session** (web map, after session) | quest = quiz cards on the map | quest = chat-style Socratic session in the web app (server proxies Claude API) |
+
+Both modalities: grounded in the component's paper (`concepts` + rationale) and, when available, the session's actual diff; graded per-dim; results recorded via `scale record` → coverage update → map state change.
+
+### 6.1 In-flow triggers & interruption budget (hard rules, deterministic in CLI)
+
+Trigger points are **user-configurable** (`config.json → inflow.triggers`) — interruption tolerance differs per person. v1 ships two, both natural boundaries (never mid-edit, never mid-thought); the gate architecture accepts new trigger kinds without schema changes:
+
+- **`pre-commit`** (default: on) — `PreToolUse` hook on Bash matching `git commit` → `scale gate commit`.
+- **`post-task`** (default: off) — `Stop` hook; offers a check right after the agent finishes work that touched low-coverage territory.
+
+Gate policy (shared across triggers):
+
+- Fire only if: a touched component is `fog`/low-coverage/`stale` **and** budget allows.
+- **Budget:** ≤ 1 intervention per commit, ≤ 2 per session, ≥ 15 min cooldown, no firing on trivial diffs (< N changed lines). All constants in `config.json`.
+- Mechanics (pre-commit): gate returns deny-with-reason instructing the agent to run the tutor protocol → tutor runs in chat → `scale record` writes a validation marker → agent retries commit → gate sees fresh marker (TTL 10 min) → allow.
+- **Defer is final.** "Skip" passes the gate immediately and the item is **dropped** — logged as evidence, never queued anywhere. Timings stay fully independent: nothing crosses from in-flow into the post-session queue. The component simply stays unconquered — that is the user's prerogative, and precisely what the territory metaphor is for: the map shows the consequence; the choice stays with the user. A deferred component comes up again only through natural re-encounter (a later gate hit on the same territory, budget permitting) or voluntary learning (§6.3).
+- Additionally (non-interruptive): `SessionStart` injects a 3-line coverage context; first entry into unfamiliar territory in a session may add one *silent context note* to the agent (no user-facing prompt).
+- Post-session conditions: gates never fire; hooks only collect evidence silently.
+
+### 6.2 Post-session pipeline
+
+(Post-session conditions only.) `SessionEnd` hook → `scale quest generate` (detached, async — never blocks exit): pick top-K (default 3) components by (touched this session) × (low coverage or stale) × importance → generate items in the configured modality (Claude API, cheap model) → `quests.json` → appears on the map as pending quests. Rebellion quests are generated from drift independent of sessions. In in-flow conditions no quests are ever generated; stale components surface through map state, re-encounter gates, and voluntary learning.
+
+### 6.3 Voluntary learning (user-initiated, available in every condition)
+
+The interventions above are *system-initiated* — that is the manipulated variable. Independently of condition, the user can always initiate learning themselves: autonomy over *which territory to take, and when* is the core of the game framing.
+
+- **In chat:** ask naturally ("이 부분 이해하고 싶어") or run `/scale-study [component]` → tutor gives a reading guide over the papers, then offers a comprehension check in the configured modality; passing counts as validation (voluntary conquest). Works with no coding task at hand — reading the realm is a legitimate activity.
+- **On the map:** open any component's paper from its panel; a **Challenge** button starts a voluntary quest in the configured modality (`origin: voluntary`).
+- **No budget applies** to voluntary learning — budgets constrain interruptions, not the user's own initiative.
+
+## 7. Components to build
+
+### 7.1 `scale` CLI (wraps `core`)
+
+`init` (state dir), `context` (SessionStart summary), `log prompt|touch|review` (async appends), `gate commit` (policy decision), `record` (quiz/Socratic outcomes from agent), `quest generate|list|complete`, `map layout|drift|index`, `serve`, `config get|set` (condition switch), `reset` (demo/pilot).
+
+Latency budget: hook-path commands are pure file reads/appends, < 200 ms; anything LLM or heavy runs detached.
+
+### 7.2 Plugin (hooks + skills)
+
+Hooks (`hooks.json`): `SessionStart→scale context`, `UserPromptSubmit→scale log prompt`, `PostToolUse(Edit|Write|MultiEdit)→scale log touch` (+ `PreToolUse` timestamp pairing for review latency), `PreToolUse(Bash: git commit)→scale gate commit`, `SessionEnd→scale quest generate` (detached).
+
+Skills: **`scale-map`** (Mode B builder + sync; senior), **`scale-tutor`** (junior; quiz & Socratic protocols: grounded item generation, no answer-reveal before attempt, per-dim grading rubric, `scale record` calls, brief supportive tone; also handles voluntary study mode, §6.3). Commands: `/scale-map`, `/scale-status`, `/scale-study [component]` (voluntary learning), `/scale-quiz` (manual trigger for testing).
+
+### 7.3 Web app (`scale serve` + React SPA)
+
+- **Map screen:** SVG; provinces as tinted regions, components as nodes sized by importance; visual states fog/scouted/conquered/rebellion; pan/zoom; stable layout from `map.json`. Mobile-friendly (touch pan/zoom) — PWA/push deferred.
+- **Component panel:** rendered paper (markdown + mermaid), 3 dev stats, state history, its quests, **Challenge** button (voluntary quest, §6.3).
+- **Quest runner:** quiz cards; Socratic chat panel (server proxies Claude API, capped exchanges, rubric at end). Completion → coverage update → map animates state change.
+- **Header:** unification progress (weighted coverage), session recap ("today you visited …").
+- API: `GET /api/map|coverage|paper/:id|quests`, `POST /api/quests/:id/…`, `POST /api/socratic/:id/message`.
+
+## 8. Phases
+
+| # | Phase | Contents | Acceptance criteria | Size |
+|---|---|---|---|---|
+| 0 | Scaffold | monorepo, core schema types (zod), CLI/plugin/web skeletons, git init | `scale --help` runs; schemas validate fixtures | S (~½d) |
+| 1 | Memory substrate | `scale-map` skill v1; **dry-run on 2 pilot candidates**; pick repo, pin SHA; full build → 20–60 papers; `map layout`/`index` | papers readable & well-linked; component count in range; layout stable across runs | M (2–3d) |
+| 2 | Map viewer (read-only) | `scale serve` + map screen + paper panel; renders hand-seeded coverage.json | pilot repo demoable as a map; castle click → paper | M (2–3d) |
+| 3 | Evidence & state engine | junior hooks (capture only), file→component join, coverage model v1, drift/loyalty | work one real session → map afterwards shows explored territory + review latencies logged; zero perceived latency | M (2–3d) |
+| 4 | In-flow interventions | tutor skill (both modalities), configurable triggers (pre-commit default, post-task opt-in) + budget policy, record→conquest, `/scale-study` voluntary path | budget rules provably honored (≤1/commit, ≤2/session, cooldown, defer=drop, nothing leaks to quest queue); both modalities complete in chat | M (2–3d) |
+| 5 | Post-session interventions + quest runner | quest generation (async), web quest runner (quiz + Socratic via API proxy), rebellion quests, voluntary Challenge (§6.3) | end session → quests on map → complete → territory updates; works on phone via LAN | L (3–4d) |
+| 6 | 2×2 wiring & polish | condition switch end-to-end, interruption audit, seed/demo script, README | all 4 conditions runnable by flipping `config.json`; demo script clean | S–M (1–2d) |
+
+Dependencies: 1→2→(3,4,5 partially parallel)→6. Phases 4 and 5 both depend on 3's state engine and share the tutor's item-generation core.
+
+## 9. Pilot repo
+
+Criteria: TS/JS full-stack (single language → dependency analysis + junior familiarity), self-hostable dev env, feature diversity supporting 20–60 components, moderate size (~20–80k LOC) so Mode B build is tractable, realistic feature-add/bug-fix tasks for a study, permissive license. **Pin a fork at a fixed SHA.**
+
+Shortlist (validate top candidates with a 30-min survey dry-run in Phase 1):
+
+| Candidate | Domain | Notes |
+|---|---|---|
+| **Umami** | web analytics (Next.js) | compact, clear feature seams (tracking, sessions, reports, teams) |
+| **Documenso** | document signing (Next.js/tRPC/Prisma) | diverse: auth, signing pipeline, templates, teams, webhooks, billing |
+| Outline | team wiki (React/Koa) | very diverse but larger; everyone understands the domain |
+| Dub | link shortener SaaS (Next.js) | analytics + API + billing; mid-size |
+
+## 10. Risks & mitigations
+
+- **Component granularity wrong** → the make-or-break; hence Phase 1 dry-runs on two candidates before committing.
+- **In-flow annoyance** → single trigger point, hard budget, defer escape hatch, all constants tunable; Phase 6 includes an explicit interruption audit.
+- **Quiz/Socratic item quality** → items grounded in paper `concepts` + actual session diff; per-dim tagging; iterate prompts on pilot papers early (Phase 4).
+- **Passive-signal validity** → passive signals only explore, never conquer; raw evidence retained for later re-modeling.
+- **file→component gaps** (new files in no `sources`) → fallback to nearest directory match + flag for `scale-map` sync.
+- **Web Socratic needs an API key** → `scale serve` proxies with local `ANTHROPIC_API_KEY`; capped exchanges bound cost.
+- **Layout drift breaking spatial memory** → incremental placement only; never re-run global layout after freeze.
+
+## 11. Deferred (explicitly out of scope now)
+
+Study infra (condition assignment, analytics, consent), senior rationale interviews (schema-ready via `provenance`), Mode A live co-construction (hook infra will already exist), mobile PWA/push, multi-user server & sync, any competitive mechanics (leaderboards — intentionally never).

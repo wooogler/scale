@@ -1,0 +1,7 @@
+{
+  "user": "junior-01",
+  "condition": { "timing": "inflow", "modality": "quiz" },
+  "inflow": { "triggers": ["pre-commit"] },
+  "budgets": { "maxPerCommit": 1, "maxPerSession": 2, "cooldownMinutes": 15, "minChangedLines": 20 },
+  "thresholds": { "validateDim": 0.6, "staleLoyalty": 0.5, "passiveStructureCap": 0.3, "paperReadCap": 0.4 }
+}

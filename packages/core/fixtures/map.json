@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "builtFromSha": "abc1234",
+  "provinces": [
+    { "id": "auth", "name": "Authentication" },
+    { "id": "sharing", "name": "Sharing" }
+  ],
+  "nodes": [
+    { "id": "session-management", "province": "auth", "x": 0.62, "y": 0.31, "importance": 0.8 },
+    { "id": "document-sharing", "province": "sharing", "x": 0.28, "y": 0.55, "importance": 0.6 }
+  ],
+  "edges": [
+    { "from": "session-management", "to": "document-sharing", "kind": "reference" },
+    { "from": "auth", "to": "session-management", "kind": "hierarchy" }
+  ]
+}

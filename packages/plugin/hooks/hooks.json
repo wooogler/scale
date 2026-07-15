@@ -1,0 +1,80 @@
+{
+  "$comment": [
+    "SCALE plugin hook wiring — PLAN §7.2.",
+    "All commands run Node .mjs scripts under this plugin's hooks/ dir, resolved",
+    "via ${CLAUDE_PLUGIN_ROOT} (Claude Code exports this to plugin hooks).",
+    "Every script fails OPEN: a missing/slow `scale` CLI degrades to a no-op and",
+    "never blocks the junior's flow (PLAN §1 Principle 2, §7.1 latency budget).",
+    "Matchers are regex over tool_name (and, for the commit gate, the script",
+    "itself narrows Bash → `git commit`)."
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-submit.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-edit.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-commit-gate.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/post-edit.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

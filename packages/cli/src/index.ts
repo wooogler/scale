@@ -1,0 +1,1181 @@
+#!/usr/bin/env node
+/**
+ * @scale/cli — the `scale` command. Wraps @scale/core; also invoked by the
+ * Claude Code plugin hooks. Command surface per PLAN §7.1.
+ *
+ * Latency contract (PLAN §6.1 / §7.1): the hook-path commands — `log`, `gate`,
+ * `context` — MUST stay pure fast file reads/appends (< 200 ms) with NO LLM
+ * calls and no network. Anything heavy (quest generation, layout, drift, serve)
+ * runs detached, out of the hook path.
+ *
+ * Phase 0 acceptance: `scale --help` runs and lists every subcommand. Real
+ * commands here: init, log, config, reset (+ best-effort quest list / map index
+ * reads). The rest are wired with help text and exit-0 stubs that print
+ * "not implemented (Phase N)".
+ */
+import path from 'node:path';
+import fs from 'node:fs';
+import readline from 'node:readline';
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+
+import { Command } from 'commander';
+import {
+  type ScaleConfig,
+  type EvidenceEntry,
+  type MapJson,
+  type LoadedScale,
+  type DimName,
+  type FileComponentIndex,
+  type GateInput,
+  ScaleConfigSchema,
+  buildFileComponentIndex,
+  loadScaleDir,
+  paperById,
+  componentSourcesIndex,
+  componentsForFile,
+  computeLayout,
+  emptyComponentCoverage,
+  meanDims,
+  gateDecision,
+  estimateBuild,
+  MODEL_RATES,
+  MEASURED_BUILD,
+  type BuildEstimate,
+} from '@scale/core';
+
+import { startServer } from './serve.js';
+import { generateQuests } from './quest.js';
+import {
+  recomputeCoverageFromDisk,
+  coverageCounts,
+  type RecomputeResult,
+} from './coverage.js';
+
+import {
+  stateDir,
+  resolveRepoId,
+  ensureStateDir,
+  paths,
+  configExists,
+  readConfig,
+  readConfigSafe,
+  writeConfig,
+  appendEvidence,
+  readQuestsSafe,
+  type SessionRecord,
+  defaultSession,
+  readSessionSafe,
+  writeSession,
+} from './state.js';
+
+const program = new Command();
+
+program
+  .name('scale')
+  .description('SCALE — coverage-memory state engine and tutor CLI')
+  .version('0.0.0');
+
+/** Mark a subcommand as an intentional exit-0 placeholder. */
+function stub(phase: string, note: string): void {
+  console.log(`scale: ${note} — not implemented (${phase}).`);
+  // Intentionally exit 0: stubs must not break hooks or scripts.
+}
+
+const nowIso = (): string => new Date().toISOString();
+
+function currentUser(dir: string): string {
+  return readConfigSafe(dir)?.user ?? process.env.USER ?? 'unknown';
+}
+
+function splitList(v?: string): string[] {
+  if (!v) return [];
+  return v
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Best-effort short HEAD SHA of the repo at `cwd`; '' if not a git repo. */
+function headSha(cwd: string): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Run a git command in `cwd`, returning trimmed stdout or '' on any failure. */
+function git(cwd: string, args: string[]): string {
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Staged file paths (repo-relative) from `git diff --cached --name-only`. */
+function stagedFiles(cwd: string): string[] {
+  const out = git(cwd, ['diff', '--cached', '--name-only']);
+  return out ? out.split('\n').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+/**
+ * Total changed lines in the staged diff = Σ(added + deleted) from
+ * `git diff --cached --numstat`. Binary files ('-'\t'-') contribute 0.
+ */
+function stagedChangedLines(cwd: string): number {
+  const out = git(cwd, ['diff', '--cached', '--numstat']);
+  if (!out) return 0;
+  let total = 0;
+  for (const line of out.split('\n')) {
+    const parts = line.split('\t');
+    if (parts.length < 2) continue;
+    const added = Number(parts[0]);
+    const deleted = Number(parts[1]);
+    if (Number.isFinite(added)) total += added;
+    if (Number.isFinite(deleted)) total += deleted;
+  }
+  return total;
+}
+
+/**
+ * Component ids "recently addressed" within the marker TTL (PLAN §6.1): those
+ * with a fresh active validation (quiz_result/socratic_result) OR a
+ * deferred/completed intervention whose `ts` is within `ttlMinutes` of `now`.
+ * This is BOTH the retry-passes path and the defer=drop path. Reads
+ * evidence.jsonl directly (fast, no recompute). Malformed lines are skipped.
+ */
+function recentlyAddressedComponents(dir: string, now: Date, ttlMinutes: number): string[] {
+  let text: string;
+  try {
+    text = fs.readFileSync(paths.evidence(dir), 'utf8');
+  } catch {
+    return [];
+  }
+  const cutoff = now.getTime() - ttlMinutes * 60_000;
+  const ids = new Set<string>();
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const ts = typeof e.ts === 'string' ? Date.parse(e.ts) : NaN;
+    if (!Number.isFinite(ts) || ts < cutoff) continue;
+    const type = e.type;
+    const compId = typeof e.componentId === 'string' ? e.componentId : null;
+    if (!compId) continue;
+    if (type === 'quiz_result' || type === 'socratic_result') {
+      ids.add(compId);
+    } else if (type === 'intervention' && (e.outcome === 'deferred' || e.outcome === 'completed')) {
+      ids.add(compId);
+    }
+  }
+  return [...ids];
+}
+
+/** Read + parse `<cwd>/.scale/map.json`, or null if missing/invalid. */
+function readMapJsonSafe(cwd: string): MapJson | null {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(cwd, '.scale', 'map.json'), 'utf8'),
+    ) as MapJson;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Case-insensitive match of free prompt text against every component's id,
+ * title, and concept ids/names (dash/space normalized). Substring match — cheap,
+ * no LLM — so it stays on the hook-append latency budget (§7.1). Returns the set
+ * of matched component ids.
+ */
+function matchComponentsFromText(loaded: LoadedScale, text: string): string[] {
+  const hay = ` ${text.toLowerCase().replace(/\s+/g, ' ')} `;
+  const ids: string[] = [];
+  for (const p of loaded.papers) {
+    const fm = p.frontmatter;
+    const candidates = [
+      fm.id,
+      fm.title,
+      ...fm.concepts.flatMap((c) => [c.id, c.name]),
+    ];
+    for (const cand of candidates) {
+      const c = cand.toLowerCase().trim();
+      if (c.length < 3) continue;
+      const variants = new Set([c, c.replace(/-/g, ' ')]);
+      let hit = false;
+      for (const v of variants) if (hay.includes(v)) hit = true;
+      if (hit) {
+        if (!ids.includes(fm.id)) ids.push(fm.id);
+        break;
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * Load the file→component index for `cwd`: prefer the persisted
+ * `.scale/index.json`, else build it in-memory from the papers' sources. Both
+ * feed `componentsForFile` (exact match + nearest-dir fallback).
+ */
+function loadFileComponentIndex(cwd: string, loaded: LoadedScale): FileComponentIndex {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(cwd, '.scale', 'index.json'), 'utf8'),
+    ) as FileComponentIndex;
+  } catch {
+    return buildFileComponentIndex(componentSourcesIndex(loaded));
+  }
+}
+
+/** Round a coverage progress/dim value to a compact 0.x string. */
+function fmt(n: number): string {
+  return n.toFixed(2).replace(/\.?0+$/, '') || '0';
+}
+
+/**
+ * Build the ≤3-line SessionStart coverage summary (injected into the agent's
+ * context). Line 1: unification progress. Line 2: the weakest unconquered
+ * territory. Line 3: territory that needs re-validation (stale). Kept terse.
+ */
+function contextSummary(res: RecomputeResult): string {
+  const { coverage, map } = res;
+  const counts = coverageCounts(coverage, map);
+  const scored = map.nodes.map((n) => {
+    const comp = coverage.components[n.id] ?? emptyComponentCoverage();
+    return { id: n.id, state: comp.state, mean: meanDims(comp.dims) };
+  });
+
+  const lines: string[] = [];
+  lines.push(
+    `SCALE: ${counts.total} territories, unification ${Math.round(
+      counts.progress * 100,
+    )}% (${counts.validated} validated, ${counts.explored} explored, ${counts.fog} fog).`,
+  );
+
+  const weak = scored
+    .filter((s) => s.state === 'fog' || s.state === 'explored')
+    .sort((a, b) => a.mean - b.mean)
+    .slice(0, 3)
+    .map((s) => (s.state === 'fog' ? `${s.id} (fog)` : `${s.id} (explored ${fmt(s.mean)})`));
+  if (weak.length > 0) lines.push(`You're weak on: ${weak.join(', ')}.`);
+
+  const stale = scored.filter((s) => s.state === 'stale').map((s) => s.id);
+  if (stale.length > 0) {
+    lines.push(
+      `${stale.length} territory needs re-validation (stale): ${stale.join(', ')}.`,
+    );
+  }
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// init  (REAL) — create ~/.scale/<repo-id>/ with a validated default config
+// ---------------------------------------------------------------------------
+program
+  .command('init')
+  .description('Create the ~/.scale/<repo-id>/ state dir with a default config.json')
+  .option('-u, --user <label>', 'user label written into config.json')
+  .option('-f, --force', 'overwrite an existing config.json', false)
+  .action((opts: { user?: string; force?: boolean }) => {
+    const dir = stateDir();
+    ensureStateDir(dir);
+
+    if (configExists(dir) && !opts.force) {
+      console.log(`scale: state already initialized at ${dir}`);
+      console.log('  (pass --force to overwrite config.json)');
+      return;
+    }
+
+    // ScaleConfigSchema fills every field but `user` from its defaults.
+    const config = writeConfig(dir, {
+      user: opts.user ?? process.env.USER ?? 'user',
+    });
+
+    console.log(`scale: initialized state for repo-id "${resolveRepoId()}"`);
+    console.log(`  dir:    ${dir}`);
+    console.log(`  config: ${paths.config(dir)}`);
+    console.log(
+      `  condition: ${config.condition.timing}/${config.condition.modality}` +
+        `  user: ${config.user}`,
+    );
+  });
+
+// ---------------------------------------------------------------------------
+// context  (STUB) — SessionStart 3-line coverage summary (hook path, no LLM)
+// ---------------------------------------------------------------------------
+program
+  .command('context')
+  .description('Print the SessionStart coverage summary (injected to the agent)')
+  .action(() => {
+    // SessionStart: (re)start the session record, re-materialize coverage, then
+    // print a ≤3-line summary for injection. No LLM / no network — git+fs only.
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    ensureStateDir(dir);
+
+    // Fresh session record (intervention budget accounting lives here — §6.1).
+    writeSession(dir, defaultSession(crypto.randomUUID(), nowIso()));
+
+    let res: RecomputeResult;
+    try {
+      res = recomputeCoverageFromDisk(cwd);
+    } catch (err) {
+      console.log(`SCALE: coverage unavailable (${(err as Error).message}).`);
+      return;
+    }
+    console.log(contextSummary(res));
+  });
+
+// ---------------------------------------------------------------------------
+// log  (REAL) — append a validated EvidenceEntry to evidence.jsonl
+// Hook path: validate + single async append, no LLM, no network (§6.1).
+// ---------------------------------------------------------------------------
+const log = program
+  .command('log')
+  .description('Append a raw signal to evidence.jsonl (hook path — fast append)');
+
+// Latency budget (§7.1): `log *` is APPEND-ONLY and must stay < 200 ms — no LLM,
+// no network, and NO coverage recompute here. Reading .scale/ to resolve
+// component ids (keyword / index match) is fast, local, and allowed.
+
+log
+  .command('prompt')
+  .description('Log a prompt signal (components mentioned in a user prompt)')
+  .argument('[text...]', 'the prompt text (matched against components)')
+  .option('-c, --components <ids>', 'comma-separated component ids (skip matching)')
+  .option('-t, --text <text>', 'the prompt text (overrides positional)')
+  .action(async (parts: string[], opts: { components?: string; text?: string }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    const text = opts.text ?? parts.join(' ');
+    // Explicit --components wins; otherwise keyword-match the text against ids,
+    // titles, and concepts from .scale/.
+    let componentIds = splitList(opts.components);
+    if (componentIds.length === 0 && text.trim()) {
+      componentIds = matchComponentsFromText(loadScaleDir(cwd), text);
+    }
+    const entry: EvidenceEntry = {
+      type: 'prompt',
+      ts: nowIso(),
+      user: currentUser(dir),
+      componentIds,
+      ...(text.trim() ? { text } : {}),
+    };
+    await appendEvidence(dir, entry);
+    console.log(`scale: logged prompt (${entry.componentIds.length} component(s))`);
+  });
+
+log
+  .command('touch')
+  .description('Log a touch signal (files edited → components)')
+  .argument('[files...]', 'file paths that were edited')
+  .option('-f, --files <paths>', 'comma-separated file paths (adds to positional)')
+  .option('-c, --components <ids>', 'comma-separated component ids (adds to matched)')
+  .action(async (fileArgs: string[], opts: { files?: string; components?: string }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    const files = [...fileArgs, ...splitList(opts.files)];
+    // Map each file → component ids via .scale/index.json (nearest-dir fallback).
+    const index = loadFileComponentIndex(cwd, loadScaleDir(cwd));
+    const matched = new Set<string>(splitList(opts.components));
+    for (const f of files) {
+      const rel = path.relative(cwd, path.resolve(cwd, f)) || f;
+      for (const id of componentsForFile(index, rel)) matched.add(id);
+    }
+    const entry: EvidenceEntry = {
+      type: 'touch',
+      ts: nowIso(),
+      user: currentUser(dir),
+      files,
+      componentIds: [...matched],
+    };
+    await appendEvidence(dir, entry);
+    console.log(
+      `scale: logged touch (${entry.files.length} file(s), ${entry.componentIds.length} component(s))`,
+    );
+  });
+
+log
+  .command('review')
+  .description('Log a diff-review latency signal (proposal → execution ms)')
+  .argument('[file]', 'file that was reviewed')
+  .argument('[ms]', 'propose-to-execute latency in ms')
+  .option('-f, --file <path>', 'file that was reviewed (overrides positional)')
+  .option('-m, --ms <number>', 'propose-to-execute latency in ms (overrides positional)')
+  .action(
+    async (
+      fileArg: string | undefined,
+      msArg: string | undefined,
+      opts: { file?: string; ms?: string },
+    ) => {
+      const dir = stateDir();
+      const file = opts.file ?? fileArg;
+      const ms = opts.ms ?? msArg;
+      if (!file || ms === undefined) {
+        console.error('scale: usage — scale log review <file> <ms>');
+        process.exitCode = 1;
+        return;
+      }
+      const entry: EvidenceEntry = {
+        type: 'diff_review',
+        ts: nowIso(),
+        user: currentUser(dir),
+        file,
+        proposeToExecuteMs: Number(ms),
+      };
+      await appendEvidence(dir, entry);
+      console.log(`scale: logged diff_review (${entry.proposeToExecuteMs} ms)`);
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// gate commit  (REAL) — deterministic pre-commit decision (hook path, no LLM)
+// ---------------------------------------------------------------------------
+const gate = program
+  .command('gate')
+  .description(
+    'Interruption-gate policy decisions (PLAN §6.1). Only `commit` (the ' +
+      "pre-commit trigger) is wired; `post-task` is a documented, deferred trigger.",
+  );
+
+/** Fresh in-flow markers older than this are ignored (PLAN §6.1 TTL). */
+const MARKER_TTL_MINUTES = 10;
+
+gate
+  .command('commit')
+  .description(
+    'Decide whether a pre-commit intervention should fire. Reads the staged ' +
+      'diff + coverage + budget, prints one JSON line ' +
+      '{"allow":bool,"component":str|null,"reason":str|null}, always exit 0. ' +
+      'Pure git+file I/O, no LLM — the hook (not the CLI) blocks the commit.',
+  )
+  .action(async () => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+
+    // Always emit a single JSON line + exit 0; the CLI never itself blocks.
+    const emit = (allow: boolean, component: string | null, reason: string | null): void => {
+      console.log(JSON.stringify({ allow, component, reason }));
+    };
+
+    // Config (persisted, else schema defaults so the gate works pre-`init`).
+    const config: ScaleConfig =
+      readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
+
+    // Staged diff → touched files → components (via .scale/index.json, nearest-dir
+    // fallback). No .scale/ at all → nothing to gate, allow.
+    const scaleDir = path.join(cwd, '.scale');
+    if (!fs.existsSync(scaleDir)) {
+      emit(true, null, null);
+      return;
+    }
+    const loaded = loadScaleDir(cwd);
+    const index = loadFileComponentIndex(cwd, loaded);
+    const files = stagedFiles(cwd);
+    const touched = new Set<string>();
+    for (const f of files) {
+      for (const id of componentsForFile(index, f)) touched.add(id);
+    }
+    const changedLines = stagedChangedLines(cwd);
+
+    // Coverage (materialized from evidence) + the frozen map for importance.
+    const { coverage, map } = recomputeCoverageFromDisk(cwd);
+    const importance: Record<string, number> = {};
+    for (const n of map.nodes) importance[n.id] = n.importance;
+
+    // Session budget accounting (create a fresh one if SessionStart never ran).
+    const session: SessionRecord =
+      readSessionSafe(dir) ?? defaultSession(crypto.randomUUID(), nowIso());
+
+    const now = nowIso();
+    const recentlyAddressed = recentlyAddressedComponents(
+      dir,
+      new Date(now),
+      MARKER_TTL_MINUTES,
+    );
+
+    const gateInput: GateInput = {
+      touched: [...touched],
+      coverage,
+      config,
+      session: {
+        interventionsThisSession: session.interventionsThisSession,
+        lastInterventionAt: session.lastInterventionAt,
+        pendingComponent: session.pendingComponent,
+      },
+      changedLines,
+      recentlyAddressed,
+      now,
+      importance,
+    };
+
+    const decision = gateDecision(gateInput);
+
+    if (decision.action === 'deny' && decision.component) {
+      const component = decision.component;
+      // Record that we SHOWED an in-flow intervention (accounting only — no dim
+      // change). Best-effort: a write failure must not turn the deny into noise.
+      try {
+        await appendEvidence(dir, {
+          type: 'intervention',
+          ts: now,
+          user: currentUser(dir),
+          componentId: component,
+          timing: 'inflow',
+          modality: config.condition.modality,
+          outcome: 'shown',
+        });
+      } catch {
+        /* keep going — the deny is what matters to the hook */
+      }
+      // Spend a budget slot: bump the counter, stamp the time, remember the target.
+      writeSession(dir, {
+        ...session,
+        interventionsThisSession: session.interventionsThisSession + 1,
+        lastInterventionAt: now,
+        pendingComponent: component,
+      });
+      emit(false, component, decision.reason ?? null);
+      return;
+    }
+
+    // Allow. If this allow resolved the pending component (its retry passed, or it
+    // was deferred → dropped), clear the pending marker.
+    if (session.pendingComponent && recentlyAddressed.includes(session.pendingComponent)) {
+      writeSession(dir, { ...session, pendingComponent: null });
+    }
+    emit(true, null, null);
+  });
+
+// ---------------------------------------------------------------------------
+// gate defer  (REAL) — the user's "skip" escape hatch (defer = drop, PLAN §6.1)
+// ---------------------------------------------------------------------------
+gate
+  .command('defer')
+  .description(
+    'Skip the pre-commit check for a component (defer = drop, PLAN §6.1). ' +
+      'Writes the intervention(outcome:deferred) marker the gate recognizes so ' +
+      'the retried commit passes; nothing is queued — the territory just stays ' +
+      'unconquered. Pure file append, no LLM.',
+  )
+  .argument('<componentId>', 'component whose in-flow check the user is skipping')
+  .action(async (componentId: string) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    // Modality is accounting metadata; use the configured condition (schema
+    // default pre-`init` so defer works even before state is set up).
+    const config: ScaleConfig =
+      readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
+    const now = nowIso();
+
+    // The marker: an inflow intervention with outcome 'deferred'. This is exactly
+    // what `recentlyAddressedComponents` (and the pure gate) scan for, so the very
+    // next `git commit` on the same staged diff passes the gate (defer = drop).
+    await appendEvidence(dir, {
+      type: 'intervention',
+      ts: now,
+      user: currentUser(dir),
+      componentId,
+      timing: 'inflow',
+      modality: config.condition.modality,
+      outcome: 'deferred',
+    });
+
+    // Clear the pending marker if this is what the last deny was waiting on, so the
+    // budget accounting matches the retry-passes path.
+    const session = readSessionSafe(dir);
+    if (session && session.pendingComponent === componentId) {
+      writeSession(dir, { ...session, pendingComponent: null });
+    }
+
+    console.log(
+      `scale: skipped '${componentId}' — territory stays unconquered; commit will proceed.`,
+    );
+  });
+
+// ---------------------------------------------------------------------------
+// record  (STUB) — quiz/socratic outcome from the tutor agent
+// ---------------------------------------------------------------------------
+program
+  .command('record')
+  .description('Record a quiz/Socratic validation outcome (updates coverage)')
+  .argument('<componentId>', 'component the outcome is for')
+  .option('-d, --dim <dim>', 'quiz dimension: structure | concepts | rationale')
+  .option('-s, --score <0..1>', 'quiz score in [0,1]')
+  .option('--socratic <json>', "per-dim rubric scores, e.g. '{\"structure\":0.8}'")
+  .option(
+    '--origin <origin>',
+    'where the validation came from: session | voluntary (PLAN §6.3)',
+    'session',
+  )
+  .action(
+    async (
+      componentId: string,
+      opts: { dim?: string; score?: string; socratic?: string; origin?: string },
+    ) => {
+      const cwd = process.cwd();
+      const dir = stateDir(cwd);
+      if (opts.origin !== 'session' && opts.origin !== 'voluntary') {
+        console.error("scale: --origin must be 'session' or 'voluntary'.");
+        process.exitCode = 1;
+        return;
+      }
+      const origin = opts.origin;
+      // Capture the git sha that is HEAD right now — this validation is anchored
+      // to it so its `lastValidatedSha` stays fixed across future recomputes
+      // (staleness must persist through re-materialization). '' if not a git repo.
+      const sha = headSha(cwd);
+
+      let entry: EvidenceEntry;
+      if (opts.socratic !== undefined) {
+        let dims: Record<string, number>;
+        try {
+          dims = JSON.parse(opts.socratic) as Record<string, number>;
+        } catch {
+          console.error('scale: --socratic must be a JSON object of dim→score.');
+          process.exitCode = 1;
+          return;
+        }
+        entry = {
+          type: 'socratic_result',
+          ts: nowIso(),
+          user: currentUser(dir),
+          componentId,
+          dims: dims as Partial<Record<DimName, number>>,
+          sha,
+          origin,
+        };
+      } else {
+        if (!opts.dim || opts.score === undefined) {
+          console.error(
+            'scale: usage — scale record <componentId> --dim <dim> --score <0..1>' +
+              "  (or --socratic '<json dims>')",
+          );
+          process.exitCode = 1;
+          return;
+        }
+        entry = {
+          type: 'quiz_result',
+          ts: nowIso(),
+          user: currentUser(dir),
+          componentId,
+          dim: opts.dim as DimName,
+          score: Number(opts.score),
+          sha,
+          origin,
+        };
+      }
+
+      // Append the raw outcome (schema-validated), then re-materialize so the
+      // component's state/dims reflect it immediately.
+      try {
+        await appendEvidence(dir, entry);
+      } catch (err) {
+        console.error(`scale: invalid outcome — ${(err as Error).message.split('\n')[0]}`);
+        process.exitCode = 1;
+        return;
+      }
+      const res = recomputeCoverageFromDisk(cwd);
+      const comp = res.coverage.components[componentId];
+      if (!comp) {
+        console.log(
+          `scale: recorded outcome for "${componentId}" (not a known map component).`,
+        );
+        return;
+      }
+      console.log(
+        `scale: ${componentId} → ${comp.state}  ` +
+          `[structure ${fmt(comp.dims.structure)}, concepts ${fmt(comp.dims.concepts)}, ` +
+          `rationale ${fmt(comp.dims.rationale)}]`,
+      );
+      // Progress line: weighted comprehension vs. the validate bar. EMA cold-start
+      // (α=0.3 from 0) means several strong passes are needed to cross the bar, so
+      // surface exactly how close this component is and whether it's over yet.
+      const mean = meanDims(comp.dims);
+      const validateDim = readConfigSafe(dir)?.thresholds.validateDim ?? 0.6;
+      const verdict =
+        comp.state === 'validated' ? 'validated' : 'needs more validation';
+      console.log(
+        `  ${componentId}: ${comp.state} — comprehension ${mean.toFixed(2)} / ` +
+          `${validateDim.toFixed(2)} (${verdict})`,
+      );
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// coverage recompute  (REAL) — re-materialize coverage.json from evidence.jsonl
+// ---------------------------------------------------------------------------
+const coverage = program
+  .command('coverage')
+  .description('Coverage materialization (coverage.json is a view of evidence.jsonl)');
+
+coverage
+  .command('recompute')
+  .description('Re-materialize ~/.scale/<repo-id>/coverage.json from evidence.jsonl')
+  .action(() => {
+    const res = recomputeCoverageFromDisk(process.cwd());
+    const c = coverageCounts(res.coverage, res.map);
+    console.log(
+      `scale: ${c.total} component(s) — ` +
+        `${c.validated} validated, ${c.explored} explored, ${c.stale} stale, ${c.fog} fog.`,
+    );
+    console.log(`  unification progress: ${Math.round(c.progress * 100)}%`);
+    console.log(`  → ${paths.coverage(res.dir)}`);
+  });
+
+// ---------------------------------------------------------------------------
+// estimate  (REAL) — pre-flight build-cost estimate for `scale-map` (Mode B)
+// Pure fs scan + arithmetic (no LLM, no API) — safe to run before committing to
+// an (expensive) coverage-memory build. See @scale/core estimate.ts (PLAN §4.3).
+// ---------------------------------------------------------------------------
+
+/** Source extensions counted toward the build-cost estimate. */
+const SOURCE_EXTS = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.go', '.rs', '.java',
+  '.rb', '.php', '.c', '.h', '.cpp', '.cs', '.swift', '.kt', '.scala', '.vue', '.svelte',
+]);
+
+/** Directory names never descended into during the scan. */
+const EXCLUDE_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'out', '.next', 'coverage', 'vendor',
+  '.scale', 'test', 'tests', '__tests__',
+]);
+
+/** `foo.test.ts` / `bar.spec.js` etc. — excluded so the count is real source. */
+function isTestFile(name: string): boolean {
+  return /\.(test|spec)\./i.test(name);
+}
+
+/**
+ * Walk `root` counting source lines (wc -l semantics: newline bytes) across
+ * SOURCE_EXTS, skipping EXCLUDE_DIRS and test/spec files. Pure fs, no git.
+ */
+function scanSourceLoc(root: string): { files: number; loc: number } {
+  let files = 0;
+  let loc = 0;
+  const walk = (d: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const name = e.name;
+      const full = path.join(d, name);
+      if (e.isDirectory()) {
+        if (EXCLUDE_DIRS.has(name)) continue;
+        walk(full);
+      } else if (e.isFile()) {
+        const ext = path.extname(name).toLowerCase();
+        if (!SOURCE_EXTS.has(ext) || isTestFile(name)) continue;
+        try {
+          const buf = fs.readFileSync(full);
+          let n = 0;
+          for (let i = 0; i < buf.length; i++) if (buf[i] === 10) n++;
+          files++;
+          loc += n;
+        } catch {
+          /* unreadable file — skip */
+        }
+      }
+    }
+  };
+  walk(root);
+  return { files, loc };
+}
+
+const usd = (n: number): string => `$${n.toFixed(2)}`;
+
+/** Render the human-readable estimate table + header/footer. */
+function renderEstimate(files: number, est: BuildEstimate): string {
+  const lines: string[] = [];
+  lines.push(
+    `repo: ${files} files, ${est.loc.toLocaleString()} LOC → ~${est.components} components`,
+  );
+  lines.push('');
+
+  const minutes = Math.round(est.minutes);
+  const rows = est.models.map((m) => {
+    const cost =
+      m.costHigh > m.costLow ? `${usd(m.costLow)}–${usd(m.costHigh)}` : usd(m.costLow);
+    return { name: m.name, cost, time: `~${minutes} min` };
+  });
+
+  const nameW = Math.max('Build model'.length, ...rows.map((r) => r.name.length));
+  const costW = Math.max(9, ...rows.map((r) => r.cost.length));
+  const pad = (s: string, w: number): string => s + ' '.repeat(Math.max(0, w - s.length));
+  lines.push(
+    `${pad('Build model', nameW)}  ${pad('est. cost', costW)}  est. time (single-agent)`,
+  );
+  lines.push(`${'-'.repeat(nameW)}  ${'-'.repeat(costW)}  ------------------------`);
+  for (const r of rows) {
+    lines.push(`${pad(r.name, nameW)}  ${pad(r.cost, costW)}  ${r.time}`);
+  }
+
+  lines.push('');
+  lines.push(
+    `Rough estimate (±~50%), calibrated on a measured ${
+      MEASURED_BUILD.sourceLoc.toLocaleString()
+    }-LOC single-agent build. cache_read dominates and grows super-linearly for`,
+  );
+  lines.push(
+    'large single-agent builds; province fan-out keeps cost ~linear and parallelizes',
+  );
+  lines.push(
+    'time (wall-clock ≈ time / #provinces). Interventions (quiz/socratic) are separate',
+  );
+  lines.push(
+    `and cheap (~${usd(0.15)}–${usd(1)}/session) and run on ${MODEL_RATES.sonnet5!.name} or ` +
+      `${MODEL_RATES.haiku45!.name} (config.models.intervention).`,
+  );
+  return lines.join('\n');
+}
+
+program
+  .command('estimate')
+  .description(
+    'Estimate the Mode B scale-map build cost for the current repo (per model, ' +
+      'before you run it). Pure fs scan + arithmetic — no LLM, no API.',
+  )
+  .option('--json', 'emit machine-readable JSON instead of the table', false)
+  .action((opts: { json?: boolean }) => {
+    const cwd = process.cwd();
+    const { files, loc } = scanSourceLoc(cwd);
+    const est = estimateBuild(loc);
+
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            repo: { files, loc },
+            components: est.components,
+            tokens: est.tokens,
+            seconds: est.seconds,
+            minutes: est.minutes,
+            models: est.models,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    console.log(renderEstimate(files, est));
+  });
+
+// ---------------------------------------------------------------------------
+// quest generate|list|complete  (STUB; `list` reads quests.json if present)
+// ---------------------------------------------------------------------------
+const quest = program.command('quest').description('Post-session quests');
+
+quest
+  .command('generate')
+  .description('Generate quests for low-coverage touched components (detached/LLM)')
+  .option('-k, --top <n>', 'top-K components to quiz (default 3)', '3')
+  .option('--detached', 'invoked detached from the SessionEnd hook (no-op flag)', false)
+  .action(async (opts: { top?: string; detached?: boolean }) => {
+    // Heavy + LLM: runs DETACHED off the SessionEnd hook (§6.2). Post-session
+    // conditions only; in-flow → no-op. Never throws fatally (detached-safe):
+    // the LLM path falls back to deterministic synthesis when there's no API key.
+    const cwd = process.cwd();
+    const parsedK = Number(opts.top);
+    const topK = Number.isFinite(parsedK) && parsedK > 0 ? Math.floor(parsedK) : 3;
+    try {
+      const res = await generateQuests(cwd, { topK });
+      if (res.via === 'skip') {
+        console.log('scale: quest generate — no-op (in-flow condition or no coverage memory).');
+        return;
+      }
+      console.log(
+        `scale: generated ${res.count} quest(s) via ${res.via} ` +
+          `(model ${res.model}) → ${res.path}`,
+      );
+      if (res.components.length > 0) {
+        console.log(`  components: ${res.components.join(', ')}`);
+      }
+    } catch (err) {
+      // Detached-safe: log and exit 0 so a failure never surfaces to the hook.
+      console.error(`scale: quest generate failed (non-fatal) — ${(err as Error).message}`);
+    }
+  });
+
+quest
+  .command('list')
+  .description('List pending quests from quests.json')
+  .action(() => {
+    const dir = stateDir();
+    const quests = readQuestsSafe(dir);
+    if (quests.length === 0) {
+      console.log('scale: no quests found.');
+      return;
+    }
+    for (const q of quests) {
+      console.log(
+        `  ${q.id}  [${q.status}]  ${q.componentId}  ${q.modality}/${q.origin}` +
+          `  (${q.items.length} item(s))`,
+      );
+    }
+  });
+
+quest
+  .command('complete')
+  .description('Mark a quest completed and record its outcome')
+  .argument('[questId]', 'quest to complete')
+  .action(() => {
+    stub('Phase 3', 'quest complete');
+  });
+
+// ---------------------------------------------------------------------------
+// map layout|drift|index  (STUB; `index` builds file→component from .scale/)
+// ---------------------------------------------------------------------------
+const map = program.command('map').description('Map layout, drift, and index operations');
+
+map
+  .command('layout')
+  .description('Compute/extend the frozen spatial layout → .scale/map.json (deterministic)')
+  .action(() => {
+    const cwd = process.cwd();
+    const scaleDir = path.join(cwd, '.scale');
+    if (!fs.existsSync(scaleDir)) {
+      console.error(`scale: no coverage-memory dir at ${scaleDir} — nothing to lay out.`);
+      process.exitCode = 1;
+      return;
+    }
+    const loaded = loadScaleDir(cwd);
+    const existing = readMapJsonSafe(cwd);
+    const existingIds = new Set((existing?.nodes ?? []).map((n) => n.id));
+    const newCount = loaded.papers.filter((p) => !existingIds.has(p.id)).length;
+
+    const mapJson = computeLayout(
+      {
+        provinces: loaded.provinces,
+        nodes: loaded.papers.map((p) => ({ id: p.id, province: p.province })),
+        edges: loaded.edges,
+        builtFromSha: headSha(cwd) || existing?.builtFromSha || '',
+      },
+      existing,
+    );
+
+    fs.writeFileSync(
+      path.join(scaleDir, 'map.json'),
+      JSON.stringify(mapJson, null, 2) + '\n',
+    );
+    console.log(
+      `scale: ${mapJson.provinces.length} province(s), ` +
+        `${mapJson.nodes.length} component(s) (${newCount} new) → .scale/map.json`,
+    );
+  });
+
+map
+  .command('drift')
+  .description('Flag components whose sources changed since map.builtFromSha (minimal stub)')
+  .action(() => {
+    // Minimal documented stub (PLAN §4.3 / §5.1). Full drift wires real git
+    // churn per component in Phase 3. For now: report the reference SHA the map
+    // was built from vs current HEAD so the shape of the command is real.
+    const cwd = process.cwd();
+    const map = readMapJsonSafe(cwd);
+    if (!map) {
+      console.log('scale: no .scale/map.json — run `scale map layout` first.');
+      return;
+    }
+    const head = headSha(cwd);
+    console.log(
+      `scale: map built from "${map.builtFromSha || '(unset)'}", HEAD is "${head || '(no git)'}".`,
+    );
+    console.log(
+      '  drift detection (per-component source churn) — not implemented (Phase 3).',
+    );
+  });
+
+map
+  .command('index')
+  .description('Build the file→component reverse index → .scale/index.json (gitignored)')
+  .option('-o, --out <path>', 'write index JSON to this path (default .scale/index.json)')
+  .action((opts: { out?: string }) => {
+    const cwd = process.cwd();
+    const scaleDir = path.join(cwd, '.scale');
+    if (!fs.existsSync(scaleDir)) {
+      console.error(`scale: no coverage-memory dir at ${scaleDir} — nothing to index.`);
+      process.exitCode = 1;
+      return;
+    }
+    const loaded = loadScaleDir(cwd);
+    const index = buildFileComponentIndex(componentSourcesIndex(loaded));
+    const outPath = opts.out
+      ? path.resolve(cwd, opts.out)
+      : path.join(scaleDir, 'index.json');
+    fs.writeFileSync(outPath, JSON.stringify(index, null, 2) + '\n');
+    console.log(
+      `scale: indexed ${loaded.papers.length} component(s), ` +
+        `${Object.keys(index).length} file(s) → ${path.relative(cwd, outPath) || outPath}`,
+    );
+  });
+
+// ---------------------------------------------------------------------------
+// serve  (STUB) — local web map app
+// ---------------------------------------------------------------------------
+program
+  .command('serve')
+  .description('Serve the local web map app (pure Node; reads .scale/ from cwd)')
+  .option('-p, --port <number>', 'port', '4318')
+  .action((opts: { port: string }) => {
+    const port = Number(opts.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      console.error(`scale: invalid port "${opts.port}".`);
+      process.exitCode = 1;
+      return;
+    }
+    startServer({ port, cwd: process.cwd() });
+  });
+
+// ---------------------------------------------------------------------------
+// config get|set  (REAL) — read/write config.json validated by the schema
+// ---------------------------------------------------------------------------
+const config = program
+  .command('config')
+  .description('Read/write config.json (condition, budgets, thresholds)');
+
+/** Resolve a dotted path within an object; returns undefined if absent. */
+function getPath(obj: unknown, dotted: string): unknown {
+  return dotted.split('.').reduce<unknown>(
+    (acc, k) =>
+      acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[k] : undefined,
+    obj,
+  );
+}
+
+/** Immutably set a dotted path, returning a new object. */
+function setPath(
+  obj: Record<string, unknown>,
+  dotted: string,
+  value: unknown,
+): Record<string, unknown> {
+  const keys = dotted.split('.');
+  const out = structuredClone(obj);
+  let cursor: Record<string, unknown> = out;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i]!;
+    if (typeof cursor[k] !== 'object' || cursor[k] === null) cursor[k] = {};
+    cursor = cursor[k] as Record<string, unknown>;
+  }
+  cursor[keys[keys.length - 1]!] = value;
+  return out;
+}
+
+config
+  .command('get')
+  .description('Print config.json, or a single dotted key (e.g. condition.timing)')
+  .argument('[key]', 'dotted key path')
+  .action((key: string | undefined) => {
+    const dir = stateDir();
+    let cfg: ScaleConfig;
+    try {
+      cfg = readConfig(dir);
+    } catch {
+      console.error('scale: no config found — run `scale init` first.');
+      process.exitCode = 1;
+      return;
+    }
+    if (!key) {
+      console.log(JSON.stringify(cfg, null, 2));
+      return;
+    }
+    const value = getPath(cfg, key);
+    if (value === undefined) {
+      console.error(`scale: no such config key "${key}".`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+  });
+
+config
+  .command('set')
+  .description('Set a dotted key and re-validate the whole config')
+  .argument('<key>', 'dotted key path (e.g. condition.modality)')
+  .argument('<value>', 'value (JSON if parseable, else string)')
+  .action((key: string, rawValue: string) => {
+    const dir = stateDir();
+    let cfg: ScaleConfig;
+    try {
+      cfg = readConfig(dir);
+    } catch {
+      console.error('scale: no config found — run `scale init` first.');
+      process.exitCode = 1;
+      return;
+    }
+    // Try to parse as JSON (numbers, booleans, arrays, objects); else keep string.
+    let value: unknown = rawValue;
+    try {
+      value = JSON.parse(rawValue);
+    } catch {
+      /* leave as string */
+    }
+    const next = setPath(cfg as unknown as Record<string, unknown>, key, value);
+    try {
+      const saved = writeConfig(dir, next);
+      console.log(`scale: set ${key} → ${JSON.stringify(getPath(saved, key))}`);
+    } catch (err) {
+      console.error(`scale: invalid config after set — ${(err as Error).message}`);
+      process.exitCode = 1;
+    }
+  });
+
+// ---------------------------------------------------------------------------
+// reset  (REAL) — clear the state dir, with a confirmation guard
+// ---------------------------------------------------------------------------
+program
+  .command('reset')
+  .description('Delete the ~/.scale/<repo-id>/ state dir (demo/pilot reset)')
+  .option('-y, --yes', 'skip the confirmation prompt', false)
+  .action(async (opts: { yes?: boolean }) => {
+    const dir = stateDir();
+    if (!fs.existsSync(dir)) {
+      console.log(`scale: nothing to reset (no state at ${dir}).`);
+      return;
+    }
+    if (!opts.yes) {
+      const ok = await confirm(`Delete all SCALE state at ${dir}? [y/N] `);
+      if (!ok) {
+        console.log('scale: reset aborted.');
+        return;
+      }
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    console.log(`scale: reset — removed ${dir}`);
+  });
+
+function confirm(prompt: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(prompt, (answer) => {
+      rl.close();
+      resolve(/^y(es)?$/i.test(answer.trim()));
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+
+program.parseAsync(process.argv).catch((err) => {
+  console.error(`scale: ${(err as Error).message}`);
+  process.exit(1);
+});

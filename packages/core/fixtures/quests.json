@@ -1,0 +1,21 @@
+[
+  {
+    "id": "quest-001",
+    "componentId": "document-sharing",
+    "modality": "quiz",
+    "origin": "session",
+    "status": "pending",
+    "items": [
+      {
+        "prompt": "What does a share link grant access to when permissions are set to view-only?",
+        "dim": "concepts",
+        "options": ["Edit and comment", "View only", "Full admin", "Nothing"],
+        "answer": 1
+      },
+      {
+        "prompt": "Why are share permissions checked server-side on every request rather than cached on the client?",
+        "dim": "rationale"
+      }
+    ]
+  }
+]

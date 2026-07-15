@@ -1,0 +1,26 @@
+{
+  "id": "session-management",
+  "title": "Session Management",
+  "sources": [
+    "src/server/auth/sessions.ts",
+    "src/server/middleware/session.ts"
+  ],
+  "concepts": [
+    {
+      "id": "server-side-sessions",
+      "name": "Server-side session store, cookie carries only the id"
+    },
+    {
+      "id": "session-rotation",
+      "name": "Rotation on privilege change"
+    }
+  ],
+  "rationale": [
+    {
+      "decision": "Sessions are server-side; the cookie is an opaque id",
+      "why": "Revocation must be immediate for shared-document access control",
+      "alternatives": "JWT-in-cookie (rejected — revocation complexity)",
+      "provenance": "inferred"
+    }
+  ]
+}

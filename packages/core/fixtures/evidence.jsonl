@@ -1,0 +1,4 @@
+{"type":"prompt","ts":"2026-07-14T09:00:00.000Z","user":"junior-01","componentIds":["session-management"],"text":"how does session rotation work"}
+{"type":"touch","ts":"2026-07-14T09:05:00.000Z","user":"junior-01","files":["src/server/auth/sessions.ts"],"componentIds":["session-management"]}
+{"type":"quiz_result","ts":"2026-07-14T09:20:00.000Z","user":"junior-01","componentId":"session-management","dim":"concepts","score":0.8}
+{"type":"intervention","ts":"2026-07-14T09:21:00.000Z","user":"junior-01","componentId":"session-management","timing":"inflow","modality":"quiz","outcome":"completed"}
