@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+/**
+ * Build the self-contained @scale/plugin payload.
+ *
+ * Produces, inside packages/plugin/:
+ *   bin/scale.mjs   — the entire `scale` CLI bundled into one ESM file (every
+ *                     dependency inlined: @scale/core, commander, zod, yaml,
+ *                     @anthropic-ai/sdk). Needs no node_modules.
+ *   bin/scale       — POSIX shell launcher (kept executable) that execs the bundle.
+ *   web-dist/       — the built web SPA (`scale serve` serves it).
+ *
+ * With the plugin's bin/ on PATH (Claude Code adds it automatically when the
+ * plugin is enabled), a bare `scale <args>` runs the bundle — zero monorepo
+ * dependence. Run `npm run build:plugin` to regenerate after CLI/web changes.
+ */
+import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import fs from 'node:fs';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const PLUGIN = resolve(ROOT, 'packages', 'plugin');
+const run = (cmd, args) =>
+  execFileSync(cmd, args, { cwd: ROOT, stdio: 'inherit' });
+
+// 1. Build @scale/core + @scale/cli (tsc) so esbuild can resolve @scale/core's
+//    compiled entry, and @scale/web (vite) so we have a dist to copy.
+console.log('build:plugin — compiling packages (tsc) + web (vite)…');
+run('npm', ['run', 'build']);
+run('npm', ['run', 'build', '-w', '@scale/web']);
+
+// 2. Bundle the CLI into ONE self-contained ESM file. The createRequire banner
+//    lets bundled CJS deps (e.g. commander) do dynamic `require('node:events')`
+//    under ESM; __dirname/__filename are shimmed for any dep that reads them.
+console.log('build:plugin — bundling CLI → bin/scale.mjs…');
+await build({
+  entryPoints: [resolve(ROOT, 'packages', 'cli', 'src', 'index.ts')],
+  outfile: resolve(PLUGIN, 'bin', 'scale.mjs'),
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  packages: 'bundle', // inline ALL deps (nothing left external but node: builtins)
+  banner: {
+    js: [
+      "import{createRequire as __createRequire}from'node:module';",
+      "import{fileURLToPath as __fileURLToPath}from'node:url';",
+      "import{dirname as __pathDirname}from'node:path';",
+      'const require=__createRequire(import.meta.url);',
+      'const __filename=__fileURLToPath(import.meta.url);',
+      'const __dirname=__pathDirname(__filename);',
+    ].join(''),
+  },
+});
+
+// 3. Keep the shell launcher executable (git may not preserve the bit on all
+//    checkouts / it is regenerated infrastructure).
+fs.chmodSync(resolve(PLUGIN, 'bin', 'scale'), 0o755);
+
+// 4. Copy the built web SPA → packages/plugin/web-dist (self-contained serve).
+const webDistSrc = resolve(ROOT, 'packages', 'web', 'dist');
+const webDistDst = resolve(PLUGIN, 'web-dist');
+console.log('build:plugin — copying web/dist → web-dist…');
+fs.rmSync(webDistDst, { recursive: true, force: true });
+fs.cpSync(webDistSrc, webDistDst, { recursive: true });
+
+console.log('build:plugin — done. Self-contained plugin at packages/plugin/');

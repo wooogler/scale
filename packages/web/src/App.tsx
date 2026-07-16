@@ -28,6 +28,8 @@ export function App(): JSX.Element {
   const [activeQuest, setActiveQuest] = useState<Quest | null>(null);
   // Component whose coverage just moved — drives a one-shot map "conquest" pulse.
   const [justUpdatedId, setJustUpdatedId] = useState<string | null>(null);
+  // Legend hover/focus → highlight all castles of that status on the map.
+  const [highlightState, setHighlightState] = useState<CoverageState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,11 +116,21 @@ export function App(): JSX.Element {
 
         <div className="legend">
           {LEGEND_ORDER.map((st) => (
-            <div className="legend-item" key={st}>
+            <button
+              type="button"
+              className={`legend-item${highlightState === st ? ' legend-item-active' : ''}`}
+              key={st}
+              title={SKIN[st].labelEn}
+              aria-pressed={highlightState === st}
+              onMouseEnter={() => setHighlightState(st)}
+              onMouseLeave={() => setHighlightState((cur) => (cur === st ? null : cur))}
+              onFocus={() => setHighlightState(st)}
+              onBlur={() => setHighlightState((cur) => (cur === st ? null : cur))}
+            >
               <span className="legend-dot" style={{ background: SKIN[st].color }} />
               <span className="legend-ko">{SKIN[st].labelKo}</span>
               <span className="legend-count">{counts[st]}</span>
-            </div>
+            </button>
           ))}
         </div>
       </header>
@@ -135,6 +147,7 @@ export function App(): JSX.Element {
             pendingByComponent={pendingByComponent}
             justUpdatedId={justUpdatedId}
             onStartQuest={startQuest}
+            highlightState={highlightState}
           />
         )}
         {selectedId && (

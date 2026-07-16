@@ -1,0 +1,7 @@
+#!/bin/sh
+# SCALE CLI launcher. This file lives in the plugin's bin/ dir, which Claude Code
+# adds to PATH when the plugin is enabled, so a bare `scale <args>` (which the
+# hooks call) runs the self-contained bundle next to it. No monorepo / no
+# node_modules required — scale.mjs inlines every dependency.
+DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+exec node "$DIR/scale.mjs" "$@"

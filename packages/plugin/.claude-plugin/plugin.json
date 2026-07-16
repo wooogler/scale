@@ -1,11 +1,8 @@
 {
   "name": "scale",
   "version": "0.0.0",
-  "description": "SCALE — Scaffolded Coverage-Aware Learning Engine. Hooks that capture coverage evidence and gate commits, plus skills: scale-map (Mode B coverage-memory builder) and scale-tutor (junior-side quiz & Socratic learning).",
+  "description": "SCALE — Scaffolded Coverage-Aware Learning Engine. Hooks that capture coverage evidence and gate commits, plus skills: scale-map (Mode B coverage-memory builder) and scale-tutor (junior-side quiz & Socratic learning). Ships a self-contained `scale` CLI on PATH via bin/.",
   "author": { "name": "SCALE" },
   "license": "MIT",
-  "keywords": ["learning", "coverage", "comprehension", "code-understanding", "tutor"],
-  "hooks": "./hooks/hooks.json",
-  "skills": "./skills",
-  "commands": "./commands"
+  "keywords": ["learning", "coverage", "comprehension", "code-understanding", "tutor"]
 }

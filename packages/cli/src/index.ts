@@ -45,7 +45,11 @@ import {
 } from '@scale/core';
 
 import { startServer } from './serve.js';
-import { generateQuests } from './quest.js';
+import {
+  generateQuests,
+  completeQuizQuest,
+  completeSocraticQuest,
+} from './quest.js';
 import {
   recomputeCoverageFromDisk,
   coverageCounts,
@@ -340,6 +344,146 @@ program
       return;
     }
     console.log(contextSummary(res));
+  });
+
+// ---------------------------------------------------------------------------
+// status  (REAL) — "coverage at a glance" human/JSON view (no LLM, git+fs only)
+// Distinct from `context` (the terse ≤3-line SessionStart injection): status is
+// the fuller human view of the whole realm — progress, per-province rollup,
+// stale list, pending quest count. Pure file+git reads.
+// ---------------------------------------------------------------------------
+
+interface StatusComponent {
+  id: string;
+  state: string;
+  mean: number;
+}
+interface StatusProvince {
+  id: string;
+  name: string;
+  components: StatusComponent[];
+}
+
+/** Assemble the structured status view for the repo at `cwd`. */
+function buildStatus(cwd: string, res: RecomputeResult, dir: string) {
+  const { coverage, map } = res;
+  const counts = coverageCounts(coverage, map);
+  const config = readConfigSafe(dir);
+  const quests = readQuestsSafe(dir);
+  const pending = quests.filter((q) => q.status === 'pending');
+
+  const provinceName = new Map(map.provinces.map((p) => [p.id, p.name]));
+  const byProvince = new Map<string, StatusComponent[]>();
+  for (const n of map.nodes) {
+    const comp = coverage.components[n.id] ?? emptyComponentCoverage();
+    const arr = byProvince.get(n.province) ?? [];
+    arr.push({ id: n.id, state: comp.state, mean: meanDims(comp.dims) });
+    byProvince.set(n.province, arr);
+  }
+  const provinces: StatusProvince[] = [...byProvince.keys()]
+    .sort((a, b) => (provinceName.get(a) ?? a).localeCompare(provinceName.get(b) ?? b))
+    .map((pid) => ({
+      id: pid,
+      name: provinceName.get(pid) ?? pid,
+      components: byProvince.get(pid)!.sort((a, b) => a.id.localeCompare(b.id)),
+    }));
+
+  const stale = map.nodes
+    .filter((n) => (coverage.components[n.id]?.state ?? 'fog') === 'stale')
+    .map((n) => n.id)
+    .sort();
+
+  return {
+    repoId: resolveRepoId(cwd),
+    user: config?.user ?? currentUser(dir),
+    condition: config?.condition ?? null,
+    models: config?.models ?? null,
+    progress: counts.progress,
+    counts: {
+      total: counts.total,
+      fog: counts.fog,
+      explored: counts.explored,
+      validated: counts.validated,
+      stale: counts.stale,
+    },
+    provinces,
+    stale,
+    pendingQuests: pending.length,
+  };
+}
+
+type StatusView = ReturnType<typeof buildStatus>;
+
+/** Render the human-readable status summary. */
+function renderStatus(s: StatusView): string {
+  const lines: string[] = [];
+  lines.push(`SCALE status — ${s.repoId}`);
+  const cond = s.condition ? `${s.condition.timing}/${s.condition.modality}` : '(no config)';
+  const models = s.models ? `${s.models.build}/${s.models.intervention}` : '(no config)';
+  lines.push(`  user: ${s.user}   condition: ${cond}   models: ${models}`);
+  lines.push('');
+
+  if (s.counts.total === 0) {
+    lines.push('  No coverage memory found — run `/scale-map` to build .scale/, then `scale map layout`.');
+    return lines.join('\n');
+  }
+
+  lines.push(`  unification progress: ${Math.round(s.progress * 100)}%  (importance-weighted)`);
+  lines.push(
+    `  states: ${s.counts.fog} fog · ${s.counts.explored} explored · ` +
+      `${s.counts.validated} validated · ${s.counts.stale} stale  (${s.counts.total} total)`,
+  );
+  lines.push('');
+
+  // Per-province rollup: id + skin-neutral state + comprehension mean.
+  const allComps = s.provinces.flatMap((p) => p.components);
+  const idW = Math.max(4, ...allComps.map((c) => c.id.length));
+  const stateW = 9; // 'validated'
+  const pad = (str: string, w: number): string => str + ' '.repeat(Math.max(0, w - str.length));
+  for (const p of s.provinces) {
+    lines.push(`${p.name}`);
+    for (const c of p.components) {
+      lines.push(`  ${pad(c.id, idW)}  ${pad(c.state, stateW)}  ${c.mean.toFixed(2)}`);
+    }
+    lines.push('');
+  }
+
+  if (s.stale.length > 0) {
+    lines.push(`Needs re-validation (stale): ${s.stale.length}`);
+    for (const id of s.stale) lines.push(`  - ${id}`);
+    lines.push('');
+  }
+
+  lines.push(`Pending quests: ${s.pendingQuests}`);
+  return lines.join('\n');
+}
+
+program
+  .command('status')
+  .description(
+    'Coverage at a glance: unification progress, per-province states, stale ' +
+      'territory, and pending quests. Read-only, no LLM (git+file reads only).',
+  )
+  .option('--json', 'emit machine-readable JSON instead of the summary', false)
+  .action((opts: { json?: boolean }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    let res: RecomputeResult;
+    try {
+      res = recomputeCoverageFromDisk(cwd);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (opts.json) console.log(JSON.stringify({ error: msg }, null, 2));
+      else console.error(`scale: coverage unavailable (${msg}).`);
+      process.exitCode = 1;
+      return;
+    }
+    const status = buildStatus(cwd, res, dir);
+    if (opts.json) {
+      console.log(JSON.stringify(status, null, 2));
+      return;
+    }
+    console.log(renderStatus(status));
   });
 
 // ---------------------------------------------------------------------------
@@ -936,10 +1080,74 @@ quest
 
 quest
   .command('complete')
-  .description('Mark a quest completed and record its outcome')
-  .argument('[questId]', 'quest to complete')
-  .action(() => {
-    stub('Phase 3', 'quest complete');
+  .description('Record a quest outcome, mark it completed, and update coverage')
+  .argument('<questId>', 'quest to complete')
+  .option('--results <json>', "quiz results: JSON array of {dim,score}, e.g. '[{\"dim\":\"concepts\",\"score\":1}]'")
+  .option('--socratic <json>', "socratic rubric: JSON object of dim→score, e.g. '{\"structure\":0.8}'")
+  .action(async (questId: string, opts: { results?: string; socratic?: string }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+
+    if (opts.results === undefined && opts.socratic === undefined) {
+      console.error(
+        "scale: usage — scale quest complete <questId> --results '<json [{dim,score}]>'" +
+          "  (or --socratic '<json {dim:score}>')",
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // Both paths go through the SAME shared functions the web endpoint uses, so
+    // a quest completes identically on the CLI and in the browser.
+    let completion;
+    if (opts.socratic !== undefined) {
+      let dims: unknown;
+      try {
+        dims = JSON.parse(opts.socratic);
+      } catch {
+        console.error('scale: --socratic must be a JSON object of dim→score.');
+        process.exitCode = 1;
+        return;
+      }
+      completion = await completeSocraticQuest(cwd, questId, dims);
+    } else {
+      let results: unknown;
+      try {
+        results = JSON.parse(opts.results!);
+      } catch {
+        console.error('scale: --results must be a JSON array of {dim,score}.');
+        process.exitCode = 1;
+        return;
+      }
+      if (!Array.isArray(results)) {
+        console.error('scale: --results must be a JSON array of {dim,score}.');
+        process.exitCode = 1;
+        return;
+      }
+      completion = await completeQuizQuest(cwd, questId, results);
+    }
+
+    if (!completion) {
+      console.error(`scale: unknown quest "${questId}".`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const { componentId, recorded, component } = completion;
+    console.log(
+      `scale: quest ${questId} completed — recorded ${recorded} result(s) for "${componentId}".`,
+    );
+    console.log(
+      `  ${componentId} → ${component.state}  ` +
+        `[structure ${fmt(component.dims.structure)}, concepts ${fmt(component.dims.concepts)}, ` +
+        `rationale ${fmt(component.dims.rationale)}]`,
+    );
+    const mean = meanDims(component.dims);
+    const validateDim = readConfigSafe(dir)?.thresholds.validateDim ?? 0.6;
+    const verdict = component.state === 'validated' ? 'validated' : 'needs more validation';
+    console.log(
+      `  comprehension ${mean.toFixed(2)} / ${validateDim.toFixed(2)} (${verdict})`,
+    );
   });
 
 // ---------------------------------------------------------------------------
@@ -950,7 +1158,13 @@ const map = program.command('map').description('Map layout, drift, and index ope
 map
   .command('layout')
   .description('Compute/extend the frozen spatial layout → .scale/map.json (deterministic)')
-  .action(() => {
+  .option(
+    '--relayout',
+    'recompute the whole layout from scratch (deterministic), ignoring existing ' +
+      'coordinates; without it, existing node coords are preserved incrementally',
+    false,
+  )
+  .action((opts: { relayout?: boolean }) => {
     const cwd = process.cwd();
     const scaleDir = path.join(cwd, '.scale');
     if (!fs.existsSync(scaleDir)) {
@@ -970,17 +1184,26 @@ map
         edges: loaded.edges,
         builtFromSha: headSha(cwd) || existing?.builtFromSha || '',
       },
-      existing,
+      // --relayout forces a full recompute; otherwise honor existing coords.
+      opts.relayout ? null : existing,
+      { relayout: !!opts.relayout },
     );
 
     fs.writeFileSync(
       path.join(scaleDir, 'map.json'),
       JSON.stringify(mapJson, null, 2) + '\n',
     );
-    console.log(
-      `scale: ${mapJson.provinces.length} province(s), ` +
-        `${mapJson.nodes.length} component(s) (${newCount} new) → .scale/map.json`,
-    );
+    if (opts.relayout) {
+      console.log(
+        `scale: relaid out ${mapJson.nodes.length} components across ` +
+          `${mapJson.provinces.length} provinces → .scale/map.json`,
+      );
+    } else {
+      console.log(
+        `scale: ${mapJson.provinces.length} province(s), ` +
+          `${mapJson.nodes.length} component(s) (${newCount} new) → .scale/map.json`,
+      );
+    }
   });
 
 map

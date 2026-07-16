@@ -39,8 +39,7 @@ import {
   appendEvidence,
 } from './state.js';
 import { recomputeCoverageFromDisk } from './coverage.js';
-
-const DIM_NAMES: DimName[] = ['structure', 'concepts', 'rationale'];
+import { completeQuizQuest } from './quest.js';
 
 /** ≤3-exchange socratic dialogue cap (PLAN §6, web quest runner). */
 const SOCRATIC_MAX_EXCHANGES = 3;
@@ -70,8 +69,44 @@ function readConfigOrDefault(dir: string): ScaleConfig {
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-/** packages/cli/{src|dist} → packages/web/dist */
-const WEB_DIST = path.resolve(here, '..', '..', 'web', 'dist');
+
+/**
+ * Resolve the built web SPA (`web-dist`) so `scale serve` works whether it runs
+ * from the self-contained plugin bundle (bin/scale.mjs, with web-dist copied
+ * next to bin/) or from the monorepo (packages/cli/{src,dist} → packages/web/dist).
+ * First existing directory wins; if none exist we return the monorepo path so
+ * `serveStatic` shows the graceful "run build" page.
+ *
+ * Order:
+ *   1. $SCALE_WEB_DIST                       — explicit override
+ *   2. <bundle>/../web-dist, <bundle>/web-dist — bundle-relative (import.meta.url)
+ *   3. <argv1>/../web-dist,  <argv1>/web-dist  — wrapper/argv fallback
+ *   4. <this>/../../web/dist                 — monorepo layout
+ */
+function resolveWebDist(): string {
+  const candidates: string[] = [];
+  if (process.env.SCALE_WEB_DIST) candidates.push(path.resolve(process.env.SCALE_WEB_DIST));
+  candidates.push(path.resolve(here, '..', 'web-dist'));
+  candidates.push(path.resolve(here, 'web-dist'));
+  const argv1 = process.argv[1];
+  if (argv1) {
+    const argvDir = path.dirname(path.resolve(argv1));
+    candidates.push(path.resolve(argvDir, '..', 'web-dist'));
+    candidates.push(path.resolve(argvDir, 'web-dist'));
+  }
+  const monorepo = path.resolve(here, '..', '..', 'web', 'dist');
+  candidates.push(monorepo);
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(path.join(c, 'index.html'))) return c;
+    } catch {
+      /* skip unreadable candidate */
+    }
+  }
+  return monorepo;
+}
+
+const WEB_DIST = resolveWebDist();
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -216,7 +251,7 @@ async function handle(
   if (req.method === 'POST') {
     const completeMatch = /^\/api\/quests\/([^/]+)\/complete\/?$/.exec(pathname);
     if (completeMatch) {
-      await handleQuestComplete(req, res, cwd, dir, decodeURIComponent(completeMatch[1]!));
+      await handleQuestComplete(req, res, cwd, decodeURIComponent(completeMatch[1]!));
       return;
     }
     const socraticMatch = /^\/api\/socratic\/([^/]+)\/message\/?$/.exec(pathname);
@@ -315,70 +350,30 @@ async function handle(
 // ---------------------------------------------------------------------------
 
 /**
- * Record a completed quiz quest: append one quiz_result (origin 'session') per
- * graded dimension, mark the quest completed, re-materialize coverage, and return
- * the updated component coverage. Body: `{ results: [{ dim, score }] }`.
+ * Record a completed quiz quest via the shared `completeQuizQuest` (the exact
+ * same code path the CLI's `scale quest complete` uses — no divergence): append
+ * one quiz_result (origin 'session') per graded dimension, mark the quest
+ * completed, re-materialize coverage, and return the updated component coverage.
+ * Body: `{ results: [{ dim, score }] }`.
  */
 async function handleQuestComplete(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   cwd: string,
-  dir: string,
   questId: string,
 ): Promise<void> {
   const body = parseBody(await readBody(req));
-  const quests = readQuestsSafe(dir);
-  const quest = quests.find((q) => q.id === questId);
-  if (!quest) {
+  const results = Array.isArray(body.results) ? body.results : [];
+  const result = await completeQuizQuest(cwd, questId, results);
+  if (!result) {
     sendJson(res, 404, { error: 'unknown quest', id: questId });
     return;
   }
-
-  const user = readConfigSafe(dir)?.user ?? process.env.USER ?? 'user';
-  const sha = shortHeadSha(cwd);
-  const now = new Date().toISOString();
-  const results = Array.isArray(body.results) ? (body.results as Record<string, unknown>[]) : [];
-  let recorded = 0;
-  for (const r of results) {
-    const dim = r.dim;
-    const score = r.score;
-    if (typeof dim !== 'string' || !(DIM_NAMES as string[]).includes(dim)) continue;
-    if (typeof score !== 'number' || Number.isNaN(score) || score < 0 || score > 1) continue;
-    try {
-      await appendEvidence(dir, {
-        type: 'quiz_result',
-        ts: now,
-        user,
-        componentId: quest.componentId,
-        dim: dim as DimName,
-        score,
-        sha,
-        origin: 'session',
-      });
-      recorded++;
-    } catch {
-      /* skip a single invalid result; keep going */
-    }
-  }
-
-  // Mark the quest completed (persist).
-  const updated = quests.map((q) => (q.id === questId ? { ...q, status: 'completed' as const } : q));
-  fs.writeFileSync(paths.quests(dir), JSON.stringify(updated, null, 2) + '\n');
-
-  // Re-materialize coverage so the returned component reflects the new results.
-  let component = emptyComponentCoverage();
-  try {
-    const { coverage } = recomputeCoverageFromDisk(cwd);
-    component = coverage.components[quest.componentId] ?? component;
-  } catch {
-    /* fall back to the empty record */
-  }
-
   sendJson(res, 200, {
-    componentId: quest.componentId,
-    recorded,
+    componentId: result.componentId,
+    recorded: result.recorded,
     quest: { id: questId, status: 'completed' },
-    component,
+    component: result.component,
   });
 }
 

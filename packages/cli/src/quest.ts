@@ -27,6 +27,7 @@ import {
   type LoadedScale,
   type LoadedPaper,
   type UserCoverage,
+  type ComponentCoverage,
   type MapJson,
   type Quest,
   type QuestItem,
@@ -45,6 +46,7 @@ import {
   stateDir,
   paths,
   ensureStateDir,
+  appendEvidence,
   readConfigSafe,
   readQuestsSafe,
   readSessionSafe,
@@ -514,4 +516,150 @@ export async function generateQuests(
     path: questsPath,
     components: quests.map((q) => q.componentId),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Quest completion — the shared record → mark → recompute path (PLAN §5.1/§7.3)
+//
+// This is the SINGLE source of truth for completing a quest. BOTH the web
+// endpoint (`POST /api/quests/:id/complete`) and the CLI (`scale quest
+// complete`) call these functions, so a quest completes identically whether it
+// is graded in the browser or on the command line (no divergence).
+// ---------------------------------------------------------------------------
+
+const DIM_NAMES: DimName[] = ['structure', 'concepts', 'rationale'];
+
+export interface QuestCompletion {
+  /** The component the completed quest belongs to. */
+  componentId: string;
+  /** How many graded results were actually recorded (invalid ones skipped). */
+  recorded: number;
+  /** The component's coverage AFTER re-materialization (state + dims). */
+  component: ComponentCoverage;
+}
+
+/** Best-effort user label for the state dir at `cwd`. */
+function completionUser(dir: string): string {
+  return readConfigSafe(dir)?.user ?? process.env.USER ?? 'user';
+}
+
+/**
+ * Mark `questId` completed and return its updated component coverage. Appends a
+ * `quiz_result` (origin 'session') per valid graded dimension, flips the quest
+ * to `completed` in quests.json, re-materializes coverage, and returns the
+ * component. Returns `null` when the quest id is unknown (callers map that to a
+ * 404 / error). `results` is the raw `[{dim, score}]` array; malformed entries
+ * are skipped (a score must be a number in [0,1] on a real dim name).
+ */
+export async function completeQuizQuest(
+  cwd: string,
+  questId: string,
+  results: unknown,
+): Promise<QuestCompletion | null> {
+  const dir = stateDir(cwd);
+  const quests = readQuestsSafe(dir);
+  const quest = quests.find((q) => q.id === questId);
+  if (!quest) return null;
+
+  const user = completionUser(dir);
+  const sha = shortHeadSha(cwd);
+  const now = new Date().toISOString();
+  const arr = Array.isArray(results) ? (results as Record<string, unknown>[]) : [];
+
+  let recorded = 0;
+  for (const r of arr) {
+    const dim = r?.dim;
+    const score = r?.score;
+    if (typeof dim !== 'string' || !(DIM_NAMES as string[]).includes(dim)) continue;
+    if (typeof score !== 'number' || Number.isNaN(score) || score < 0 || score > 1) continue;
+    try {
+      await appendEvidence(dir, {
+        type: 'quiz_result',
+        ts: now,
+        user,
+        componentId: quest.componentId,
+        dim: dim as DimName,
+        score,
+        sha,
+        origin: 'session',
+      });
+      recorded++;
+    } catch {
+      /* skip a single invalid result; keep going */
+    }
+  }
+
+  return finishCompletion(cwd, dir, quests, questId, quest.componentId, recorded);
+}
+
+/**
+ * Socratic counterpart to {@link completeQuizQuest}: record ONE
+ * `socratic_result` (origin 'session') carrying the per-dim rubric scores, mark
+ * the quest completed, recompute, and return the component. For a socratic quest
+ * that was run OUTSIDE the web chat (e.g. in-chat tutor) and now needs to be
+ * closed out from the CLI. `dims` is a raw `{dim: score}` object; only real dim
+ * names with a number in [0,1] are kept. Returns `null` for an unknown quest.
+ */
+export async function completeSocraticQuest(
+  cwd: string,
+  questId: string,
+  dims: unknown,
+): Promise<QuestCompletion | null> {
+  const dir = stateDir(cwd);
+  const quests = readQuestsSafe(dir);
+  const quest = quests.find((q) => q.id === questId);
+  if (!quest) return null;
+
+  const graded: Partial<Record<DimName, number>> = {};
+  if (dims && typeof dims === 'object') {
+    for (const d of DIM_NAMES) {
+      const v = (dims as Record<string, unknown>)[d];
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1) graded[d] = v;
+    }
+  }
+
+  let recorded = 0;
+  if (Object.keys(graded).length > 0) {
+    try {
+      await appendEvidence(dir, {
+        type: 'socratic_result',
+        ts: new Date().toISOString(),
+        user: completionUser(dir),
+        componentId: quest.componentId,
+        dims: graded,
+        sha: shortHeadSha(cwd),
+        origin: 'session',
+      });
+      recorded = Object.keys(graded).length;
+    } catch {
+      /* recording is best-effort — still conclude the quest */
+    }
+  }
+
+  return finishCompletion(cwd, dir, quests, questId, quest.componentId, recorded);
+}
+
+/** Shared tail: persist the completed status + recompute → component. */
+function finishCompletion(
+  cwd: string,
+  dir: string,
+  quests: Quest[],
+  questId: string,
+  componentId: string,
+  recorded: number,
+): QuestCompletion {
+  const updated = quests.map((q) =>
+    q.id === questId ? { ...q, status: 'completed' as const } : q,
+  );
+  ensureStateDir(dir);
+  fs.writeFileSync(paths.quests(dir), JSON.stringify(updated, null, 2) + '\n');
+
+  let component = emptyComponentCoverage();
+  try {
+    const { coverage } = recomputeCoverageFromDisk(cwd);
+    component = coverage.components[componentId] ?? component;
+  } catch {
+    /* fall back to the empty record */
+  }
+  return { componentId, recorded, component };
 }

@@ -117,6 +117,27 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  /* reset button chrome — these are hover/focus highlight triggers */
+  font-family: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 3px 7px;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.legend-item:hover,
+.legend-item-active {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--border);
+}
+.legend-item:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+.legend-item-active .legend-ko {
+  color: var(--text);
 }
 .legend-dot {
   width: 10px;
@@ -165,17 +186,43 @@ body {
   cursor: grabbing;
 }
 
-.province-label {
-  fill: var(--text-dim);
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+/* territory tier: filled province regions (semantic-zoom LOD) */
+.territory {
+  stroke-width: 2;
+  stroke-linejoin: round;
+  transition: fill-opacity 0.12s linear, stroke-opacity 0.12s linear;
+  pointer-events: none;
+}
+
+/* province name centered on its territory */
+.province-name {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+  paint-order: stroke;
+  stroke: rgba(6, 8, 13, 0.75);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: opacity 0.12s linear;
 }
 
 .edge {
   stroke: #333c4f;
   stroke-width: 1.5;
+  pointer-events: none;
+  transition: opacity 0.12s linear;
+}
+.edge-incident {
+  stroke: #7c8bb0;
+  stroke-width: 2.5;
+}
+.edge-incident.edge-reference {
+  stroke: #6d79a0;
+}
+.edge-incident.edge-depends_on {
+  stroke: #8b9bc4;
 }
 .edge-reference {
   stroke-dasharray: 5 5;
@@ -191,12 +238,21 @@ body {
 
 .node {
   cursor: pointer;
+  transition: opacity 0.12s linear;
 }
 .node circle {
   transition: opacity 0.2s ease;
 }
 .node:hover circle {
   filter: brightness(1.25);
+}
+.node-label-g {
+  transition: opacity 0.12s linear;
+}
+.node-label-pill {
+  fill: rgba(8, 10, 16, 0.82);
+  stroke: rgba(255, 255, 255, 0.06);
+  stroke-width: 1;
 }
 .node-label {
   fill: var(--text);
@@ -213,6 +269,31 @@ body {
   stroke: #ffffff;
   stroke-width: 2;
   opacity: 0.85;
+}
+
+/* legend-hover status highlight: matching castles POP with a bright halo */
+.highlight-ring {
+  fill: none;
+  stroke-width: 3.5;
+  opacity: 0.95;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: highlight-pulse 1.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.55));
+}
+.node-highlighted circle {
+  filter: brightness(1.35);
+}
+@keyframes highlight-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.95;
+  }
+  50% {
+    transform: scale(1.16);
+    opacity: 0.55;
+  }
 }
 .rebellion-ring {
   fill: none;
