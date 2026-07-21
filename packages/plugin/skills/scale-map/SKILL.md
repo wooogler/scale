@@ -167,8 +167,8 @@ in `scale estimate`), so the user must see the cost and pick the build model fir
 2. **Present that table to the user verbatim.**
 3. **Ask the user to confirm two things and STOP for their answer:**
    - **Proceed?** — do they want to run the (paid) build now, given the estimate?
-   - **Which build model?** — **Opus** or **Fable** (the build tier; never Sonnet
-     or Haiku — those are the intervention tier). The **default is
+   - **Which build model?** — **Opus** or **Fable** (the build tier; the
+     intervention tier is configured separately). The **default is
      `config.models.build`** (read it with `scale config get models.build`); offer
      that as the pre-selected option.
 4. **Do not begin Survey (or any repo analysis / paper writing) until the user

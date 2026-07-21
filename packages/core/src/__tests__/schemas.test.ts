@@ -9,6 +9,7 @@ import {
   EvidenceEntrySchema,
   QuestSchema,
   ScaleConfigSchema,
+  resolveInterventionModel,
 } from '../index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +55,54 @@ describe('schema fixtures', () => {
     expect(parsed.condition.modality).toBe('quiz');
     expect(parsed.inflow.triggers).toEqual(['pre-commit']);
     expect(parsed.thresholds.validateDim).toBe(0.6);
+  });
+
+  // The intervention tier is one token across providers, and older configs on
+  // disk must migrate rather than fail — a config that fails to parse is
+  // silently replaced by defaults everywhere, discarding the junior's condition
+  // assignment mid-study.
+  it('intervention tier resolves per provider', () => {
+    const model = (provider: string, intervention: string): string =>
+      resolveInterventionModel(
+        ScaleConfigSchema.parse({ user: 'x', models: { provider, intervention } }).models,
+      );
+    expect(model('anthropic', 'sonnet')).toBe('claude-sonnet-5');
+    expect(model('anthropic', 'opus')).toBe('claude-opus-4-8');
+    expect(model('openai', 'sonnet')).toBe('gpt-5.6-terra');
+    expect(model('openai', 'opus')).toBe('gpt-5.6-sol');
+  });
+
+  it('an explicit openaiModel overrides the tier mapping', () => {
+    const parsed = ScaleConfigSchema.parse({
+      user: 'x',
+      models: { provider: 'openai', intervention: 'opus', openaiModel: 'gpt-custom' },
+    });
+    expect(resolveInterventionModel(parsed.models)).toBe('gpt-custom');
+  });
+
+  it('migrates a legacy config instead of discarding it', () => {
+    const parsed = ScaleConfigSchema.parse({
+      user: 'x',
+      budgets: { maxPerSession: 7 },
+      // Both fields as an older SCALE wrote them.
+      models: { intervention: 'haiku', provider: 'openai', openaiModel: 'gpt-4o-mini' },
+    });
+    expect(parsed.models.intervention).toBe('sonnet');
+    // The old persisted DEFAULT must not survive as a pinned override.
+    expect(parsed.models.openaiModel).toBeUndefined();
+    expect(resolveInterventionModel(parsed.models)).toBe('gpt-5.6-terra');
+    // Everything else survives — this is a migration, not a reset.
+    expect(parsed.budgets.maxPerSession).toBe(7);
+  });
+
+  it('rejects a negative interruption budget', () => {
+    expect(() =>
+      ScaleConfigSchema.parse({ user: 'x', budgets: { maxPerSession: -1 } }),
+    ).toThrow();
+    // 0 is meaningful ("never interrupt on commit"), so it must still parse.
+    expect(
+      ScaleConfigSchema.parse({ user: 'x', budgets: { maxPerCommit: 0 } }).budgets.maxPerCommit,
+    ).toBe(0);
   });
 
   it('evidence.jsonl parses line-by-line, one per type', () => {

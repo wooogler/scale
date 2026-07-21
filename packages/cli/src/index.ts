@@ -673,8 +673,10 @@ gate
 
     if (decision.action === 'deny' && decision.component) {
       const component = decision.component;
-      // Record that we SHOWED an in-flow intervention (accounting only — no dim
-      // change). Best-effort: a write failure must not turn the deny into noise.
+      // Record that we REQUESTED an in-flow intervention (accounting only — no
+      // dim change). Not 'shown': the gate only asks the agent to run the check,
+      // and whether it ever reached the junior is decided downstream.
+      // Best-effort: a write failure must not turn the deny into noise.
       try {
         await appendEvidence(dir, {
           type: 'intervention',
@@ -683,7 +685,7 @@ gate
           componentId: component,
           timing: 'inflow',
           modality: config.condition.modality,
-          outcome: 'shown',
+          outcome: 'requested',
         });
       } catch {
         /* keep going — the deny is what matters to the hook */
@@ -719,9 +721,21 @@ gate
       'unconquered. Pure file append, no LLM.',
   )
   .argument('<componentId>', 'component whose in-flow check the user is skipping')
-  .action(async (componentId: string) => {
+  .option(
+    '--by <who>',
+    "who chose to skip: 'user' (the junior declined) or 'agent' (the agent " +
+      'skipped without asking, e.g. it authored the commit itself). Only ' +
+      "'user' is a real deferral decision for study purposes",
+    'user',
+  )
+  .action(async (componentId: string, opts: { by: string }) => {
     const cwd = process.cwd();
     const dir = stateDir(cwd);
+    if (opts.by !== 'user' && opts.by !== 'agent') {
+      console.error(`scale: --by must be 'user' or 'agent' (got '${opts.by}').`);
+      process.exitCode = 1;
+      return;
+    }
     // Modality is accounting metadata; use the configured condition (schema
     // default pre-`init` so defer works even before state is set up).
     const config: ScaleConfig =
@@ -731,6 +745,7 @@ gate
     // The marker: an inflow intervention with outcome 'deferred'. This is exactly
     // what `recentlyAddressedComponents` (and the pure gate) scan for, so the very
     // next `git commit` on the same staged diff passes the gate (defer = drop).
+    // `by` keeps an agent-side skip out of the junior's choice data.
     await appendEvidence(dir, {
       type: 'intervention',
       ts: now,
@@ -739,6 +754,7 @@ gate
       timing: 'inflow',
       modality: config.condition.modality,
       outcome: 'deferred',
+      by: opts.by,
     });
 
     // Clear the pending marker if this is what the last deny was waiting on, so the
@@ -749,7 +765,8 @@ gate
     }
 
     console.log(
-      `scale: skipped '${componentId}' — territory stays unconquered; commit will proceed.`,
+      `scale: skipped '${componentId}' (by ${opts.by}) — territory stays unconquered; ` +
+        'commit will proceed.',
     );
   });
 
@@ -987,7 +1004,7 @@ function renderEstimate(files: number, est: BuildEstimate): string {
   );
   lines.push(
     `and cheap (~${usd(0.15)}–${usd(1)}/session) and run on ${MODEL_RATES.sonnet5!.name} or ` +
-      `${MODEL_RATES.haiku45!.name} (config.models.intervention).`,
+      `${MODEL_RATES.opus48!.name} (config.models.intervention).`,
   );
   return lines.join('\n');
 }

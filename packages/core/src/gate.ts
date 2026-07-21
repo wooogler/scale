@@ -143,14 +143,29 @@ function topCandidate(cands: Candidate[], importance?: Record<string, number>): 
   return sorted[0]!;
 }
 
-/** Build the agent-facing deny instruction for a target component + modality. */
+/**
+ * Build the agent-facing deny instruction for a target component + modality.
+ *
+ * This text is read by the AGENT, not by the junior — which is exactly why it
+ * has to be emphatic about handing the check over. An earlier version listed
+ * `scale gate defer` as a co-equal option, and an agent that found the check
+ * inconvenient could skip it silently: the junior never learned an intervention
+ * was due, while the evidence log recorded one as delivered and spent a budget
+ * slot. Deferring is the JUNIOR's call (PLAN §6.1 "defer = drop, their choice"),
+ * so the agent must present the check and may only skip when told to — and when
+ * it skips anyway, `--by agent` keeps that out of the study's user-choice data.
+ */
 export function gateDenyReason(component: string, modality: string): string {
   return (
-    `Before committing, run a ${modality} comprehension check on the ` +
-    `'${component}' territory using the scale-tutor skill (it's fog/stale/` +
-    `low-coverage and you just changed it). After the junior completes it ` +
-    `(scale record), retry the commit — or run ` +
-    `\`scale gate defer ${component}\` to skip, then retry the commit.`
+    `SCALE in-flow check — this is for the JUNIOR, not for you to resolve.\n` +
+    `Run the ${modality} comprehension check on the '${component}' territory ` +
+    `using the scale-tutor skill and put it in front of them now (it's ` +
+    `fog/stale/low-coverage and they just changed it). After they complete it ` +
+    `(scale record), retry the commit.\n` +
+    `Do NOT skip this on their behalf. If — and only if — they say to skip, run ` +
+    `\`scale gate defer ${component}\`, then retry. If you skip without asking ` +
+    `(e.g. you authored this commit yourself), you MUST run ` +
+    `\`scale gate defer ${component} --by agent\` and say so in your reply.`
   );
 }
 

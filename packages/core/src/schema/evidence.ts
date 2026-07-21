@@ -86,14 +86,27 @@ export const SocraticResultEvidenceSchema = z.object({
   origin: ValidationOriginSchema.optional(),
 });
 
-/** An intervention was shown/deferred/completed. */
+/**
+ * An intervention's lifecycle. The distinction between the first two matters for
+ * study validity:
+ *
+ *  - `requested` — the gate fired and asked the agent to run a check. This is
+ *    ALL the gate can honestly claim: it does not present anything itself.
+ *  - `shown` — the check actually reached the junior.
+ *  - `deferred` / `completed` — how it ended. `by` records who deferred, so an
+ *    agent skipping on the junior's behalf never pollutes user-choice data.
+ *
+ * `shown` is also accepted from older logs, where the gate wrote it at fire time.
+ */
 export const InterventionEvidenceSchema = z.object({
   ...baseEvidence,
   type: z.literal('intervention'),
   componentId: z.string(),
   timing: z.enum(['inflow', 'postsession']),
   modality: z.enum(['quiz', 'socratic']),
-  outcome: z.enum(['shown', 'deferred', 'completed']),
+  outcome: z.enum(['requested', 'shown', 'deferred', 'completed']),
+  /** Who deferred. Absent on non-deferred outcomes and on pre-`by` logs. */
+  by: z.enum(['user', 'agent']).optional(),
 });
 
 /** Append-only raw signal, discriminated on `type`. */

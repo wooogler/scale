@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
-import type { LlmProvider, ScaleConfig } from '@scale/core/browser';
+import { OPENAI_INTERVENTION_IDS, type LlmProvider, type ScaleConfig } from '@scale/core/browser';
 import {
   loadSettings,
   saveKey,
@@ -101,18 +101,25 @@ function DraftInput({
   numeric,
   onCommit,
   className,
+  placeholder,
+  disabled,
+  allowEmpty,
 }: {
   value: string | number;
   numeric?: boolean;
   onCommit: (raw: string) => void;
   className?: string;
+  placeholder?: string;
+  disabled?: boolean;
+  /** Empty is a meaningful value (clears an override) rather than a mistake. */
+  allowEmpty?: boolean;
 }): JSX.Element {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
 
   const commit = (): void => {
     if (draft.trim() === String(value)) return;
-    if (!draft.trim()) {
+    if (!draft.trim() && !allowEmpty) {
       setDraft(String(value)); // empty is never a valid setting — snap back
       return;
     }
@@ -125,6 +132,8 @@ function DraftInput({
       type={numeric ? 'number' : 'text'}
       min={numeric ? 0 : undefined}
       spellCheck={false}
+      placeholder={placeholder}
+      disabled={disabled}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
@@ -335,36 +344,50 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
               patch({ models: { provider } }, (c) => ({ ...c, models: { ...c.models, provider } }))
             }
           />
-          {m.provider === 'anthropic' ? (
-            <ChoiceRow
-              label="Claude tier"
-              value={m.intervention}
-              disabled={saving}
-              options={[
-                { value: 'haiku' as const, label: 'Haiku', hint: 'cheapest, fastest' },
-                { value: 'sonnet' as const, label: 'Sonnet', hint: 'stronger dialogue' },
-              ]}
-              onPick={(intervention) =>
-                patch({ models: { intervention } }, (c) => ({
+          {/* One tier token drives both providers, so switching provider keeps
+              the tier you picked instead of silently changing model class. */}
+          <ChoiceRow
+            label="Tier"
+            ko="등급"
+            value={m.intervention}
+            disabled={saving}
+            options={
+              m.provider === 'anthropic'
+                ? [
+                    { value: 'sonnet' as const, label: 'Sonnet 5', hint: 'claude-sonnet-5' },
+                    { value: 'opus' as const, label: 'Opus 4.8', hint: 'claude-opus-4-8' },
+                  ]
+                : [
+                    { value: 'sonnet' as const, label: 'GPT-5.6 Terra', hint: 'gpt-5.6-terra' },
+                    { value: 'opus' as const, label: 'GPT-5.6 Sol', hint: 'gpt-5.6-sol' },
+                  ]
+            }
+            onPick={(intervention) =>
+              patch({ models: { intervention } }, (c) => ({
+                ...c,
+                models: { ...c.models, intervention },
+              }))
+            }
+          />
+          <div className="set-row">
+            <div className="set-label">
+              Model id <span className="ko-sub">직접 지정</span>
+            </div>
+            <DraftInput
+              value={m.openaiModel ?? ''}
+              placeholder={
+                m.provider === 'openai' ? OPENAI_INTERVENTION_IDS[m.intervention] : '(OpenAI only)'
+              }
+              allowEmpty
+              disabled={m.provider !== 'openai'}
+              onCommit={(openaiModel) =>
+                patch({ models: { openaiModel: openaiModel || undefined } }, (c) => ({
                   ...c,
-                  models: { ...c.models, intervention },
+                  models: { ...c.models, openaiModel: openaiModel || undefined },
                 }))
               }
             />
-          ) : (
-            <div className="set-row">
-              <div className="set-label">OpenAI model</div>
-              <DraftInput
-                value={m.openaiModel}
-                onCommit={(openaiModel) =>
-                  patch({ models: { openaiModel } }, (c) => ({
-                    ...c,
-                    models: { ...c.models, openaiModel },
-                  }))
-                }
-              />
-            </div>
-          )}
+          </div>
           <ChoiceRow
             label="Build model"
             ko="지도 생성"
@@ -380,7 +403,8 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
           />
           <p className="set-note">
             The build tier is Claude-only — a coverage-memory build is long-horizon reasoning. Only
-            interventions (quests, Socratic dialogue) follow the provider above.
+            interventions (quests, Socratic dialogue) follow the provider above. Leave “Model id”
+            empty to use the tier’s default GPT model.
           </p>
         </section>
 

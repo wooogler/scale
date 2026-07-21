@@ -32,7 +32,6 @@ export const MODEL_RATES: Record<string, ModelRate> = {
   opus48: { name: 'Opus 4.8', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   sonnet5: { name: 'Sonnet 5', input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   fable5: { name: 'Fable 5', input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
-  haiku45: { name: 'Haiku 4.5', input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
 };
 
 /**
@@ -85,8 +84,8 @@ export const COMPONENT_CLAMP = { min: 5, max: 80 } as const;
 
 /**
  * The BUILD-tier models shown in the estimate table — Opus 4.8 and Fable 5 ONLY.
- * Sonnet/Haiku are the INTERVENTION tier (quiz/socratic) and are deliberately
- * excluded from the build table; they appear only in the footer note.
+ * The INTERVENTION tier (quiz/socratic) is a separate, recurring cost and is
+ * deliberately excluded from the build table; it appears only in the footer note.
  */
 export const ESTIMATE_MODEL_KEYS = ['opus48', 'fable5'] as const;
 

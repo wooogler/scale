@@ -95,12 +95,22 @@ remote, else the folder name).
 ### Configure the models (fixed two-tier policy)
 
 ```bash
-scale config set models.build opus          # BUILD:        opus | fable    (default opus)
-scale config set models.intervention haiku  # INTERVENTION: sonnet | haiku  (default haiku)
+scale config set models.build opus           # BUILD:        opus | fable    (default opus)
+scale config set models.intervention sonnet  # INTERVENTION: sonnet | opus   (default sonnet)
+scale config set models.provider anthropic   # INTERVENTION api: anthropic | openai
 ```
 
-Tokens resolve to concrete ids (`claude-opus-4-8`, `claude-fable-5`, `claude-sonnet-5`,
-`claude-haiku-4-5`). The 2×2 study condition lives in the same config:
+The intervention tier is one token across both providers, so switching provider keeps the
+tier you chose:
+
+| `models.intervention` | `provider: anthropic` | `provider: openai` |
+|---|---|---|
+| `sonnet` | `claude-sonnet-5` | `gpt-5.6-terra` |
+| `opus` | `claude-opus-4-8` | `gpt-5.6-sol` |
+
+Build tokens resolve the same way (`claude-opus-4-8`, `claude-fable-5`); the build tier is
+Claude-only. Set `models.openaiModel` to pin an explicit GPT model id instead of the tier
+mapping. The 2×2 study condition lives in the same config:
 
 ```bash
 scale config set condition.timing inflow|postsession
@@ -189,8 +199,8 @@ validation, no terminal needed.
 | `budgets.*` | non-negative numbers | Interruption ceiling: per commit, per session, cooldown, minimum changed lines. `0` means "off". |
 | `models.build` | `opus` \| `fable` | Model for the one-time coverage-memory build. |
 | `models.provider` | `anthropic` \| `openai` | Which API serves **interventions**. |
-| `models.intervention` | `sonnet` \| `haiku` | Claude tier, used when provider is `anthropic`. |
-| `models.openaiModel` | any model id | Used when provider is `openai` (default `gpt-4o-mini`). |
+| `models.intervention` | `sonnet` \| `opus` | Intervention tier; resolves per provider (see table above). |
+| `models.openaiModel` | any model id | Optional override pinning an explicit GPT model. |
 
 The build tier stays Claude-only — a coverage-memory build is long-horizon reasoning the
 model policy pins deliberately. Only interventions follow `models.provider`.
@@ -215,7 +225,7 @@ links to Settings.
 - **Build (one-time, Opus/Fable).** ~$11 for a ~6k-LOC repo on Opus; Fable runs ~2× the
   output (always-on thinking) and costs more. `scale estimate` previews the exact figure
   per model before you commit.
-- **Interventions (recurring, Sonnet/Haiku).** ~$0.15–$1 per session for quiz/Socratic
+- **Interventions (recurring, Sonnet 5 / Opus 4.8 tier).** ~$0.15–$1 per session for quiz/Socratic
   checks and quest generation.
 
 The build is expensive but happens once; interventions are cheap because they repeat every

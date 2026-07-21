@@ -26698,7 +26698,9 @@ var InterventionEvidenceSchema = external_exports.object({
   componentId: external_exports.string(),
   timing: external_exports.enum(["inflow", "postsession"]),
   modality: external_exports.enum(["quiz", "socratic"]),
-  outcome: external_exports.enum(["shown", "deferred", "completed"])
+  outcome: external_exports.enum(["requested", "shown", "deferred", "completed"]),
+  /** Who deferred. Absent on non-deferred outcomes and on pre-`by` logs. */
+  by: external_exports.enum(["user", "agent"]).optional()
 });
 var EvidenceEntrySchema = external_exports.discriminatedUnion("type", [
   PromptEvidenceSchema,
@@ -26745,29 +26747,45 @@ var BudgetsSchema = external_exports.object({
   minChangedLines: external_exports.number().int().min(0).default(20)
 });
 var BuildModelSchema = external_exports.enum(["opus", "fable"]);
-var InterventionModelSchema = external_exports.enum(["sonnet", "haiku"]);
+var InterventionModelSchema = external_exports.preprocess((v) => v === "haiku" ? "sonnet" : v, external_exports.enum(["sonnet", "opus"]));
 var LlmProviderSchema = external_exports.enum(["anthropic", "openai"]);
-var ModelsConfigSchema = external_exports.object({
+var LEGACY_OPENAI_DEFAULT = "gpt-4o-mini";
+var ModelsConfigSchema = external_exports.preprocess((v) => {
+  if (!v || typeof v !== "object")
+    return v;
+  const m = v;
+  if (m.openaiModel !== LEGACY_OPENAI_DEFAULT)
+    return v;
+  const { openaiModel: _drop, ...rest } = m;
+  return rest;
+}, external_exports.object({
   /** Drives the build-cost estimator's default and the scale-map build. */
   build: BuildModelSchema.default("opus"),
-  /** Claude intervention tier, used when provider === 'anthropic'. */
-  intervention: InterventionModelSchema.default("haiku"),
+  /** Intervention tier. Resolves per provider — see {@link resolveInterventionModel}. */
+  intervention: InterventionModelSchema.default("sonnet"),
   /** Which provider serves interventions. */
   provider: LlmProviderSchema.default("anthropic"),
   /**
-   * Model id used when provider === 'openai'. Free-form so you can point it at
-   * whatever your key can call without waiting on a code change.
+   * Explicit OpenAI model id. Normally left unset: the `intervention` tier
+   * maps to a GPT model via {@link OPENAI_INTERVENTION_IDS}. Set it only to
+   * point at a model this build doesn't know about.
    */
-  openaiModel: external_exports.string().min(1).default("gpt-4o-mini")
-}).default({});
+  openaiModel: external_exports.string().min(1).optional()
+})).default({});
 var MODEL_IDS = {
   opus: "claude-opus-4-8",
   fable: "claude-fable-5",
-  sonnet: "claude-sonnet-5",
-  haiku: "claude-haiku-4-5"
+  sonnet: "claude-sonnet-5"
+};
+var OPENAI_INTERVENTION_IDS = {
+  sonnet: "gpt-5.6-terra",
+  opus: "gpt-5.6-sol"
 };
 function resolveInterventionModel(models) {
-  return models.provider === "openai" ? models.openaiModel : MODEL_IDS[models.intervention];
+  if (models.provider === "openai") {
+    return models.openaiModel ?? OPENAI_INTERVENTION_IDS[models.intervention];
+  }
+  return MODEL_IDS[models.intervention];
 }
 var ThresholdsSchema = external_exports.object({
   /** EMA weight on the newest active score (higher → faster, more visible movement). */
@@ -27540,7 +27558,9 @@ function topCandidate(cands, importance) {
   return sorted[0];
 }
 function gateDenyReason(component, modality) {
-  return `Before committing, run a ${modality} comprehension check on the '${component}' territory using the scale-tutor skill (it's fog/stale/low-coverage and you just changed it). After the junior completes it (scale record), retry the commit \u2014 or run \`scale gate defer ${component}\` to skip, then retry the commit.`;
+  return `SCALE in-flow check \u2014 this is for the JUNIOR, not for you to resolve.
+Run the ${modality} comprehension check on the '${component}' territory using the scale-tutor skill and put it in front of them now (it's fog/stale/low-coverage and they just changed it). After they complete it (scale record), retry the commit.
+Do NOT skip this on their behalf. If \u2014 and only if \u2014 they say to skip, run \`scale gate defer ${component}\`, then retry. If you skip without asking (e.g. you authored this commit yourself), you MUST run \`scale gate defer ${component} --by agent\` and say so in your reply.`;
 }
 function gateDecision(input) {
   const { config: config2, session } = input;
@@ -27580,8 +27600,7 @@ function gateDecision(input) {
 var MODEL_RATES = {
   opus48: { name: "Opus 4.8", input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   sonnet5: { name: "Sonnet 5", input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  fable5: { name: "Fable 5", input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
-  haiku45: { name: "Haiku 4.5", input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 }
+  fable5: { name: "Fable 5", input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }
 };
 var MEASURED_BUILD = {
   sourceLoc: 6080,
@@ -29323,7 +29342,7 @@ gate.command("commit").description(
         componentId: component,
         timing: "inflow",
         modality: config2.condition.modality,
-        outcome: "shown"
+        outcome: "requested"
       });
     } catch {
     }
@@ -29343,9 +29362,18 @@ gate.command("commit").description(
 });
 gate.command("defer").description(
   "Skip the pre-commit check for a component (defer = drop, PLAN \xA76.1). Writes the intervention(outcome:deferred) marker the gate recognizes so the retried commit passes; nothing is queued \u2014 the territory just stays unconquered. Pure file append, no LLM."
-).argument("<componentId>", "component whose in-flow check the user is skipping").action(async (componentId) => {
+).argument("<componentId>", "component whose in-flow check the user is skipping").option(
+  "--by <who>",
+  "who chose to skip: 'user' (the junior declined) or 'agent' (the agent skipped without asking, e.g. it authored the commit itself). Only 'user' is a real deferral decision for study purposes",
+  "user"
+).action(async (componentId, opts) => {
   const cwd = process.cwd();
   const dir = stateDir(cwd);
+  if (opts.by !== "user" && opts.by !== "agent") {
+    console.error(`scale: --by must be 'user' or 'agent' (got '${opts.by}').`);
+    process.exitCode = 1;
+    return;
+  }
   const config2 = readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? "user" });
   const now = nowIso();
   await appendEvidence(dir, {
@@ -29355,14 +29383,15 @@ gate.command("defer").description(
     componentId,
     timing: "inflow",
     modality: config2.condition.modality,
-    outcome: "deferred"
+    outcome: "deferred",
+    by: opts.by
   });
   const session = readSessionSafe(dir);
   if (session && session.pendingComponent === componentId) {
     writeSession(dir, { ...session, pendingComponent: null });
   }
   console.log(
-    `scale: skipped '${componentId}' \u2014 territory stays unconquered; commit will proceed.`
+    `scale: skipped '${componentId}' (by ${opts.by}) \u2014 territory stays unconquered; commit will proceed.`
   );
 });
 program2.command("record").description("Record a quiz/Socratic validation outcome (updates coverage)").argument("<componentId>", "component the outcome is for").option("-d, --dim <dim>", "quiz dimension: structure | concepts | rationale").option("-s, --score <0..1>", "quiz score in [0,1]").option("--socratic <json>", `per-dim rubric scores, e.g. '{"structure":0.8}'`).option(
@@ -29560,7 +29589,7 @@ function renderEstimate(files, est) {
     "time (wall-clock \u2248 time / #provinces). Interventions (quiz/socratic) are separate"
   );
   lines.push(
-    `and cheap (~${usd(0.15)}\u2013${usd(1)}/session) and run on ${MODEL_RATES.sonnet5.name} or ${MODEL_RATES.haiku45.name} (config.models.intervention).`
+    `and cheap (~${usd(0.15)}\u2013${usd(1)}/session) and run on ${MODEL_RATES.sonnet5.name} or ${MODEL_RATES.opus48.name} (config.models.intervention).`
   );
   return lines.join("\n");
 }

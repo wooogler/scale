@@ -35,15 +35,25 @@ export type Budgets = z.infer<typeof BudgetsSchema>;
  * Model tier selection (fixed policy).
  *   - BUILD (Mode B `scale-map`)      → Opus or Fable ONLY (high-capability).
  *   - INTERVENTION (quiz/socratic tutor, quest generation, socratic proxy)
- *                                     → Sonnet or Haiku ONLY (cheap, fast).
- * These are neutral choice tokens; the concrete Claude model ids live in
- * {@link MODEL_IDS} / {@link resolveModelId} so a model bump is a one-line edit.
+ *                                     → Sonnet 5 or Opus 4.8.
+ * These are neutral choice tokens; the concrete model ids live in
+ * {@link MODEL_IDS} / {@link OPENAI_INTERVENTION_IDS} so a model bump is a
+ * one-line edit and the same token works across providers.
  */
 export const BuildModelSchema = z.enum(['opus', 'fable']);
 export type BuildModel = z.infer<typeof BuildModelSchema>;
 
-export const InterventionModelSchema = z.enum(['sonnet', 'haiku']);
-export type InterventionModel = z.infer<typeof InterventionModelSchema>;
+/**
+ * Intervention tier. `haiku` was the old cheap tier; configs written before the
+ * change are migrated in place rather than failing validation — an unparseable
+ * config falls back to defaults everywhere, which would silently discard the
+ * junior's whole condition assignment mid-study.
+ */
+export const InterventionModelSchema = z.preprocess(
+  (v) => (v === 'haiku' ? 'sonnet' : v),
+  z.enum(['sonnet', 'opus']),
+);
+export type InterventionModel = 'sonnet' | 'opus';
 
 /**
  * Which API backs the INTERVENTION calls (quest generation + the web socratic
@@ -53,20 +63,35 @@ export type InterventionModel = z.infer<typeof InterventionModelSchema>;
 export const LlmProviderSchema = z.enum(['anthropic', 'openai']);
 export type LlmProvider = z.infer<typeof LlmProviderSchema>;
 
+/**
+ * The value `openaiModel` used to DEFAULT to, back when it was a required
+ * free-form field. Every config written then has it persisted on disk, where it
+ * would now read as a deliberate override and quietly defeat the tier mapping —
+ * so a config carrying exactly the old default is treated as "unset".
+ */
+const LEGACY_OPENAI_DEFAULT = 'gpt-4o-mini';
+
 export const ModelsConfigSchema = z
-  .object({
+  .preprocess((v) => {
+    if (!v || typeof v !== 'object') return v;
+    const m = v as Record<string, unknown>;
+    if (m.openaiModel !== LEGACY_OPENAI_DEFAULT) return v;
+    const { openaiModel: _drop, ...rest } = m;
+    return rest;
+  }, z.object({
     /** Drives the build-cost estimator's default and the scale-map build. */
     build: BuildModelSchema.default('opus'),
-    /** Claude intervention tier, used when provider === 'anthropic'. */
-    intervention: InterventionModelSchema.default('haiku'),
+    /** Intervention tier. Resolves per provider — see {@link resolveInterventionModel}. */
+    intervention: InterventionModelSchema.default('sonnet'),
     /** Which provider serves interventions. */
     provider: LlmProviderSchema.default('anthropic'),
     /**
-     * Model id used when provider === 'openai'. Free-form so you can point it at
-     * whatever your key can call without waiting on a code change.
+     * Explicit OpenAI model id. Normally left unset: the `intervention` tier
+     * maps to a GPT model via {@link OPENAI_INTERVENTION_IDS}. Set it only to
+     * point at a model this build doesn't know about.
      */
-    openaiModel: z.string().min(1).default('gpt-4o-mini'),
-  })
+    openaiModel: z.string().min(1).optional(),
+  }))
   .default({});
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 
@@ -75,18 +100,28 @@ export const MODEL_IDS = {
   opus: 'claude-opus-4-8',
   fable: 'claude-fable-5',
   sonnet: 'claude-sonnet-5',
-  haiku: 'claude-haiku-4-5',
 } as const;
 export type ModelChoice = keyof typeof MODEL_IDS;
 
 /**
- * Concrete model id for the INTERVENTION tier, honoring the configured provider:
- * the free-form OpenAI id when provider === 'openai', otherwise the Claude
- * intervention token. Callers should prefer this over `resolveModelId` so a
- * provider switch needs no call-site change.
+ * The same intervention tier, expressed in OpenAI models. One token drives both
+ * providers so switching provider doesn't silently change the tier you chose.
+ */
+export const OPENAI_INTERVENTION_IDS = {
+  sonnet: 'gpt-5.6-terra',
+  opus: 'gpt-5.6-sol',
+} as const satisfies Record<InterventionModel, string>;
+
+/**
+ * Concrete model id for the INTERVENTION tier, honoring the configured provider.
+ * An explicit `openaiModel` overrides the tier mapping. Callers should prefer
+ * this over `resolveModelId` so a provider switch needs no call-site change.
  */
 export function resolveInterventionModel(models: ModelsConfig): string {
-  return models.provider === 'openai' ? models.openaiModel : MODEL_IDS[models.intervention];
+  if (models.provider === 'openai') {
+    return models.openaiModel ?? OPENAI_INTERVENTION_IDS[models.intervention];
+  }
+  return MODEL_IDS[models.intervention];
 }
 
 /** Resolve a build/intervention choice token to its concrete Claude model id. */

@@ -12,7 +12,8 @@ called out in [What works / not yet](#what-works--not-yet).
 > - **BUILD** — the Mode B `scale-map` coverage-memory build — runs on **Opus 4.8
 >   or Fable 5 only**.
 > - **INTERVENTION** — quiz/socratic tutor, post-session quest generation, the web
->   socratic proxy — runs on **Sonnet 5 or Haiku 4.5 only**.
+>   socratic proxy — runs on the **Sonnet 5 / Opus 4.8 tier** (or the matching
+>   GPT-5.6 models when `models.provider` is `openai`).
 
 ---
 
@@ -50,14 +51,22 @@ must `scale init` before `config get/set` will work.
 
 ```bash
 scale config set models.build opus        # BUILD tier: opus | fable   (default opus)
-scale config set models.intervention haiku # INTERVENTION tier: sonnet | haiku (default haiku)
+scale config set models.intervention sonnet # INTERVENTION tier: sonnet | opus (default sonnet)
+scale config set models.provider anthropic  # INTERVENTION api: anthropic | openai
 scale config get models                   # { "build": ..., "intervention": ... }
 ```
 
-The scheme only accepts the allowed tokens (`opus|fable` for build,
-`sonnet|haiku` for intervention); anything else fails schema validation. Tokens
-map to concrete ids (`claude-opus-4-8`, `claude-fable-5`, `claude-sonnet-5`,
-`claude-haiku-4-5`).
+The schema only accepts the allowed tokens (`opus|fable` for build,
+`sonnet|opus` for intervention); anything else fails validation. The intervention
+token resolves per provider, so switching provider keeps the tier you chose:
+
+| `models.intervention` | `provider: anthropic` | `provider: openai` |
+|---|---|---|
+| `sonnet` | `claude-sonnet-5` | `gpt-5.6-terra` |
+| `opus` | `claude-opus-4-8` | `gpt-5.6-sol` |
+
+Set `models.openaiModel` to pin an explicit GPT model id instead. Build tokens map
+to `claude-opus-4-8` / `claude-fable-5` — the build tier is Claude-only.
 
 The manipulated **2×2 study condition** lives in the same config:
 
@@ -80,7 +89,7 @@ scale estimate --json     # machine-readable
 ```
 
 The estimate table lists **only the two build-tier models** (Opus 4.8, Fable 5) —
-Sonnet/Haiku are intervention-tier and never build. Fable costs more than Opus
+the intervention tier never builds. Fable costs more than Opus
 (its always-on thinking emits ~1.5× output). Example (this repo):
 
 ```
@@ -164,6 +173,11 @@ unconquered, nothing is queued):
 ```bash
 scale gate defer <component-id>   # writes the deferred marker; retry the commit → allowed
 ```
+
+Deferring is **the junior's call, not the agent's**. The deny message tells the
+agent to put the check in front of you and never skip on your behalf; if an agent
+skips a check on a commit it authored itself, it must use `--by agent` so the
+evidence log doesn't record it as your decision.
 
 The CLI's `scale gate commit` is pure git + file I/O (no LLM) and emits one JSON
 line `{"allow":bool,"component":str|null,"reason":str|null}`; the plugin hook
@@ -257,4 +271,5 @@ complete` on the CLI is not yet implemented — completion is via the web runner
   condition-assignment infra are deferred (`PLAN.md` §11).
 
 Build steps run on **Opus/Fable**; every intervention (quiz/socratic, quest
-generation, socratic proxy) runs on **Sonnet/Haiku**.
+generation, socratic proxy) runs on the **Sonnet 5 / Opus 4.8 tier** — or
+`gpt-5.6-terra` / `gpt-5.6-sol` when the provider is OpenAI.
