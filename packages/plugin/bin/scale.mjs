@@ -26746,7 +26746,6 @@ var BudgetsSchema = external_exports.object({
   cooldownMinutes: external_exports.number().min(0).default(15),
   minChangedLines: external_exports.number().int().min(0).default(20)
 });
-var BuildModelSchema = external_exports.enum(["opus", "fable"]);
 var InterventionModelSchema = external_exports.preprocess((v) => v === "haiku" ? "sonnet" : v, external_exports.enum(["sonnet", "opus"]));
 var LlmProviderSchema = external_exports.enum(["anthropic", "openai"]);
 var LEGACY_OPENAI_DEFAULT = "gpt-4o-mini";
@@ -26759,8 +26758,6 @@ var ModelsConfigSchema = external_exports.preprocess((v) => {
   const { openaiModel: _drop, ...rest } = m;
   return rest;
 }, external_exports.object({
-  /** Drives the build-cost estimator's default and the scale-map build. */
-  build: BuildModelSchema.default("opus"),
   /** Intervention tier. Resolves per provider — see {@link resolveInterventionModel}. */
   intervention: InterventionModelSchema.default("sonnet"),
   /** Which provider serves interventions. */
@@ -26773,9 +26770,8 @@ var ModelsConfigSchema = external_exports.preprocess((v) => {
   openaiModel: external_exports.string().min(1).optional()
 })).default({});
 var MODEL_IDS = {
-  opus: "claude-opus-4-8",
-  fable: "claude-fable-5",
-  sonnet: "claude-sonnet-5"
+  sonnet: "claude-sonnet-5",
+  opus: "claude-opus-4-8"
 };
 var OPENAI_INTERVENTION_IDS = {
   sonnet: "gpt-5.6-terra",
@@ -29166,7 +29162,7 @@ function renderStatus(s) {
   const lines = [];
   lines.push(`SCALE status \u2014 ${s.repoId}`);
   const cond = s.condition ? `${s.condition.timing}/${s.condition.modality}` : "(no config)";
-  const models = s.models ? `${s.models.build}/${s.models.intervention}` : "(no config)";
+  const models = s.models ? resolveInterventionModel(s.models) : "(no config)";
   lines.push(`  user: ${s.user}   condition: ${cond}   models: ${models}`);
   lines.push("");
   if (s.counts.total === 0) {

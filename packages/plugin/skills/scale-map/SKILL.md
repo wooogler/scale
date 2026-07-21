@@ -165,16 +165,18 @@ in `scale estimate`), so the user must see the cost and pick the build model fir
    estimated components, and estimated **cost + time for each BUILD model (Opus 4.8
    and Fable 5)**.
 2. **Present that table to the user verbatim.**
-3. **Ask the user to confirm two things and STOP for their answer:**
-   - **Proceed?** — do they want to run the (paid) build now, given the estimate?
-   - **Which build model?** — **Opus** or **Fable** (the build tier; the
-     intervention tier is configured separately). The **default is
-     `config.models.build`** (read it with `scale config get models.build`); offer
-     that as the pre-selected option.
-4. **Do not begin Survey (or any repo analysis / paper writing) until the user
-   explicitly confirms both.** If they decline, stop cleanly. This gate is
-   mandatory on every fresh build; only **Sync mode** (§5, updating an existing
-   `.scale/`) skips it, since sync touches only drifted papers, not a full build.
+3. **State the model YOU are running on.** The build happens in this Claude Code
+   session, so the model doing the work is the session's — there is no config key
+   that changes it, and no way for you to switch it yourself. Say plainly which
+   model you are. If it is **not Opus 4.8 or Fable 5**, tell the user the build
+   tier wants one of those and that they must switch with **`/model`** and re-run
+   `/scale-map`; do not proceed on a smaller model just because they asked.
+4. **Ask the user to confirm and STOP for their answer:** given the estimate and
+   the model you just named, do they want to run the (paid) build now?
+5. **Do not begin Survey (or any repo analysis / paper writing) until the user
+   explicitly confirms.** If they decline, stop cleanly. This gate is mandatory
+   on every fresh build; only **Sync mode** (§5, updating an existing `.scale/`)
+   skips it, since sync touches only drifted papers, not a full build.
 
 ### 1. Survey  →  propose, get approval
 

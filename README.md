@@ -95,10 +95,15 @@ remote, else the folder name).
 ### Configure the models (fixed two-tier policy)
 
 ```bash
-scale config set models.build opus           # BUILD:        opus | fable    (default opus)
 scale config set models.intervention sonnet  # INTERVENTION: sonnet | opus   (default sonnet)
 scale config set models.provider anthropic   # INTERVENTION api: anthropic | openai
 ```
+
+Only the **intervention** tier is configured — quiz/Socratic checks, quest generation, and
+the web Socratic proxy, which SCALE calls through the API itself. The **build** model is
+not a setting: `/scale-map` runs inside a Claude Code session, so it uses whatever model
+that session is on. Pick it with **`/model`** (Opus 4.8 or Fable 5) before you build; the
+skill's confirm gate states which model it is running on and stops if it's neither.
 
 The intervention tier is one token across both providers, so switching provider keeps the
 tier you chose:
@@ -108,8 +113,7 @@ tier you chose:
 | `sonnet` | `claude-sonnet-5` | `gpt-5.6-terra` |
 | `opus` | `claude-opus-4-8` | `gpt-5.6-sol` |
 
-Build tokens resolve the same way (`claude-opus-4-8`, `claude-fable-5`); the build tier is
-Claude-only. Set `models.openaiModel` to pin an explicit GPT model id instead of the tier
+Set `models.openaiModel` (CLI only) to pin an explicit GPT model id instead of the tier
 mapping. The 2×2 study condition lives in the same config:
 
 ```bash
@@ -197,13 +201,13 @@ validation, no terminal needed.
 | `condition.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
 | `inflow.triggers` | `pre-commit`, `post-task` | Which in-flow moments the gate fires on. |
 | `budgets.*` | non-negative numbers | Interruption ceiling: per commit, per session, cooldown, minimum changed lines. `0` means "off". |
-| `models.build` | `opus` \| `fable` | Model for the one-time coverage-memory build. |
 | `models.provider` | `anthropic` \| `openai` | Which API serves **interventions**. |
 | `models.intervention` | `sonnet` \| `opus` | Intervention tier; resolves per provider (see table above). |
 | `models.openaiModel` | any model id | Optional override pinning an explicit GPT model. |
 
-The build tier stays Claude-only — a coverage-memory build is long-horizon reasoning the
-model policy pins deliberately. Only interventions follow `models.provider`.
+The build model is not listed: `/scale-map` runs inside a Claude Code session and uses
+that session's model (`/model`), so a setting here could only state an intention it cannot
+enforce. Only interventions follow `models.provider`.
 
 ### API keys
 

@@ -188,7 +188,7 @@ Gate policy (shared across triggers):
 
 ### 6.2 Post-session pipeline
 
-(Post-session conditions only.) `SessionEnd` hook → `scale quest generate` (detached, async — never blocks exit): pick top-K (default 3) components by (touched this session) × (low coverage or stale) × importance → generate items in the configured modality on the **intervention tier** (`models.provider`: Anthropic Sonnet/Haiku or an OpenAI model; the build tier stays Claude Opus/Fable) → `quests.json` → appears on the map as pending quests. Rebellion quests are generated from drift independent of sessions. In in-flow conditions no quests are ever generated; stale components surface through map state, re-encounter gates, and voluntary learning.
+(Post-session conditions only.) `SessionEnd` hook → `scale quest generate` (detached, async — never blocks exit): pick top-K (default 3) components by (touched this session) × (low coverage or stale) × importance → generate items in the configured modality on the **intervention tier** (`models.provider`: Anthropic Sonnet 5 / Opus 4.8, or the matching GPT-5.6 model; the build runs on the Claude Code session's own model, chosen with `/model`) → `quests.json` → appears on the map as pending quests. Rebellion quests are generated from drift independent of sessions. In in-flow conditions no quests are ever generated; stale components surface through map state, re-encounter gates, and voluntary learning.
 
 ### 6.3 Voluntary learning (user-initiated, available in every condition)
 

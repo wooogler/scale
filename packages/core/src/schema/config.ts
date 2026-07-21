@@ -32,22 +32,26 @@ export const BudgetsSchema = z.object({
 export type Budgets = z.infer<typeof BudgetsSchema>;
 
 /**
- * Model tier selection (fixed policy).
- *   - BUILD (Mode B `scale-map`)      → Opus or Fable ONLY (high-capability).
- *   - INTERVENTION (quiz/socratic tutor, quest generation, socratic proxy)
- *                                     → Sonnet 5 or Opus 4.8.
+ * Model tier selection.
+ *
+ * Only the INTERVENTION tier (quiz/socratic tutor, quest generation, socratic
+ * proxy) is configurable here, because it is the only one SCALE actually calls:
+ * these run through the API, from the CLI and the serve process.
+ *
+ * There is deliberately NO `build` setting. The Mode B `scale-map` build runs
+ * *inside a Claude Code session*, so the model doing the work is whatever that
+ * session is on — a config key could only state an intention it cannot enforce.
+ * The build model is chosen with `/model` before running `/scale-map`, and the
+ * skill's confirm gate checks it.
+ *
  * These are neutral choice tokens; the concrete model ids live in
  * {@link MODEL_IDS} / {@link OPENAI_INTERVENTION_IDS} so a model bump is a
  * one-line edit and the same token works across providers.
- */
-export const BuildModelSchema = z.enum(['opus', 'fable']);
-export type BuildModel = z.infer<typeof BuildModelSchema>;
-
-/**
- * Intervention tier. `haiku` was the old cheap tier; configs written before the
- * change are migrated in place rather than failing validation — an unparseable
- * config falls back to defaults everywhere, which would silently discard the
- * junior's whole condition assignment mid-study.
+ *
+ * `haiku` was the old cheap tier; configs written before the change are migrated
+ * in place rather than failing validation — an unparseable config falls back to
+ * defaults everywhere, which would silently discard the junior's whole condition
+ * assignment mid-study.
  */
 export const InterventionModelSchema = z.preprocess(
   (v) => (v === 'haiku' ? 'sonnet' : v),
@@ -79,8 +83,6 @@ export const ModelsConfigSchema = z
     const { openaiModel: _drop, ...rest } = m;
     return rest;
   }, z.object({
-    /** Drives the build-cost estimator's default and the scale-map build. */
-    build: BuildModelSchema.default('opus'),
     /** Intervention tier. Resolves per provider — see {@link resolveInterventionModel}. */
     intervention: InterventionModelSchema.default('sonnet'),
     /** Which provider serves interventions. */
@@ -95,12 +97,11 @@ export const ModelsConfigSchema = z
   .default({});
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 
-/** Choice token → concrete Claude model id. Re-map here on a model bump. */
+/** Intervention token → concrete Claude model id. Re-map here on a model bump. */
 export const MODEL_IDS = {
-  opus: 'claude-opus-4-8',
-  fable: 'claude-fable-5',
   sonnet: 'claude-sonnet-5',
-} as const;
+  opus: 'claude-opus-4-8',
+} as const satisfies Record<InterventionModel, string>;
 export type ModelChoice = keyof typeof MODEL_IDS;
 
 /**
@@ -124,7 +125,10 @@ export function resolveInterventionModel(models: ModelsConfig): string {
   return MODEL_IDS[models.intervention];
 }
 
-/** Resolve a build/intervention choice token to its concrete Claude model id. */
+/**
+ * Resolve an intervention token to its concrete Claude model id. Prefer
+ * {@link resolveInterventionModel}, which also honors the configured provider.
+ */
 export function resolveModelId(choice: ModelChoice): string {
   return MODEL_IDS[choice];
 }

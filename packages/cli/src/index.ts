@@ -39,6 +39,7 @@ import {
   meanDims,
   gateDecision,
   estimateBuild,
+  resolveInterventionModel,
   MODEL_RATES,
   MEASURED_BUILD,
   type BuildEstimate,
@@ -419,7 +420,9 @@ function renderStatus(s: StatusView): string {
   const lines: string[] = [];
   lines.push(`SCALE status — ${s.repoId}`);
   const cond = s.condition ? `${s.condition.timing}/${s.condition.modality}` : '(no config)';
-  const models = s.models ? `${s.models.build}/${s.models.intervention}` : '(no config)';
+  // Intervention model only — the build model is the Claude Code session's, not
+  // anything SCALE stores (see ModelsConfigSchema).
+  const models = s.models ? resolveInterventionModel(s.models) : '(no config)';
   lines.push(`  user: ${s.user}   condition: ${cond}   models: ${models}`);
   lines.push('');
 

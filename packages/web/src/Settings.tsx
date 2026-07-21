@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
-import { OPENAI_INTERVENTION_IDS, type LlmProvider, type ScaleConfig } from '@scale/core/browser';
+import {
+  resolveInterventionModel as resolveIntervention,
+  type LlmProvider,
+  type ScaleConfig,
+} from '@scale/core/browser';
 import {
   loadSettings,
   saveKey,
@@ -98,28 +102,19 @@ function ChoiceRow<T extends string>({
  */
 function DraftInput({
   value,
-  numeric,
   onCommit,
   className,
-  placeholder,
-  disabled,
-  allowEmpty,
 }: {
-  value: string | number;
-  numeric?: boolean;
+  value: number;
   onCommit: (raw: string) => void;
   className?: string;
-  placeholder?: string;
-  disabled?: boolean;
-  /** Empty is a meaningful value (clears an override) rather than a mistake. */
-  allowEmpty?: boolean;
 }): JSX.Element {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
 
   const commit = (): void => {
     if (draft.trim() === String(value)) return;
-    if (!draft.trim() && !allowEmpty) {
+    if (!draft.trim()) {
       setDraft(String(value)); // empty is never a valid setting — snap back
       return;
     }
@@ -129,11 +124,9 @@ function DraftInput({
   return (
     <input
       className={className ?? 'set-input'}
-      type={numeric ? 'number' : 'text'}
-      min={numeric ? 0 : undefined}
+      type="number"
+      min={0}
       spellCheck={false}
-      placeholder={placeholder}
-      disabled={disabled}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
@@ -369,42 +362,11 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
               }))
             }
           />
-          <div className="set-row">
-            <div className="set-label">
-              Model id <span className="ko-sub">직접 지정</span>
-            </div>
-            <DraftInput
-              value={m.openaiModel ?? ''}
-              placeholder={
-                m.provider === 'openai' ? OPENAI_INTERVENTION_IDS[m.intervention] : '(OpenAI only)'
-              }
-              allowEmpty
-              disabled={m.provider !== 'openai'}
-              onCommit={(openaiModel) =>
-                patch({ models: { openaiModel: openaiModel || undefined } }, (c) => ({
-                  ...c,
-                  models: { ...c.models, openaiModel: openaiModel || undefined },
-                }))
-              }
-            />
-          </div>
-          <ChoiceRow
-            label="Build model"
-            ko="지도 생성"
-            value={m.build}
-            disabled={saving}
-            options={[
-              { value: 'opus' as const, label: 'Opus' },
-              { value: 'fable' as const, label: 'Fable' },
-            ]}
-            onPick={(build) =>
-              patch({ models: { build } }, (c) => ({ ...c, models: { ...c.models, build } }))
-            }
-          />
           <p className="set-note">
-            The build tier is Claude-only — a coverage-memory build is long-horizon reasoning. Only
-            interventions (quests, Socratic dialogue) follow the provider above. Leave “Model id”
-            empty to use the tier’s default GPT model.
+            Runs the Socratic tutor and LLM-written quests →{' '}
+            <code>{resolveIntervention(m)}</code>. The one-time coverage-memory build is not
+            configured here: <code>/scale-map</code> runs inside a Claude Code session, so it uses
+            whatever model that session is on — pick it with <code>/model</code> before you build.
           </p>
         </section>
 
@@ -482,7 +444,6 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
                 <span>{label}</span>
                 <DraftInput
                   className="set-input set-input-num"
-                  numeric
                   value={config.budgets[key]}
                   onCommit={(raw) => {
                     const v = Number(raw);

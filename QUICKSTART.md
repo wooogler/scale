@@ -50,15 +50,18 @@ repo folder name).
 must `scale init` before `config get/set` will work.
 
 ```bash
-scale config set models.build opus        # BUILD tier: opus | fable   (default opus)
 scale config set models.intervention sonnet # INTERVENTION tier: sonnet | opus (default sonnet)
 scale config set models.provider anthropic  # INTERVENTION api: anthropic | openai
-scale config get models                   # { "build": ..., "intervention": ... }
+scale config get models                     # { "intervention": ..., "provider": ... }
 ```
 
-The schema only accepts the allowed tokens (`opus|fable` for build,
-`sonnet|opus` for intervention); anything else fails validation. The intervention
-token resolves per provider, so switching provider keeps the tier you chose:
+Only the **intervention** tier is configured here — it is the one SCALE calls
+through the API itself. The **build** model is not a setting: `/scale-map` runs
+inside a Claude Code session, so it uses whatever model that session is on. Pick
+it with **`/model`** before building.
+
+The schema only accepts `sonnet|opus`; anything else fails validation. The token
+resolves per provider, so switching provider keeps the tier you chose:
 
 | `models.intervention` | `provider: anthropic` | `provider: openai` |
 |---|---|---|
@@ -66,7 +69,7 @@ token resolves per provider, so switching provider keeps the tier you chose:
 | `opus` | `claude-opus-4-8` | `gpt-5.6-sol` |
 
 Set `models.openaiModel` to pin an explicit GPT model id instead. Build tokens map
-to `claude-opus-4-8` / `claude-fable-5` — the build tier is Claude-only.
+to `claude-opus-4-8` / `claude-fable-5`.
 
 The manipulated **2×2 study condition** lives in the same config:
 
