@@ -1,5 +1,11 @@
 import { useMemo, useRef, useState, useEffect, type JSX } from 'react';
-import type { ComponentCoverage, DimName, Quest, QuestItem } from '@scale/core/browser';
+import type {
+  ComponentCoverage,
+  DimName,
+  LlmProvider,
+  Quest,
+  QuestItem,
+} from '@scale/core/browser';
 import { skinFor, QUEST_SKIN, DEV_STATS_LABEL_EN } from './skin.js';
 import {
   completeQuiz,
@@ -18,6 +24,8 @@ interface Props {
   onCompleted: (componentId: string, component: ComponentCoverage) => void;
   /** Open this component's paper (the "just read it" escape hatch). */
   onReadPaper: () => void;
+  /** Open the settings modal, optionally focused on a provider's key field. */
+  onOpenSettings: (provider?: LlmProvider) => void;
 }
 
 const OPTION_LETTERS = ['A', 'B', 'C', 'D'];
@@ -196,10 +204,12 @@ function SocraticRunner({
   quest,
   onCompleted,
   onReadPaper,
+  onOpenSettings,
 }: {
   quest: Quest;
   onCompleted: Props['onCompleted'];
   onReadPaper: Props['onReadPaper'];
+  onOpenSettings: Props['onOpenSettings'];
 }): JSX.Element {
   const seed = quest.items[0]?.prompt ?? 'Tell me what you understand about this component.';
   const [messages, setMessages] = useState<ChatMsg[]>([{ role: 'assistant', text: seed }]);
@@ -207,6 +217,7 @@ function SocraticRunner({
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsKey, setNeedsKey] = useState<LlmProvider | null>(null);
   const [final, setFinal] = useState<SocraticResponse | null>(null);
   const userTurns = useRef(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -220,6 +231,7 @@ function SocraticRunner({
     if (!text || busy || done) return;
     setInput('');
     setError(null);
+    setNeedsKey(null);
     setMessages((m) => [...m, { role: 'user', text }]);
     setBusy(true);
     const turn = userTurns.current + 1;
@@ -227,8 +239,13 @@ function SocraticRunner({
     setBusy(false);
 
     if (res.error) {
-      // API auth / proxy error: the turn was rolled back server-side. Surface it.
+      // API auth / proxy error. The server rolled the turn back, so undo it here
+      // too and hand the text back to the input — otherwise the transcript on
+      // screen would diverge from the dialogue the server actually holds.
+      setMessages((m) => m.slice(0, -1));
+      setInput(text);
       setError(res.error);
+      setNeedsKey(res.needsKey ?? null);
       return;
     }
     userTurns.current = turn;
@@ -260,9 +277,30 @@ function SocraticRunner({
       {error && (
         <div className="qr-error">
           <p>Socratic dialogue is unavailable: {error}</p>
-          <button type="button" className="qr-read-btn" onClick={onReadPaper}>
-            Just read the paper instead →
-          </button>
+          <div className="qr-error-actions">
+            {needsKey && (
+              <button
+                type="button"
+                className="qr-key-btn"
+                onClick={() => onOpenSettings(needsKey)}
+              >
+                ⚙ Add {needsKey} API key
+              </button>
+            )}
+            <button
+              type="button"
+              className="qr-read-btn"
+              onClick={() => {
+                setError(null);
+                setNeedsKey(null);
+              }}
+            >
+              Try again
+            </button>
+            <button type="button" className="qr-read-btn" onClick={onReadPaper}>
+              Just read the paper instead →
+            </button>
+          </div>
         </div>
       )}
 
@@ -296,7 +334,14 @@ function SocraticRunner({
 
 // ---------------------------------------------------------------------------
 
-export function QuestRunner({ quest, title, onClose, onCompleted, onReadPaper }: Props): JSX.Element {
+export function QuestRunner({
+  quest,
+  title,
+  onClose,
+  onCompleted,
+  onReadPaper,
+  onOpenSettings,
+}: Props): JSX.Element {
   const modality = quest.modality;
   const label = useMemo(
     () =>
@@ -328,7 +373,12 @@ export function QuestRunner({ quest, title, onClose, onCompleted, onReadPaper }:
         {modality === 'quiz' ? (
           <QuizRunner quest={quest} onCompleted={onCompleted} />
         ) : (
-          <SocraticRunner quest={quest} onCompleted={onCompleted} onReadPaper={onReadPaper} />
+          <SocraticRunner
+            quest={quest}
+            onCompleted={onCompleted}
+            onReadPaper={onReadPaper}
+            onOpenSettings={onOpenSettings}
+          />
         )}
       </div>
     </div>

@@ -16,12 +16,18 @@ export const InflowConfigSchema = z.object({
 });
 export type InflowConfig = z.infer<typeof InflowConfigSchema>;
 
-/** Interruption budget constants (all tunable). */
+/**
+ * Interruption budget constants (all tunable). Every field is a non-negative
+ * count: 0 is a meaningful "off" (never interrupt on commit, no cooldown,
+ * interrupt on any change) but a negative value is nonsense the gate would
+ * silently misread, so the schema rejects it — these are user-editable from the
+ * settings modal, not just the CLI.
+ */
 export const BudgetsSchema = z.object({
-  maxPerCommit: z.number().default(1),
-  maxPerSession: z.number().default(2),
-  cooldownMinutes: z.number().default(15),
-  minChangedLines: z.number().default(20),
+  maxPerCommit: z.number().int().min(0).default(1),
+  maxPerSession: z.number().int().min(0).default(2),
+  cooldownMinutes: z.number().min(0).default(15),
+  minChangedLines: z.number().int().min(0).default(20),
 });
 export type Budgets = z.infer<typeof BudgetsSchema>;
 
@@ -39,12 +45,27 @@ export type BuildModel = z.infer<typeof BuildModelSchema>;
 export const InterventionModelSchema = z.enum(['sonnet', 'haiku']);
 export type InterventionModel = z.infer<typeof InterventionModelSchema>;
 
+/**
+ * Which API backs the INTERVENTION calls (quest generation + the web socratic
+ * proxy). The BUILD tier is Claude-only (Opus/Fable) — a coverage-memory build
+ * is a long-horizon reasoning job the model policy pins deliberately.
+ */
+export const LlmProviderSchema = z.enum(['anthropic', 'openai']);
+export type LlmProvider = z.infer<typeof LlmProviderSchema>;
+
 export const ModelsConfigSchema = z
   .object({
     /** Drives the build-cost estimator's default and the scale-map build. */
     build: BuildModelSchema.default('opus'),
-    /** Drives quest generation + the web socratic proxy (intervention tier). */
+    /** Claude intervention tier, used when provider === 'anthropic'. */
     intervention: InterventionModelSchema.default('haiku'),
+    /** Which provider serves interventions. */
+    provider: LlmProviderSchema.default('anthropic'),
+    /**
+     * Model id used when provider === 'openai'. Free-form so you can point it at
+     * whatever your key can call without waiting on a code change.
+     */
+    openaiModel: z.string().min(1).default('gpt-4o-mini'),
   })
   .default({});
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
@@ -57,6 +78,16 @@ export const MODEL_IDS = {
   haiku: 'claude-haiku-4-5',
 } as const;
 export type ModelChoice = keyof typeof MODEL_IDS;
+
+/**
+ * Concrete model id for the INTERVENTION tier, honoring the configured provider:
+ * the free-form OpenAI id when provider === 'openai', otherwise the Claude
+ * intervention token. Callers should prefer this over `resolveModelId` so a
+ * provider switch needs no call-site change.
+ */
+export function resolveInterventionModel(models: ModelsConfig): string {
+  return models.provider === 'openai' ? models.openaiModel : MODEL_IDS[models.intervention];
+}
 
 /** Resolve a build/intervention choice token to its concrete Claude model id. */
 export function resolveModelId(choice: ModelChoice): string {

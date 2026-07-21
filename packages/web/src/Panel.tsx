@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 import type { ComponentCoverage, Dimensions, Quest } from '@scale/core/browser';
 import { skinFor, DEV_STATS_LABEL_EN, DEV_STATS_LABEL_KO, QUEST_SKIN } from './skin.js';
-import { loadPaper, type PaperResponse } from './data.js';
+import { loadPaper, createVoluntaryQuest, type PaperResponse } from './data.js';
 import { Markdown } from './Markdown.js';
 
 interface Props {
@@ -39,6 +39,10 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
   // the panel shows a loading state.
   const [paper, setPaper] = useState<PaperResponse | null>(null);
   const [loadingPaper, setLoadingPaper] = useState(true);
+  // Challenge = create-a-quest-on-demand; it hits the network, so it has its own
+  // in-flight + error state (a dead button is worse than a slow one).
+  const [preparing, setPreparing] = useState(false);
+  const [questError, setQuestError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,21 +62,22 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
   const skin = skinFor(state);
   const dims = coverage?.dims ?? { structure: 0, concepts: 0, rationale: 0 };
 
-  const challenge = () => {
-    // §6.3 voluntary learning. If a pending quest already sits on this
-    // component, the Challenge button wages it; otherwise it logs the intent
-    // (voluntary quest generation is a CLI/tutor path, not a web endpoint yet).
+  const challenge = async (): Promise<void> => {
+    // §6.3 voluntary learning — available in every condition, no interruption
+    // budget. If a pending quest already sits on this component, wage it;
+    // otherwise ask the server to CREATE one on demand (POST /api/quests) and
+    // open the runner immediately. The server falls back to deterministic
+    // paper-grounded items when there's no API key, so this always works.
     if (quests.length > 0) {
       onStartQuest(quests[0]!);
       return;
     }
-    // eslint-disable-next-line no-console
-    console.log('[SCALE] Challenge (voluntary quest) requested', {
-      componentId,
-      origin: 'voluntary',
-      modality: 'quiz',
-      state,
-    });
+    setPreparing(true);
+    setQuestError(null);
+    const quest = await createVoluntaryQuest(componentId);
+    setPreparing(false);
+    if (quest) onStartQuest(quest);
+    else setQuestError('Could not prepare a challenge for this territory.');
   };
 
   return (
@@ -136,9 +141,20 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
         </section>
       )}
 
-      <button type="button" className="challenge-btn" onClick={challenge}>
-        ⚔ Challenge <span className="ko-sub">도전 (voluntary quest)</span>
+      <button
+        type="button"
+        className="challenge-btn"
+        onClick={() => void challenge()}
+        disabled={preparing}
+        aria-busy={preparing}
+      >
+        {preparing ? (
+          <>⚔ Preparing… <span className="ko-sub">퀘스트 준비 중</span></>
+        ) : (
+          <>⚔ Challenge <span className="ko-sub">도전 (voluntary quest)</span></>
+        )}
       </button>
+      {questError && <p className="state-blurb quest-error">{questError}</p>}
 
       {loadingPaper && <p className="state-blurb">Loading paper…</p>}
       {!loadingPaper && paper && (

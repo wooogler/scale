@@ -144,8 +144,8 @@ Then work normally in Claude Code:
 ## CLI commands
 
 `⚡ hot-path` = deterministic git + file I/O, no network (safe on the commit path).
-`🧠 LLM/API` = may call the intervention model (needs `ANTHROPIC_API_KEY`; degrades to a
-deterministic fallback offline).
+`🧠 LLM/API` = may call the intervention model (needs an API key — see
+[API keys](#api-keys); degrades to a deterministic fallback offline).
 
 | Command | What it does | |
 |---|---|---|
@@ -165,11 +165,48 @@ deterministic fallback offline).
 | `scale map layout` | Compute/extend the frozen spatial layout → `.scale/map.json`. | ⚡ |
 | `scale map index` | Build the file→component reverse index → `.scale/index.json`. | ⚡ |
 | `scale map drift` | Flag components whose sources changed since the build SHA (minimal stub). | ⚡ |
-| `scale serve [-p 4318]` | Serve the local web map viewer + JSON API. | ⚡/🧠 |
+| `scale serve [-p 4318] [--host <addr>]` | Serve the local web map viewer + JSON API. | ⚡/🧠 |
 | `scale reset [-y]` | Delete the `~/.scale/<repo-id>/` state dir (demo/pilot reset). | ⚡ |
 
 `scale serve` itself is pure Node; only its Socratic runner (`/api/socratic/:id/message`)
-proxies the intervention model.
+proxies the intervention model. It binds **loopback only** by default: the server has no
+authentication and accepts API keys, so `--host` is an explicit opt-in (e.g. to open the
+map on a phone over a trusted LAN).
+
+---
+
+## Settings
+
+Everything below lives in `~/.scale/<repo-id>/config.json`. Edit it with `scale config
+set <key> <value>`, or open the **⚙ Settings** modal in `scale serve` — same file, same
+validation, no terminal needed.
+
+| Setting | Values | What it changes |
+|---|---|---|
+| `condition.timing` | `inflow` \| `postsession` | Interrupt while working vs. at session end. |
+| `condition.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
+| `inflow.triggers` | `pre-commit`, `post-task` | Which in-flow moments the gate fires on. |
+| `budgets.*` | non-negative numbers | Interruption ceiling: per commit, per session, cooldown, minimum changed lines. `0` means "off". |
+| `models.build` | `opus` \| `fable` | Model for the one-time coverage-memory build. |
+| `models.provider` | `anthropic` \| `openai` | Which API serves **interventions**. |
+| `models.intervention` | `sonnet` \| `haiku` | Claude tier, used when provider is `anthropic`. |
+| `models.openaiModel` | any model id | Used when provider is `openai` (default `gpt-4o-mini`). |
+
+The build tier stays Claude-only — a coverage-memory build is long-horizon reasoning the
+model policy pins deliberately. Only interventions follow `models.provider`.
+
+### API keys
+
+Interventions (Socratic dialogue, LLM-written quests) need a key for the selected provider:
+
+1. **Environment** — `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Always wins.
+2. **Settings modal** — ⚙ in `scale serve`. Stored in `~/.scale/keys.json` at mode `0600`,
+   user-global (a key is an account credential, not project state).
+
+The key is never returned by the API and never logged — the UI only ever shows a masked
+tail (`sk-…9f2A`) and where it came from. With no key, quest generation falls back to
+deterministic paper-grounded items and the Socratic runner says exactly what's missing and
+links to Settings.
 
 ---
 
@@ -202,8 +239,8 @@ web map viewer + JSON API. All four 2×2 condition cells switch by `config.json`
   infrastructure exists; the mode does not).
 - **Full drift / rebellion detection** — `scale map drift` reports SHAs only; per-component
   source-churn staleness isn't wired yet.
-- **API-dependent paths** — LLM quest generation and the web Socratic proxy need an
-  `ANTHROPIC_API_KEY`; both fall back to deterministic behavior offline (quest generation
+- **API-dependent paths** — LLM quest generation and the web Socratic proxy need an API key
+  (Anthropic or OpenAI); both fall back to deterministic behavior offline (quest generation
   synthesizes items from the paper; the Socratic proxy is unavailable without a key).
 
 ---
@@ -212,5 +249,3 @@ web map viewer + JSON API. All four 2×2 condition cells switch by `config.json`
 
 - **[`QUICKSTART.md`](./QUICKSTART.md)** — the step-by-step, works-today walkthrough.
 - **[`PLAN.md`](./PLAN.md)** — the full design, schemas, and roadmap.
-</content>
-</invoke>

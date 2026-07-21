@@ -179,12 +179,29 @@ scale serve --port 4318   # reads .scale/ from cwd + ~/.scale/<repo-id>/ state
 ```
 
 Serves the React map app (build it first with `npm run build -w @scale/web`) plus
-a JSON API (`/api/map`, `/api/coverage`, `/api/paper/:id`, `/api/quests`). Provinces
-are tinted regions; components are nodes sized by importance and colored by state
-(fog / explored / validated / stale). Click a node for its rendered paper, dev
-stats, and any quests. The quest runner completes quizzes fully locally; the
-socratic runner proxies the intervention model server-side (needs
-`ANTHROPIC_API_KEY`).
+a JSON API (`/api/map`, `/api/coverage`, `/api/paper/:id`, `/api/quests`,
+`/api/settings`). Provinces are tinted regions; components are nodes sized by
+importance and colored by state (fog / explored / validated / stale). Click a node
+for its rendered paper, dev stats, and any quests. The quest runner completes
+quizzes fully locally; the socratic runner proxies the intervention model
+server-side (needs an API key — see below).
+
+The server binds **loopback only**. It has no authentication and accepts API keys,
+so opening it to the network is an explicit `--host 0.0.0.0` opt-in.
+
+### Settings (⚙ in the header)
+
+Everything in `config.json` is editable from the browser — condition (timing ×
+modality), in-flow triggers, interruption budgets, and the model policy — plus API
+keys. Changes save immediately and are re-validated server-side against the schema,
+so an invalid value is rejected instead of landing on disk.
+
+**API keys.** Interventions run on Anthropic (default) or OpenAI; pick the provider
+in Settings. The key comes from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` if set
+(these always win), otherwise from what you type in Settings, which is stored at
+`~/.scale/keys.json` mode `0600`. The key is never returned by the API and never
+logged — the UI shows only a masked tail. Start a Socratic dialogue with no key and
+it tells you exactly what's missing with a button straight to the key field.
 
 ---
 
@@ -201,9 +218,9 @@ scale quest generate      # writes ~/.scale/<repo-id>/quests.json
 scale quest list          # inspect pending quests
 ```
 
-If no `ANTHROPIC_API_KEY` is available (or the API errors), generation falls back
-to **deterministic** item synthesis from the paper — you still get a valid
-`quests.json`. In-flow conditions generate no quests (a no-op).
+If no API key is available for the configured provider (or the API errors),
+generation falls back to **deterministic** item synthesis from the paper — you
+still get a valid `quests.json`. In-flow conditions generate no quests (a no-op).
 
 Quests appear on the map as pending; you **complete them in the web app** (the
 quest runner POSTs to `/api/quests/:id/complete` or `/api/socratic/:id/message`),

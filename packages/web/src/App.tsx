@@ -3,13 +3,20 @@ import { unificationProgress } from '@scale/core/browser';
 import { MapView } from './MapView.js';
 import { Panel } from './Panel.js';
 import { QuestRunner } from './QuestRunner.js';
+import { Settings } from './Settings.js';
 import {
   SKIN,
   UNIFICATION_LABEL_EN,
   UNIFICATION_LABEL_KO,
 } from './skin.js';
 import { loadMap, loadCoverage, loadQuests } from './data.js';
-import type { CoverageState, MapJson, Quest, UserCoverage } from '@scale/core/browser';
+import type {
+  CoverageState,
+  LlmProvider,
+  MapJson,
+  Quest,
+  UserCoverage,
+} from '@scale/core/browser';
 
 const LEGEND_ORDER: CoverageState[] = ['fog', 'explored', 'validated', 'stale'];
 
@@ -30,6 +37,15 @@ export function App(): JSX.Element {
   const [justUpdatedId, setJustUpdatedId] = useState<string | null>(null);
   // Legend hover/focus → highlight all castles of that status on the map.
   const [highlightState, setHighlightState] = useState<CoverageState | null>(null);
+  // Settings modal; the value is the provider whose key field should take focus
+  // (set when a Socratic dialogue was blocked by a missing key), else null.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsFocus, setSettingsFocus] = useState<LlmProvider | null>(null);
+
+  const openSettings = useCallback((provider?: LlmProvider) => {
+    setSettingsFocus(provider ?? null);
+    setSettingsOpen(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +74,9 @@ export function App(): JSX.Element {
 
   const startQuest = useCallback((quest: Quest) => {
     setSelectedId(quest.componentId);
+    // A quest created on demand by the Challenge button isn't in `quests` yet;
+    // fold it in so the map badge and the panel's quest list see it too.
+    setQuests((prev) => (prev.some((q) => q.id === quest.id) ? prev : [...prev, quest]));
     setActiveQuest(quest);
   }, []);
 
@@ -133,6 +152,16 @@ export function App(): JSX.Element {
             </button>
           ))}
         </div>
+
+        <button
+          type="button"
+          className="settings-btn"
+          title="Settings · 설정"
+          aria-label="Open settings"
+          onClick={() => openSettings()}
+        >
+          ⚙
+        </button>
       </header>
 
       <main className="content">
@@ -165,11 +194,15 @@ export function App(): JSX.Element {
             title={activeQuest.componentId}
             onClose={() => setActiveQuest(null)}
             onCompleted={(componentId) => onQuestCompleted(componentId)}
+            onOpenSettings={openSettings}
             onReadPaper={() => {
               setSelectedId(activeQuest.componentId);
               setActiveQuest(null);
             }}
           />
+        )}
+        {settingsOpen && (
+          <Settings focusProvider={settingsFocus} onClose={() => setSettingsOpen(false)} />
         )}
       </main>
     </div>

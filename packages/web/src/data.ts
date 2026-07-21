@@ -5,6 +5,8 @@ import type {
   Quest,
   ComponentCoverage,
   DimName,
+  LlmProvider,
+  ScaleConfig,
 } from '@scale/core/browser';
 import { sampleMap } from './sample/map.js';
 import { sampleCoverage } from './sample/coverage.js';
@@ -44,7 +46,16 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`POST ${path} -> ${res.status}`);
+    // Settings/keys writes surface the server's message verbatim (e.g. a schema
+    // validation detail) — a bare status code isn't actionable in a form.
+    let detail = '';
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j?.error) detail = `: ${j.error}`;
+    } catch {
+      /* non-JSON body */
+    }
+    throw new Error(`POST ${path} -> ${res.status}${detail}`);
   }
   return (await res.json()) as T;
 }
@@ -105,6 +116,64 @@ export async function loadQuests(): Promise<Quest[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Settings (config.json + API keys)
+// ---------------------------------------------------------------------------
+
+/** Display-safe key status. The key itself NEVER crosses the API (cli/keys.ts). */
+export interface ProviderKeyStatus {
+  configured: boolean;
+  /** 'env' → an environment variable is winning over any stored key. */
+  source: 'env' | 'file' | null;
+  /** Masked tail only, e.g. `sk-…9f2A`. */
+  masked: string | null;
+}
+export type KeyStatusMap = Record<LlmProvider, ProviderKeyStatus>;
+
+/** GET /api/settings payload. */
+export interface SettingsResponse {
+  config: ScaleConfig;
+  keys: KeyStatusMap;
+  repoId: string;
+  stateDir: string;
+}
+
+/** Partial config accepted by POST /api/settings (server merges + validates). */
+export interface SettingsPatch {
+  user?: string;
+  condition?: Partial<ScaleConfig['condition']>;
+  inflow?: Partial<ScaleConfig['inflow']>;
+  budgets?: Partial<ScaleConfig['budgets']>;
+  thresholds?: Partial<ScaleConfig['thresholds']>;
+  models?: Partial<ScaleConfig['models']>;
+}
+
+/**
+ * GET /api/settings. Unlike the map/coverage loaders this does NOT fall back to
+ * sample data: settings are only meaningful against a live server, and silently
+ * showing editable-looking defaults that can't be saved would be a lie.
+ */
+export async function loadSettings(): Promise<SettingsResponse> {
+  return getJson<SettingsResponse>('/api/settings');
+}
+
+/** POST /api/settings — merge a partial config, validate, persist. */
+export async function saveSettings(
+  patch: SettingsPatch,
+): Promise<{ config: ScaleConfig; keys: KeyStatusMap }> {
+  return postJson<{ config: ScaleConfig; keys: KeyStatusMap }>('/api/settings', patch);
+}
+
+/**
+ * POST /api/keys — store one provider's key (empty string clears it). The reply
+ * carries only the masked status; nothing here ever holds the key after the
+ * request, and the form field is cleared by the caller.
+ */
+export async function saveKey(provider: LlmProvider, key: string): Promise<KeyStatusMap> {
+  const r = await postJson<{ keys: KeyStatusMap }>('/api/keys', { provider, key });
+  return r.keys;
+}
+
+// ---------------------------------------------------------------------------
 // Quest runner mutations (POST). Live via `scale serve`; each helper degrades
 // to a plausible local synthesis on fetch failure so the runner still animates
 // in standalone dev with no backend.
@@ -129,6 +198,8 @@ export interface SocraticResponse {
   reply: string | null;
   done: boolean;
   error?: string;
+  /** Set when the failure was a missing API key → offer Settings directly. */
+  needsKey?: LlmProvider;
   grades?: Record<DimName, number>;
   componentId?: string;
   component?: ComponentCoverage;
@@ -152,6 +223,53 @@ function synthComponent(results: DimResult[]): ComponentCoverage {
     lastValidatedSha: mean >= 0.6 ? 'localdemo' : null,
     loyalty: 1,
   };
+}
+
+/**
+ * POST /api/quests — create a VOLUNTARY quest for a component on demand: the
+ * map's Challenge button (§6.3). Works in every condition; the server falls back
+ * to deterministic paper-grounded items when there's no API key. Offline (vite
+ * dev with no backend) we synthesize a small quest from the sample paper so the
+ * runner still opens. Returns null only when nothing could be prepared.
+ */
+export async function createVoluntaryQuest(componentId: string): Promise<Quest | null> {
+  try {
+    const r = await postJson<{ quest: Quest }>('/api/quests', { componentId });
+    return r.quest ?? null;
+  } catch (err) {
+    note(`voluntary quest for ${componentId}`, err);
+    const paper = samplePapers[componentId];
+    const concepts = paper?.frontmatter.concepts ?? [];
+    const items = concepts.slice(0, 2).map((c, i) => {
+      const opts = [
+        c.name,
+        'An unrelated caching layer',
+        'A build-time code generator',
+        'A logging side effect',
+      ];
+      // Rotate so the answer isn't always 'A', and emit BOTH `answer` (text) and
+      // `correctIndex` — the runner grades on correctIndex (mirrors mcqItem).
+      const shift = (c.name.length + i) % 4;
+      const rotated = opts.map((_, k) => opts[(k + shift) % 4]!);
+      const correctIndex = (4 - shift) % 4;
+      return {
+        prompt: `Which best describes “${c.name}” in this component?`,
+        dim: (i === 0 ? 'concepts' : 'rationale') as DimName,
+        options: rotated,
+        answer: rotated[correctIndex],
+        correctIndex,
+      };
+    });
+    if (items.length === 0) return null;
+    return {
+      id: `local-${componentId}-${items.length}`,
+      componentId,
+      modality: 'quiz',
+      items,
+      origin: 'voluntary',
+      status: 'pending',
+    } as Quest;
+  }
 }
 
 /**

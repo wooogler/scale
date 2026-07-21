@@ -188,7 +188,7 @@ Gate policy (shared across triggers):
 
 ### 6.2 Post-session pipeline
 
-(Post-session conditions only.) `SessionEnd` hook → `scale quest generate` (detached, async — never blocks exit): pick top-K (default 3) components by (touched this session) × (low coverage or stale) × importance → generate items in the configured modality (Claude API, cheap model) → `quests.json` → appears on the map as pending quests. Rebellion quests are generated from drift independent of sessions. In in-flow conditions no quests are ever generated; stale components surface through map state, re-encounter gates, and voluntary learning.
+(Post-session conditions only.) `SessionEnd` hook → `scale quest generate` (detached, async — never blocks exit): pick top-K (default 3) components by (touched this session) × (low coverage or stale) × importance → generate items in the configured modality on the **intervention tier** (`models.provider`: Anthropic Sonnet/Haiku or an OpenAI model; the build tier stays Claude Opus/Fable) → `quests.json` → appears on the map as pending quests. Rebellion quests are generated from drift independent of sessions. In in-flow conditions no quests are ever generated; stale components surface through map state, re-encounter gates, and voluntary learning.
 
 ### 6.3 Voluntary learning (user-initiated, available in every condition)
 
@@ -217,8 +217,9 @@ Skills: **`scale-map`** (Mode B builder + sync; senior), **`scale-tutor`** (juni
 - **Map screen:** SVG; provinces as tinted regions, components as nodes sized by importance; visual states fog/scouted/conquered/rebellion; pan/zoom; stable layout from `map.json`. Mobile-friendly (touch pan/zoom) — PWA/push deferred.
 - **Component panel:** rendered paper (markdown + mermaid), 3 dev stats, state history, its quests, **Challenge** button (voluntary quest, §6.3).
 - **Quest runner:** quiz cards; Socratic chat panel (server proxies Claude API, capped exchanges, rubric at end). Completion → coverage update → map animates state change.
-- **Header:** unification progress (weighted coverage), session recap ("today you visited …").
-- API: `GET /api/map|coverage|paper/:id|quests`, `POST /api/quests/:id/…`, `POST /api/socratic/:id/message`.
+- **Header:** unification progress (weighted coverage), session recap ("today you visited …"), **⚙ Settings**.
+- **Settings modal:** the whole of `config.json` — condition (timing × modality), in-flow triggers, budgets, model policy — plus API keys, editable without a terminal. Every write is re-validated server-side by `ScaleConfigSchema`. Keys are write-only: env vars (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`) take precedence, stored keys live in `~/.scale/keys.json` mode 0600, and only a masked tail ever crosses the API.
+- API: `GET /api/map|coverage|paper/:id|quests|settings`, `POST /api/quests`, `POST /api/quests/:id/…`, `POST /api/socratic/:id/message`, `POST /api/settings|keys`. Binds loopback by default (no auth + accepts keys); `--host` is an explicit opt-in.
 
 ## 8. Phases
 

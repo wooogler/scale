@@ -21,7 +21,6 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-import Anthropic from '@anthropic-ai/sdk';
 import {
   type ScaleConfig,
   type LoadedScale,
@@ -39,7 +38,8 @@ import {
   paperById,
   emptyComponentCoverage,
   meanDims,
-  resolveModelId,
+  resolveInterventionModel,
+  type LlmProvider,
 } from '@scale/core';
 
 import {
@@ -52,6 +52,7 @@ import {
   readSessionSafe,
 } from './state.js';
 import { recomputeCoverageFromDisk } from './coverage.js';
+import { chatText } from './llm.js';
 
 /** Default number of quests generated per post-session run (PLAN §6.2). */
 export const DEFAULT_TOP_K = 3;
@@ -207,13 +208,14 @@ function asDim(v: unknown, fallback: DimName): DimName {
 }
 
 async function llmQuizItems(
-  client: Anthropic,
+  provider: LlmProvider,
   model: string,
   paper: LoadedPaper,
 ): Promise<QuestItem[]> {
-  const msg = await client.messages.create({
+  const text = await chatText({
+    provider,
     model,
-    max_tokens: 1024,
+    maxTokens: 1024,
     system:
       'You write multiple-choice comprehension items for a code-onboarding tutor. ' +
       'Ground every item strictly in the provided component paper (its concepts and ' +
@@ -233,10 +235,6 @@ async function llmQuizItems(
       },
     ],
   });
-  const text = msg.content
-    .map((b) => (b.type === 'text' ? b.text : ''))
-    .join('')
-    .trim();
   const parsed = parseJsonLoose(text) as { items?: unknown };
   const rawItems = Array.isArray(parsed) ? parsed : Array.isArray(parsed.items) ? parsed.items : [];
   const items: QuestItem[] = [];
@@ -261,13 +259,14 @@ async function llmQuizItems(
 }
 
 async function llmSocraticItems(
-  client: Anthropic,
+  provider: LlmProvider,
   model: string,
   paper: LoadedPaper,
 ): Promise<QuestItem[]> {
-  const msg = await client.messages.create({
+  const text = await chatText({
+    provider,
     model,
-    max_tokens: 512,
+    maxTokens: 512,
     system:
       'You open a Socratic comprehension dialogue for a code-onboarding tutor. ' +
       'Ground the opening question strictly in the provided component paper. Do not ' +
@@ -284,10 +283,6 @@ async function llmSocraticItems(
       },
     ],
   });
-  const text = msg.content
-    .map((b) => (b.type === 'text' ? b.text : ''))
-    .join('')
-    .trim();
   const parsed = parseJsonLoose(text) as Record<string, unknown>;
   const seed = typeof parsed.seedQuestion === 'string' ? parsed.seedQuestion : null;
   if (!seed) throw new Error('llm socratic produced no seed question');
@@ -419,13 +414,14 @@ function makeQuest(
   componentId: string,
   modality: QuestModality,
   items: QuestItem[],
+  origin: Quest['origin'] = 'session',
 ): Quest {
   return QuestSchema.parse({
     id: crypto.randomUUID(),
     componentId,
     modality,
     items,
-    origin: 'session',
+    origin,
     status: 'pending',
   });
 }
@@ -441,7 +437,8 @@ export async function generateQuests(
   const dir = stateDir(cwd);
   const config: ScaleConfig =
     readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
-  const model = resolveModelId(config.models.intervention);
+  const provider = config.models.provider;
+  const model = resolveInterventionModel(config.models);
   const questsPath = paths.quests(dir);
 
   // In-flow conditions never generate quests (PLAN §6.2).
@@ -463,14 +460,7 @@ export async function generateQuests(
 
   // Try the LLM path once; on any failure (no key, API error) latch to the
   // deterministic fallback for every remaining component.
-  let client: Anthropic | null = null;
   let llmDisabled = false;
-  try {
-    client = new Anthropic();
-  } catch {
-    client = null;
-    llmDisabled = true;
-  }
   let usedLlm = false;
 
   const quests: Quest[] = [];
@@ -479,15 +469,15 @@ export async function generateQuests(
     if (!paper) continue;
 
     let items: QuestItem[] | null = null;
-    if (client && !llmDisabled) {
+    if (!llmDisabled) {
       try {
         items =
           modality === 'quiz'
-            ? await llmQuizItems(client, model, paper)
-            : await llmSocraticItems(client, model, paper);
+            ? await llmQuizItems(provider, model, paper)
+            : await llmSocraticItems(provider, model, paper);
         usedLlm = true;
       } catch {
-        llmDisabled = true; // latch: no more API attempts this run
+        llmDisabled = true; // latch: no key / API error → fallback for the rest
         items = null;
       }
     }
@@ -516,6 +506,64 @@ export async function generateQuests(
     path: questsPath,
     components: quests.map((q) => q.componentId),
   };
+}
+
+/**
+ * Generate a VOLUNTARY quest on demand for ONE component — the map's Challenge
+ * button (PLAN §6.3).
+ *
+ * Unlike `generateQuests` this is deliberately NOT gated on the post-session
+ * condition: voluntary learning is available in EVERY condition and spends no
+ * interruption budget — it is the junior's own initiative. Tries the configured
+ * INTERVENTION model, falls back to deterministic paper-grounded items when
+ * there is no API key (so the button always works offline).
+ *
+ * Returns null when the component has no paper in `.scale/`.
+ */
+export async function generateVoluntaryQuest(
+  cwd: string,
+  componentId: string,
+): Promise<{ quest: Quest; via: 'llm' | 'fallback'; model: string } | null> {
+  const dir = stateDir(cwd);
+  const config: ScaleConfig =
+    readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
+  const provider = config.models.provider;
+  const model = resolveInterventionModel(config.models);
+
+  const loaded = loadScaleDir(cwd);
+  const paper = paperById(loaded, componentId);
+  if (!paper) return null;
+
+  const modality = config.condition.modality;
+  let items: QuestItem[] | null = null;
+  let via: 'llm' | 'fallback' = 'fallback';
+  try {
+    items =
+      modality === 'quiz'
+        ? await llmQuizItems(provider, model, paper)
+        : await llmSocraticItems(provider, model, paper);
+    via = 'llm';
+  } catch {
+    items = null; // no key / API error → deterministic fallback below
+  }
+  if (!items || items.length === 0) {
+    items =
+      modality === 'quiz'
+        ? deterministicQuizItems(paper, loaded)
+        : deterministicSocraticItems(paper);
+    via = 'fallback';
+  }
+
+  const quest = makeQuest(componentId, modality, items, 'voluntary');
+  // Replace a prior PENDING voluntary quest for this same component so repeated
+  // Challenge clicks don't pile up; keep everything else (session/completed).
+  const existing = readQuestsSafe(dir).filter(
+    (q) => !(q.origin === 'voluntary' && q.status === 'pending' && q.componentId === componentId),
+  );
+  ensureStateDir(dir);
+  fs.writeFileSync(paths.quests(dir), JSON.stringify([...existing, quest], null, 2) + '\n');
+
+  return { quest, via, model };
 }
 
 // ---------------------------------------------------------------------------

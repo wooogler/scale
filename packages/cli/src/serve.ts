@@ -14,11 +14,11 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import Anthropic from '@anthropic-ai/sdk';
 import {
   loadScaleDir,
   paperById,
-  resolveModelId,
+  resolveInterventionModel,
+  LlmProviderSchema,
   ScaleConfigSchema,
   UserCoverageSchema,
   emptyComponentCoverage,
@@ -26,6 +26,7 @@ import {
   type UserCoverage,
   type MapJson,
   type DimName,
+  type LlmProvider,
   type LoadedPaper,
 } from '@scale/core';
 
@@ -36,10 +37,13 @@ import {
   readCoverageSafe,
   readQuestsSafe,
   readConfigSafe,
+  ensureStateDir,
   appendEvidence,
 } from './state.js';
 import { recomputeCoverageFromDisk } from './coverage.js';
-import { completeQuizQuest } from './quest.js';
+import { completeQuizQuest, generateVoluntaryQuest } from './quest.js';
+import { chatText, MissingKeyError } from './llm.js';
+import { keyStatus, resolveKey, setKey } from './keys.js';
 
 /** ≤3-exchange socratic dialogue cap (PLAN §6, web quest runner). */
 const SOCRATIC_MAX_EXCHANGES = 3;
@@ -259,6 +263,18 @@ async function handle(
       await handleSocraticMessage(req, res, cwd, dir, decodeURIComponent(socraticMatch[1]!));
       return;
     }
+    if (pathname === '/api/quests' || pathname === '/api/quests/') {
+      await handleQuestCreate(req, res, cwd);
+      return;
+    }
+    if (pathname === '/api/settings' || pathname === '/api/settings/') {
+      await handleSettingsPatch(req, res, dir);
+      return;
+    }
+    if (pathname === '/api/keys' || pathname === '/api/keys/') {
+      await handleKeySet(req, res);
+      return;
+    }
     sendJson(res, 404, { error: 'unknown endpoint', path: pathname });
     return;
   }
@@ -323,6 +339,18 @@ async function handle(
     return;
   }
 
+  // Settings modal payload: the full config plus DISPLAY-SAFE key status
+  // (configured / source / masked tail). Never the keys themselves — see keys.ts.
+  if (pathname === '/api/settings' || pathname === '/api/settings/') {
+    sendJson(res, 200, {
+      config: readConfigOrDefault(dir),
+      keys: keyStatus(),
+      repoId: resolveRepoId(cwd),
+      stateDir: dir,
+    });
+    return;
+  }
+
   const paperMatch = /^\/api\/paper\/([^/]+)\/?$/.exec(pathname);
   if (paperMatch) {
     const id = decodeURIComponent(paperMatch[1]!);
@@ -378,6 +406,111 @@ async function handleQuestComplete(
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/quests  (create a VOLUNTARY quest on demand — the Challenge button)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a voluntary quest for one component (PLAN §6.3). Body: `{ componentId }`.
+ * Available in EVERY condition and spends no interruption budget — this is the
+ * junior's own initiative. Uses the configured intervention model when an API
+ * key is present, otherwise deterministic paper-grounded items, so the map's
+ * Challenge button always produces a runnable quest. Responds with the new quest
+ * so the runner can open immediately.
+ */
+async function handleQuestCreate(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  cwd: string,
+): Promise<void> {
+  const body = parseBody(await readBody(req));
+  const componentId = typeof body.componentId === 'string' ? body.componentId.trim() : '';
+  if (!componentId) {
+    sendJson(res, 400, { error: 'componentId is required' });
+    return;
+  }
+  try {
+    const made = await generateVoluntaryQuest(cwd, componentId);
+    if (!made) {
+      sendJson(res, 404, { error: 'unknown component', componentId });
+      return;
+    }
+    sendJson(res, 200, { quest: made.quest, via: made.via, model: made.model });
+  } catch (err) {
+    sendJson(res, 500, { error: 'quest generation failed', detail: String(err) });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET/POST /api/settings, POST /api/keys  (settings modal)
+// ---------------------------------------------------------------------------
+
+/** Shallow-merge one nested config section; a non-object patch is ignored. */
+function mergeSection(base: unknown, patch: unknown): unknown {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return base;
+  const b = base && typeof base === 'object' && !Array.isArray(base) ? base : {};
+  return { ...(b as object), ...(patch as object) };
+}
+
+/**
+ * Patch `config.json` from the settings modal. Body is a PARTIAL config; each
+ * known section is shallow-merged over the current value and the whole result is
+ * re-validated by ScaleConfigSchema, so a bad field is a 400 and never lands on
+ * disk. Unknown top-level keys are dropped rather than persisted.
+ */
+async function handleSettingsPatch(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  dir: string,
+): Promise<void> {
+  const patch = parseBody(await readBody(req));
+  const current = readConfigOrDefault(dir) as unknown as Record<string, unknown>;
+  const next: Record<string, unknown> = {
+    ...current,
+    user: typeof patch.user === 'string' && patch.user.trim() ? patch.user.trim() : current.user,
+    condition: mergeSection(current.condition, patch.condition),
+    inflow: mergeSection(current.inflow, patch.inflow),
+    budgets: mergeSection(current.budgets, patch.budgets),
+    thresholds: mergeSection(current.thresholds, patch.thresholds),
+    models: mergeSection(current.models, patch.models),
+  };
+  const parsed = ScaleConfigSchema.safeParse(next);
+  if (!parsed.success) {
+    sendJson(res, 400, { error: 'invalid settings', detail: parsed.error.issues });
+    return;
+  }
+  ensureStateDir(dir);
+  fs.writeFileSync(paths.config(dir), JSON.stringify(parsed.data, null, 2) + '\n');
+  sendJson(res, 200, { config: parsed.data, keys: keyStatus() });
+}
+
+/**
+ * Store (or, with an empty string, clear) one provider's API key. Body:
+ * `{ provider, key }`. The key goes to `~/.scale/keys.json` at mode 0600 and is
+ * NEVER echoed back — the response carries only the masked status. When an env
+ * var is set for that provider it keeps winning, and the response says so via
+ * `source: 'env'` so the UI can warn that the stored key is being shadowed.
+ */
+async function handleKeySet(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = parseBody(await readBody(req));
+  const provider = LlmProviderSchema.safeParse(body.provider);
+  if (!provider.success) {
+    sendJson(res, 400, { error: 'provider must be "anthropic" or "openai"' });
+    return;
+  }
+  if (typeof body.key !== 'string') {
+    sendJson(res, 400, { error: 'key must be a string ("" clears it)' });
+    return;
+  }
+  try {
+    setKey(provider.data, body.key);
+  } catch (err) {
+    sendJson(res, 500, { error: 'could not write key file', detail: (err as Error).message });
+    return;
+  }
+  sendJson(res, 200, { keys: keyStatus() });
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/socratic/:id/message  (socratic proxy — INTERVENTION model)
 // ---------------------------------------------------------------------------
 
@@ -389,13 +522,6 @@ function paperContext(paper: LoadedPaper | undefined): string {
   const rationale =
     fm.rationale.map((r) => `- ${r.decision}${r.why ? ` — ${r.why}` : ''}`).join('\n') || '- (none)';
   return `Component: ${fm.title}\n\nConcepts:\n${concepts}\n\nRationale:\n${rationale}`;
-}
-
-function textOf(msg: Anthropic.Message): string {
-  return msg.content
-    .map((b) => (b.type === 'text' ? b.text : ''))
-    .join('')
-    .trim();
 }
 
 /** Strip ```json fences and parse; throws on failure. */
@@ -426,14 +552,15 @@ function parseGrades(text: string): Record<DimName, number> {
 }
 
 async function socraticReply(
-  client: Anthropic,
+  provider: LlmProvider,
   model: string,
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
 ): Promise<string> {
-  const msg = await client.messages.create({
+  const text = await chatText({
+    provider,
     model,
-    max_tokens: 400,
+    maxTokens: 400,
     system:
       'You are a Socratic tutor helping a junior engineer build genuine comprehension ' +
       'of a codebase component. Ask ONE probing follow-up question at a time, grounded ' +
@@ -442,18 +569,19 @@ async function socraticReply(
       `supportive.\n\n${paperContext(paper)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
-  return textOf(msg) || 'Can you say more about how that part works, and why?';
+  return text || 'Can you say more about how that part works, and why?';
 }
 
 async function socraticFinal(
-  client: Anthropic,
+  provider: LlmProvider,
   model: string,
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
 ): Promise<{ reply: string; grades: Record<DimName, number> }> {
-  const msg = await client.messages.create({
+  const text = await chatText({
+    provider,
     model,
-    max_tokens: 500,
+    maxTokens: 500,
     system:
       'You are concluding a Socratic comprehension dialogue about a codebase component. ' +
       'Give brief supportive closing feedback (1-2 sentences), then grade the learner\'s ' +
@@ -463,7 +591,6 @@ async function socraticFinal(
       `"rationale":0.0}}.\n\n${paperContext(paper)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
-  const text = textOf(msg);
   const grades = parseGrades(text);
   let reply = 'Thanks — that gives me a good sense of your understanding.';
   try {
@@ -504,7 +631,8 @@ async function handleSocraticMessage(
   }
 
   const config = readConfigOrDefault(dir);
-  const model = resolveModelId(config.models.intervention);
+  const provider = config.models.provider;
+  const model = resolveInterventionModel(config.models);
   const paper = paperById(loadScaleDir(cwd), quest.componentId);
 
   const state = socraticDialogues.get(questId) ?? { history: [], userTurns: 0 };
@@ -512,31 +640,30 @@ async function handleSocraticMessage(
   state.userTurns++;
   const isFinal = state.userTurns >= SOCRATIC_MAX_EXCHANGES;
 
-  let client: Anthropic;
-  try {
-    client = new Anthropic();
-  } catch (err) {
-    // No credentials — roll back the speculative turn so a retry with a key works.
+  // No key for the selected provider → roll back the speculative turn so a retry
+  // after adding one in Settings works, and tell the UI precisely what's missing.
+  if (!resolveKey(provider)) {
     state.history.pop();
     state.userTurns--;
     sendJson(res, 200, {
       reply: null,
       done: false,
-      error: `socratic proxy unavailable (no API auth): ${(err as Error).message}`,
+      needsKey: provider,
+      error: new MissingKeyError(provider).message,
     });
     return;
   }
 
   try {
     if (!isFinal) {
-      const reply = await socraticReply(client, model, paper, state.history);
+      const reply = await socraticReply(provider, model, paper, state.history);
       state.history.push({ role: 'assistant', content: reply });
       socraticDialogues.set(questId, state);
       sendJson(res, 200, { reply, done: false });
       return;
     }
 
-    const { reply, grades } = await socraticFinal(client, model, paper, state.history);
+    const { reply, grades } = await socraticFinal(provider, model, paper, state.history);
     const sha = shortHeadSha(cwd);
     const now = new Date().toISOString();
     try {
@@ -581,19 +708,27 @@ async function handleSocraticMessage(
 export interface ServeOptions {
   port: number;
   cwd?: string;
+  /** Bind address. Defaults to loopback — see the note in `startServer`. */
+  host?: string;
 }
 
 export function startServer(opts: ServeOptions): http.Server {
   const cwd = opts.cwd ?? process.cwd();
   const repoId = resolveRepoId(cwd);
+  // Loopback by default: this server writes config, records evidence, and (via
+  // POST /api/keys) accepts API keys, all with no authentication. It is a
+  // single-user local tool, so it must not be reachable off-box. `--host` is an
+  // explicit opt-in for e.g. viewing the map from a phone on a trusted LAN.
+  const host = opts.host ?? '127.0.0.1';
   const server = http.createServer((req, res) => {
     handle(req, res, cwd).catch((err) => {
       sendJson(res, 500, { error: (err as Error).message });
     });
   });
-  server.listen(opts.port, () => {
+  server.listen(opts.port, host, () => {
     const scalePresent = fs.existsSync(path.join(cwd, '.scale'));
-    console.log(`scale: serving http://localhost:${opts.port}`);
+    const shown = host === '127.0.0.1' ? 'localhost' : host;
+    console.log(`scale: serving http://${shown}:${opts.port}`);
     console.log(`  repo-id:  ${repoId}`);
     console.log(`  memory:   ${path.join(cwd, '.scale')}${scalePresent ? '' : '  (missing!)'}`);
     console.log(`  state:    ${stateDir(cwd)}`);

@@ -1253,20 +1253,26 @@ map
   });
 
 // ---------------------------------------------------------------------------
-// serve  (STUB) — local web map app
+// serve  (REAL) — local web map app
 // ---------------------------------------------------------------------------
 program
   .command('serve')
   .description('Serve the local web map app (pure Node; reads .scale/ from cwd)')
   .option('-p, --port <number>', 'port', '4318')
-  .action((opts: { port: string }) => {
+  .option(
+    '--host <addr>',
+    'bind address; defaults to loopback. The server has no auth and accepts API ' +
+      'keys, so only widen this on a trusted network',
+    '127.0.0.1',
+  )
+  .action((opts: { port: string; host: string }) => {
     const port = Number(opts.port);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) {
       console.error(`scale: invalid port "${opts.port}".`);
       process.exitCode = 1;
       return;
     }
-    startServer({ port, cwd: process.cwd() });
+    startServer({ port, host: opts.host, cwd: process.cwd() });
   });
 
 // ---------------------------------------------------------------------------
