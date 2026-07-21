@@ -22,7 +22,7 @@
  *     which puts it in `recentlyAddressed`, so the immediate retry passes and the
  *     item is never re-raised this commit. Nothing crosses into a queue (§6.3).
  */
-import type { ScaleConfig } from './schema/config.js';
+import type { Language, ScaleConfig } from './schema/config.js';
 import type { UserCoverage } from './schema/coverage.js';
 import { meanDims } from './coverage-model.js';
 
@@ -154,9 +154,18 @@ function topCandidate(cands: Candidate[], importance?: Record<string, number>): 
  * slot. Deferring is the JUNIOR's call (PLAN §6.1 "defer = drop, their choice"),
  * so the agent must present the check and may only skip when told to — and when
  * it skips anyway, `--by agent` keeps that out of the study's user-choice data.
+ *
+ * The instruction itself always stays English (it addresses the AGENT); when the
+ * junior's `language` is 'ko' one extra sentence tells the agent to DELIVER the
+ * check in Korean (code identifiers/technical terms stay English — see
+ * LanguageSchema in schema/config.ts).
  */
-export function gateDenyReason(component: string, modality: string): string {
-  return (
+export function gateDenyReason(
+  component: string,
+  modality: string,
+  language: Language = 'en',
+): string {
+  const reason =
     `SCALE in-flow check — this is for the JUNIOR, not for you to resolve.\n` +
     `Run the ${modality} comprehension check on the '${component}' territory ` +
     `using the scale-tutor skill and put it in front of them now (it's ` +
@@ -165,7 +174,12 @@ export function gateDenyReason(component: string, modality: string): string {
     `Do NOT skip this on their behalf. If — and only if — they say to skip, run ` +
     `\`scale gate defer ${component}\`, then retry. If you skip without asking ` +
     `(e.g. you authored this commit yourself), you MUST run ` +
-    `\`scale gate defer ${component} --by agent\` and say so in your reply.`
+    `\`scale gate defer ${component} --by agent\` and say so in your reply.`;
+  if (language !== 'ko') return reason;
+  return (
+    reason +
+    ` The junior's interaction language is KOREAN: deliver the check itself ` +
+    `entirely in Korean, keeping code identifiers and technical terms in English.`
   );
 }
 
@@ -224,7 +238,7 @@ export function gateDecision(input: GateInput): GateDecision {
   return {
     action: 'deny',
     component: target.id,
-    reason: gateDenyReason(target.id, config.condition.modality),
+    reason: gateDenyReason(target.id, config.condition.modality, config.language),
     spendBudget: true,
   };
 }

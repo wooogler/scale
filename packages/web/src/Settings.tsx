@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
 import {
   resolveInterventionModel as resolveIntervention,
+  type Language,
   type LlmProvider,
   type ScaleConfig,
 } from '@scale/core/browser';
@@ -11,6 +12,7 @@ import {
   type KeyStatusMap,
   type SettingsPatch,
 } from './data.js';
+import { useStrings, type Strings } from './i18n.js';
 
 /**
  * Settings modal for the served map viewer.
@@ -36,6 +38,11 @@ interface Props {
   onClose: () => void;
   /** Provider tab to focus on open (set when a missing key blocked a dialogue). */
   focusProvider?: LlmProvider | null;
+  /**
+   * A language pick is applied to the WHOLE app immediately (App swaps the
+   * LangContext value) — optimistically, before the settings round-trip lands.
+   */
+  onLanguageChange: (lang: Language) => void;
 }
 
 const PROVIDER_LABEL: Record<LlmProvider, string> = {
@@ -54,14 +61,12 @@ const PLACEHOLDER: Record<LlmProvider, string> = {
 /** A labelled row of mutually exclusive choices. */
 function ChoiceRow<T extends string>({
   label,
-  ko,
   value,
   options,
   onPick,
   disabled,
 }: {
   label: string;
-  ko?: string;
   value: T;
   options: { value: T; label: string; hint?: string }[];
   onPick: (v: T) => void;
@@ -69,10 +74,7 @@ function ChoiceRow<T extends string>({
 }): JSX.Element {
   return (
     <div className="set-row">
-      <div className="set-label">
-        {label}
-        {ko && <span className="ko-sub"> {ko}</span>}
-      </div>
+      <div className="set-label">{label}</div>
       <div className="set-choices">
         {options.map((o) => (
           <button
@@ -148,6 +150,7 @@ function KeyField({
   onSaved: (keys: KeyStatusMap) => void;
   autoFocus?: boolean;
 }): JSX.Element {
+  const S = useStrings();
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -172,12 +175,12 @@ function KeyField({
       <div className="set-key-head">
         <span className="set-key-name">{PROVIDER_LABEL[provider]}</span>
         {status?.configured ? (
-          <span className="set-key-ok" title={`source: ${status.source}`}>
+          <span className="set-key-ok" title={S.set.keySource(status.source ?? '')}>
             ● {status.masked}
             <span className="set-key-src"> {status.source}</span>
           </span>
         ) : (
-          <span className="set-key-missing">not set</span>
+          <span className="set-key-missing">{S.set.notSet}</span>
         )}
       </div>
       <div className="set-key-row">
@@ -201,7 +204,7 @@ function KeyField({
           disabled={busy || !draft.trim()}
           onClick={() => void commit(draft)}
         >
-          {busy ? 'Saving…' : 'Save'}
+          {busy ? S.set.savingBtn : S.set.save}
         </button>
         {status?.source === 'file' && (
           <button
@@ -210,22 +213,18 @@ function KeyField({
             disabled={busy}
             onClick={() => void commit('')}
           >
-            Clear
+            {S.set.clear}
           </button>
         )}
       </div>
-      {envShadowed && (
-        <p className="set-note">
-          {ENV_VAR[provider]} is set in the environment and takes precedence — anything saved here
-          stays unused until you unset it.
-        </p>
-      )}
+      {envShadowed && <p className="set-note">{S.set.envShadowed(ENV_VAR[provider])}</p>}
       {err && <p className="set-error">{err}</p>}
     </div>
   );
 }
 
-export function Settings({ onClose, focusProvider }: Props): JSX.Element {
+export function Settings({ onClose, focusProvider, onLanguageChange }: Props): JSX.Element {
+  const S: Strings = useStrings();
   const [config, setConfig] = useState<ScaleConfig | null>(null);
   const [keys, setKeys] = useState<KeyStatusMap | null>(null);
   const [where, setWhere] = useState<{ repoId: string; stateDir: string } | null>(null);
@@ -260,7 +259,15 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  /** Apply locally, then persist; on failure re-read the server's truth. */
+  /**
+   * Apply locally, then persist; on failure re-read the server's truth.
+   *
+   * Language needs one extra step on BOTH outcomes: the pick was applied
+   * app-wide optimistically (onLanguageChange fires before the save), so the
+   * global LangContext must be re-synced to whatever the server actually holds —
+   * otherwise a failed save leaves the whole UI in a language config.json
+   * doesn't have, desynced until a full reload.
+   */
   const patch = useCallback(
     (p: SettingsPatch, optimistic: (c: ScaleConfig) => ScaleConfig) => {
       setConfig((cur) => (cur ? optimistic(cur) : cur));
@@ -270,27 +277,34 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
         (r) => {
           setConfig(r.config);
           setKeys(r.keys);
+          onLanguageChange(r.config.language);
           setSaving(false);
         },
         (e: unknown) => {
           setSaveErr((e as Error).message);
           setSaving(false);
-          void loadSettings().then((s) => setConfig(s.config), () => undefined);
+          void loadSettings().then(
+            (s) => {
+              setConfig(s.config);
+              onLanguageChange(s.config.language); // roll back the optimistic switch
+            },
+            () => undefined,
+          );
         },
       );
     },
-    [],
+    [onLanguageChange],
   );
 
   const body = (): JSX.Element => {
     if (loadErr) {
       return (
         <p className="set-error">
-          Settings need a live <code>scale serve</code> backend: {loadErr}
+          {S.set.needsBackendPre} <code>scale serve</code> {S.set.needsBackendPost} {loadErr}
         </p>
       );
     }
-    if (!config || !keys) return <p className="set-note">Loading settings…</p>;
+    if (!config || !keys) return <p className="set-note">{S.set.loadingSettings}</p>;
 
     const m = config.models;
     const triggers = config.inflow.triggers;
@@ -302,13 +316,29 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
     return (
       <>
         <section className="set-section">
-          <h3 className="set-h">
-            API keys <span className="ko-sub">API 키</span>
-          </h3>
+          {/* Language first: the pick re-skins this very modal live, and the
+              option labels stay in their OWN language so either reader can
+              always find the way back. */}
+          <ChoiceRow
+            label={S.set.language}
+            value={config.language}
+            disabled={saving}
+            options={[
+              { value: 'en' as Language, label: 'English' },
+              { value: 'ko' as Language, label: '한국어' },
+            ]}
+            onPick={(language) => {
+              onLanguageChange(language); // whole app, immediately
+              patch({ language }, (c) => ({ ...c, language }));
+            }}
+          />
+          <p className="set-note">{S.set.languageNote}</p>
+        </section>
+
+        <section className="set-section">
+          <h3 className="set-h">{S.set.apiKeysHeading}</h3>
           <p className="set-note">
-            Used for the Socratic tutor and LLM-written quests. Stored in{' '}
-            <code>~/.scale/keys.json</code> (mode 0600) on this machine; never sent anywhere but the
-            provider you choose.
+            {S.set.keysNotePre} <code>~/.scale/keys.json</code> {S.set.keysNotePost}
           </p>
           {(['anthropic', 'openai'] as LlmProvider[]).map((p) => (
             <KeyField
@@ -322,11 +352,9 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
         </section>
 
         <section className="set-section">
-          <h3 className="set-h">
-            Intervention model <span className="ko-sub">개입 모델</span>
-          </h3>
+          <h3 className="set-h">{S.set.modelHeading}</h3>
           <ChoiceRow
-            label="Provider"
+            label={S.set.provider}
             value={m.provider}
             disabled={saving}
             options={[
@@ -340,8 +368,7 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
           {/* One tier token drives both providers, so switching provider keeps
               the tier you picked instead of silently changing model class. */}
           <ChoiceRow
-            label="Tier"
-            ko="등급"
+            label={S.set.tier}
             value={m.intervention}
             disabled={saving}
             options={
@@ -363,25 +390,23 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
             }
           />
           <p className="set-note">
-            Runs the Socratic tutor and LLM-written quests →{' '}
-            <code>{resolveIntervention(m)}</code>. The one-time coverage-memory build is not
-            configured here: <code>/scale-map</code> runs inside a Claude Code session, so it uses
-            whatever model that session is on — pick it with <code>/model</code> before you build.
+            {S.set.modelNoteRuns} <code>{resolveIntervention(m)}</code>. {S.set.modelNoteBuildPre}
+            <code>/scale-map</code>
+            {S.set.modelNoteBuildMid}
+            <code>/model</code>
+            {S.set.modelNoteBuildPost}
           </p>
         </section>
 
         <section className="set-section">
-          <h3 className="set-h">
-            Condition <span className="ko-sub">개입 조건</span>
-          </h3>
+          <h3 className="set-h">{S.set.conditionHeading}</h3>
           <ChoiceRow
-            label="Timing"
-            ko="시점"
+            label={S.set.timing}
             value={config.condition.timing}
             disabled={saving}
             options={[
-              { value: 'inflow' as const, label: 'In-flow', hint: 'interrupt while working' },
-              { value: 'postsession' as const, label: 'Post-session', hint: 'at session end' },
+              { value: 'inflow' as const, label: S.set.inflow, hint: S.set.inflowHint },
+              { value: 'postsession' as const, label: S.set.postsession, hint: S.set.postsessionHint },
             ]}
             onPick={(timing) =>
               patch({ condition: { timing } }, (c) => ({
@@ -391,13 +416,12 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
             }
           />
           <ChoiceRow
-            label="Modality"
-            ko="방식"
+            label={S.set.modality}
             value={config.condition.modality}
             disabled={saving}
             options={[
-              { value: 'quiz' as const, label: 'Quiz', hint: 'multiple choice' },
-              { value: 'socratic' as const, label: 'Socratic', hint: 'dialogue (needs a key)' },
+              { value: 'quiz' as const, label: S.quest.quiz, hint: S.set.quizHint },
+              { value: 'socratic' as const, label: S.quest.socratic, hint: S.set.socraticHint },
             ]}
             onPick={(modality) =>
               patch({ condition: { modality } }, (c) => ({
@@ -407,9 +431,7 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
             }
           />
           <div className="set-row">
-            <div className="set-label">
-              In-flow triggers <span className="ko-sub">트리거</span>
-            </div>
+            <div className="set-label">{S.set.triggers}</div>
             <div className="set-choices">
               {(['pre-commit', 'post-task'] as const).map((t) => (
                 <button
@@ -428,16 +450,14 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
         </section>
 
         <section className="set-section">
-          <h3 className="set-h">
-            Interruption budget <span className="ko-sub">방해 예산</span>
-          </h3>
+          <h3 className="set-h">{S.set.budgetHeading}</h3>
           <div className="set-nums">
             {(
               [
-                ['maxPerCommit', 'per commit'],
-                ['maxPerSession', 'per session'],
-                ['cooldownMinutes', 'cooldown (min)'],
-                ['minChangedLines', 'min changed lines'],
+                ['maxPerCommit', S.set.perCommit],
+                ['maxPerSession', S.set.perSession],
+                ['cooldownMinutes', S.set.cooldownMin],
+                ['minChangedLines', S.set.minChangedLines],
               ] as const
             ).map(([key, label]) => (
               <label className="set-num" key={key}>
@@ -475,16 +495,21 @@ export function Settings({ onClose, focusProvider }: Props): JSX.Element {
           <div>
             <div className="qr-kicker">
               <span className="qr-kicker-badge set-badge">⚙</span>
-              Settings <span className="ko-sub">설정</span>
+              {S.set.title}
             </div>
-            <div className="qr-id">{saving ? 'saving…' : 'changes save immediately'}</div>
+            <div className="qr-id">{saving ? S.set.saving : S.set.savesImmediately}</div>
           </div>
-          <button type="button" className="panel-close" onClick={onClose} aria-label="Close settings">
+          <button
+            type="button"
+            className="panel-close"
+            onClick={onClose}
+            aria-label={S.set.closeSettings}
+          >
             ×
           </button>
         </div>
         <div className="qr-body set-body">
-          {saveErr && <p className="set-error">Could not save: {saveErr}</p>}
+          {saveErr && <p className="set-error">{S.set.couldNotSave} {saveErr}</p>}
           {body()}
         </div>
       </div>

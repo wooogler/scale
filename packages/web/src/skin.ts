@@ -1,10 +1,10 @@
 import type { CoverageState } from '@scale/core/browser';
 
 /**
- * The terminology skin (PLAN §2). This module is the ONLY place in the whole
- * codebase where neutral coverage states are translated into the Koei-style
- * game terms. Core schemas and the CLI never speak "conquered" or "반란";
- * the boundary lives here, in the web viewer, on purpose.
+ * The terminology skin (PLAN §2). This module DEFINES the Koei-style game terms
+ * for the neutral coverage states; i18n.ts may embed them inside longer display
+ * sentences, but a new game noun starts here. Core schemas and the CLI never
+ * speak "conquered" or "반란"; the skin boundary is the web viewer, on purpose.
  *
  *   fog       -> 미탐사   (unexplored / fog)
  *   explored  -> 정찰됨   (scouted)

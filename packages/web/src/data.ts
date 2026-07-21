@@ -5,6 +5,7 @@ import type {
   Quest,
   ComponentCoverage,
   DimName,
+  Language,
   LlmProvider,
   ScaleConfig,
 } from '@scale/core/browser';
@@ -140,6 +141,7 @@ export interface SettingsResponse {
 /** Partial config accepted by POST /api/settings (server merges + validates). */
 export interface SettingsPatch {
   user?: string;
+  language?: 'en' | 'ko';
   condition?: Partial<ScaleConfig['condition']>;
   inflow?: Partial<ScaleConfig['inflow']>;
   budgets?: Partial<ScaleConfig['budgets']>;
@@ -225,14 +227,40 @@ function synthComponent(results: DimResult[]): ComponentCoverage {
   };
 }
 
+// Localized copy for the OFFLINE synthesizers below. Live-server paths never
+// read these — the server writes its own text in the configured language. Kept
+// here (not i18n.ts) because they are canned CONTENT, not UI chrome; concept
+// names stay English either way (code references, per the language contract).
+const OFFLINE_MCQ: Record<
+  Language,
+  { prompt: (name: string) => string; distractors: [string, string, string] }
+> = {
+  en: {
+    prompt: (name) => `Which best describes “${name}” in this component?`,
+    distractors: [
+      'An unrelated caching layer',
+      'A build-time code generator',
+      'A logging side effect',
+    ],
+  },
+  ko: {
+    prompt: (name) => `이 컴포넌트에서 “${name}”을(를) 가장 잘 설명한 것은?`,
+    distractors: ['무관한 캐싱 레이어', '빌드 타임 코드 생성기', '로깅 부수 효과'],
+  },
+};
+
 /**
  * POST /api/quests — create a VOLUNTARY quest for a component on demand: the
  * map's Challenge button (§6.3). Works in every condition; the server falls back
  * to deterministic paper-grounded items when there's no API key. Offline (vite
- * dev with no backend) we synthesize a small quest from the sample paper so the
- * runner still opens. Returns null only when nothing could be prepared.
+ * dev with no backend) we synthesize a small quest from the sample paper — in
+ * the caller's interaction `language` — so the runner still opens. Returns null
+ * only when nothing could be prepared.
  */
-export async function createVoluntaryQuest(componentId: string): Promise<Quest | null> {
+export async function createVoluntaryQuest(
+  componentId: string,
+  language: Language,
+): Promise<Quest | null> {
   try {
     const r = await postJson<{ quest: Quest }>('/api/quests', { componentId });
     return r.quest ?? null;
@@ -240,20 +268,16 @@ export async function createVoluntaryQuest(componentId: string): Promise<Quest |
     note(`voluntary quest for ${componentId}`, err);
     const paper = samplePapers[componentId];
     const concepts = paper?.frontmatter.concepts ?? [];
+    const t = OFFLINE_MCQ[language];
     const items = concepts.slice(0, 2).map((c, i) => {
-      const opts = [
-        c.name,
-        'An unrelated caching layer',
-        'A build-time code generator',
-        'A logging side effect',
-      ];
+      const opts = [c.name, ...t.distractors];
       // Rotate so the answer isn't always 'A', and emit BOTH `answer` (text) and
       // `correctIndex` — the runner grades on correctIndex (mirrors mcqItem).
       const shift = (c.name.length + i) % 4;
       const rotated = opts.map((_, k) => opts[(k + shift) % 4]!);
       const correctIndex = (4 - shift) % 4;
       return {
-        prompt: `Which best describes “${c.name}” in this component?`,
+        prompt: t.prompt(c.name),
         dim: (i === 0 ? 'concepts' : 'rationale') as DimName,
         options: rotated,
         answer: rotated[correctIndex],
@@ -296,15 +320,37 @@ export async function completeQuiz(
   }
 }
 
+/** Canned offline Socratic turns (same live-vs-offline split as OFFLINE_MCQ). */
+const OFFLINE_SOCRATIC: Record<Language, { probes: [string, string]; close: string }> = {
+  en: {
+    probes: [
+      'Interesting — and what would go wrong if that check were skipped on a later request?',
+      'Good. Now trace it one more step: who is responsible for enforcing that, and when?',
+    ],
+    close:
+      'That gives me a solid sense of your understanding — you connected the access check to revocation. Well reasoned.',
+  },
+  ko: {
+    probes: [
+      '흥미롭군요 — 이후 요청에서 그 검사를 건너뛰면 무엇이 잘못될까요?',
+      '좋습니다. 한 단계만 더 따라가 보죠: 그것을 강제하는 책임은 누구에게, 언제 있나요?',
+    ],
+    close:
+      '이해도를 충분히 파악했습니다 — 접근 검사와 권한 회수를 연결해 냈군요. 훌륭한 추론입니다.',
+  },
+};
+
 /**
  * POST /api/socratic/:id/message — one learner turn of the server-proxied
- * dialogue. `userTurn` (1-based) drives ONLY the offline synthesis; live mode
- * ignores it and follows the server's `done` flag / 3-exchange cap.
+ * dialogue. `userTurn` (1-based) and `language` drive ONLY the offline
+ * synthesis; live mode ignores both and follows the server's `done` flag /
+ * 3-exchange cap (the server speaks the configured language itself).
  */
 export async function sendSocraticMessage(
   questId: string,
   message: string,
   userTurn: number,
+  language: Language,
 ): Promise<SocraticResponse> {
   try {
     return await postJson<SocraticResponse>(
@@ -313,18 +359,14 @@ export async function sendSocraticMessage(
     );
   } catch (err) {
     note(`socratic ${questId}`, err);
+    const t = OFFLINE_SOCRATIC[language];
     // Offline demo: 2 probing turns, then a graded close on the 3rd.
     if (userTurn < 3) {
-      const probes = [
-        'Interesting — and what would go wrong if that check were skipped on a later request?',
-        'Good. Now trace it one more step: who is responsible for enforcing that, and when?',
-      ];
-      return { reply: probes[userTurn - 1] ?? probes[0]!, done: false };
+      return { reply: t.probes[userTurn - 1] ?? t.probes[0], done: false };
     }
     const grades: Record<DimName, number> = { structure: 0.5, concepts: 0.7, rationale: 0.6 };
     return {
-      reply:
-        'That gives me a solid sense of your understanding — you connected the access check to revocation. Well reasoned.',
+      reply: t.close,
       done: true,
       grades,
       componentId: '',

@@ -1,8 +1,9 @@
 import { useEffect, useState, type JSX } from 'react';
 import type { ComponentCoverage, Dimensions, Quest } from '@scale/core/browser';
-import { skinFor, DEV_STATS_LABEL_EN, DEV_STATS_LABEL_KO, QUEST_SKIN } from './skin.js';
+import { skinFor, QUEST_SKIN } from './skin.js';
 import { loadPaper, createVoluntaryQuest, type PaperResponse } from './data.js';
 import { Markdown } from './Markdown.js';
+import { useLang, useStrings } from './i18n.js';
 
 interface Props {
   componentId: string;
@@ -12,11 +13,7 @@ interface Props {
   onClose: () => void;
 }
 
-const DIM_LABELS: { key: keyof Dimensions; label: string }[] = [
-  { key: 'structure', label: 'Structure' },
-  { key: 'concepts', label: 'Concepts' },
-  { key: 'rationale', label: 'Rationale' },
-];
+const DIM_KEYS: (keyof Dimensions)[] = ['structure', 'concepts', 'rationale'];
 
 function DevStat({ label, value, color }: { label: string; value: number; color: string }): JSX.Element {
   const pct = Math.round(value * 100);
@@ -34,6 +31,8 @@ function DevStat({ label, value, color }: { label: string; value: number; color:
 }
 
 export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: Props): JSX.Element {
+  const S = useStrings();
+  const lang = useLang();
   // Papers are fetched lazily per selected node (GET /api/paper/:id) with a
   // bundled-sample fallback baked into loadPaper. While the fetch is in flight
   // the panel shows a loading state.
@@ -74,10 +73,10 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
     }
     setPreparing(true);
     setQuestError(null);
-    const quest = await createVoluntaryQuest(componentId);
+    const quest = await createVoluntaryQuest(componentId, lang);
     setPreparing(false);
     if (quest) onStartQuest(quest);
-    else setQuestError('Could not prepare a challenge for this territory.');
+    else setQuestError(S.challengeError);
   };
 
   return (
@@ -87,53 +86,46 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
           <div className="panel-title">{paper?.frontmatter.title ?? componentId}</div>
           <div className="panel-id">{componentId}</div>
         </div>
-        <button type="button" className="panel-close" onClick={onClose} aria-label="Close panel">
+        <button type="button" className="panel-close" onClick={onClose} aria-label={S.closePanel}>
           ×
         </button>
       </div>
 
       <div className="panel-state" style={{ borderColor: skin.color }}>
         <span className="state-dot" style={{ background: skin.color }} />
-        <span className="state-ko">{skin.labelKo}</span>
-        <span className="state-en">{skin.labelEn}</span>
+        <span className="state-ko">{S.state[state].label}</span>
       </div>
-      <p className="state-blurb">{skin.blurb}</p>
+      <p className="state-blurb">{S.state[state].blurb}</p>
 
       <section className="panel-section">
-        <h4>
-          {DEV_STATS_LABEL_EN} <span className="ko-sub">{DEV_STATS_LABEL_KO}</span>
-        </h4>
+        <h4>{S.devStats}</h4>
         <div className="stats">
-          {DIM_LABELS.map((d) => (
-            <DevStat key={d.key} label={d.label} value={dims[d.key]} color={skin.color} />
+          {DIM_KEYS.map((k) => (
+            <DevStat key={k} label={S.dim[k]} value={dims[k]} color={skin.color} />
           ))}
         </div>
         <dl className="meta">
-          <dt>Loyalty</dt>
+          <dt>{S.loyalty}</dt>
           <dd>{coverage ? Math.round(coverage.loyalty * 100) + '%' : '—'}</dd>
-          <dt>Last validated</dt>
+          <dt>{S.lastValidated}</dt>
           <dd>{coverage?.lastValidatedSha ?? '—'}</dd>
         </dl>
       </section>
 
       {quests.length > 0 && (
         <section className="panel-section">
-          <h4>
-            {QUEST_SKIN.quizEn === 'Quiz' ? 'Pending sieges' : 'Quests'}{' '}
-            <span className="ko-sub">{QUEST_SKIN.labelKo}</span>
-          </h4>
+          <h4>{S.pendingQuestsHeading}</h4>
           <ul className="quest-list">
             {quests.map((q) => (
               <li key={q.id} className="quest-item">
                 <div className="quest-item-meta">
                   <span className={`quest-tag quest-tag-${q.modality}`}>
-                    {q.modality === 'quiz' ? QUEST_SKIN.quizEn : QUEST_SKIN.socraticEn}
+                    {q.modality === 'quiz' ? S.quest.quiz : S.quest.socratic}
                   </span>
-                  <span className="quest-origin">{q.origin}</span>
+                  <span className="quest-origin">{S.origin[q.origin]}</span>
                 </div>
                 <button type="button" className="quest-start-btn" onClick={() => onStartQuest(q)}>
-                  {QUEST_SKIN.badge} {QUEST_SKIN.startEn}{' '}
-                  <span className="ko-sub">{QUEST_SKIN.startKo}</span>
+                  {QUEST_SKIN.badge} {S.quest.start}
                 </button>
               </li>
             ))}
@@ -148,19 +140,17 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
         disabled={preparing}
         aria-busy={preparing}
       >
-        {preparing ? (
-          <>⚔ Preparing… <span className="ko-sub">퀘스트 준비 중</span></>
-        ) : (
-          <>⚔ Challenge <span className="ko-sub">도전 (voluntary quest)</span></>
-        )}
+        {preparing
+          ? `${QUEST_SKIN.badge} ${S.challengePreparing}`
+          : `${QUEST_SKIN.badge} ${S.challenge}`}
       </button>
       {questError && <p className="state-blurb quest-error">{questError}</p>}
 
-      {loadingPaper && <p className="state-blurb">Loading paper…</p>}
+      {loadingPaper && <p className="state-blurb">{S.loadingPaper}</p>}
       {!loadingPaper && paper && (
         <>
           <section className="panel-section">
-            <h4>Concepts</h4>
+            <h4>{S.conceptsHeading}</h4>
             <ul className="concepts">
               {paper.frontmatter.concepts.map((c) => (
                 <li key={c.id}>
@@ -171,14 +161,13 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
           </section>
 
           <section className="panel-section paper">
-            <h4>Paper</h4>
+            {/* Paper CONTENT is repo-shared state and always English (§2). */}
+            <h4>{S.paperHeading}</h4>
             <Markdown source={paper.body} />
           </section>
         </>
       )}
-      {!loadingPaper && !paper && (
-        <p className="state-blurb">No paper found for this component.</p>
-      )}
+      {!loadingPaper && !paper && <p className="state-blurb">{S.noPaper}</p>}
     </aside>
   );
 }

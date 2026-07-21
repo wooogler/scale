@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   gateDecision,
+  gateDenyReason,
   ScaleConfigSchema,
   emptyComponentCoverage,
   type GateInput,
@@ -228,5 +229,31 @@ describe('gateDecision — candidate ranking', () => {
       }),
     );
     expect(d.action).toBe('allow');
+  });
+});
+
+describe('gateDenyReason — interaction language', () => {
+  it('ko appends the Korean-delivery instruction (identifiers stay English)', () => {
+    const r = gateDenyReason('a', 'quiz', 'ko');
+    expect(r).toMatch(/interaction language is KOREAN/);
+    expect(r).toMatch(/entirely in Korean/);
+    expect(r).toMatch(/code identifiers and technical terms in English/);
+    // The English agent-facing instruction is still fully present.
+    expect(r).toMatch(/scale-tutor skill/);
+    expect(r).toMatch(/retry the commit/);
+  });
+
+  it('en produces a pure-English reason without the Korean instruction', () => {
+    expect(gateDenyReason('a', 'quiz', 'en')).not.toMatch(/KOREAN/);
+  });
+
+  it('language defaults to en (omitted arg unchanged)', () => {
+    expect(gateDenyReason('a', 'quiz')).toBe(gateDenyReason('a', 'quiz', 'en'));
+  });
+
+  it('gateDecision threads config.language into the deny reason', () => {
+    const d = gateDecision(input({ config: cfg({ language: 'ko' }) }));
+    expect(d.action).toBe('deny');
+    expect(d.reason).toMatch(/interaction language is KOREAN/);
   });
 });

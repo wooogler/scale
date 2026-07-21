@@ -73,6 +73,17 @@ Two entry contexts:
    authored with no junior in the loop — then run `scale gate defer <componentId>
    --by agent` (so the study data doesn't count it as their choice) and tell them
    plainly in your reply that a check was due and you skipped it.
+7. **Interaction language follows `config.language`.** Determine it before the
+   first item: when it is `ko`, the SessionStart context contains the line
+   `interaction language: ko — run comprehension checks in Korean (keep code
+   identifiers in English)` and the gate's deny reason repeats it; absent both,
+   `scale config get language` answers (default `en`). When `ko`, conduct the
+   **entire** check in Korean — questions, MCQ options, Socratic probes,
+   feedback/reveals, and the relayed progress line — keeping code identifiers
+   (function/variable names, file paths, component ids) and established dev
+   terms (EMA, hook, commit, …) in English. CLI invocations (`scale record`,
+   `scale gate defer`) and their arguments are unchanged and always English —
+   only what you *say to the junior* switches. When `en`, everything is English.
 
 ---
 

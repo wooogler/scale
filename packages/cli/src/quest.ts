@@ -23,6 +23,7 @@ import { execFileSync } from 'node:child_process';
 
 import {
   type ScaleConfig,
+  type Language,
   type LoadedScale,
   type LoadedPaper,
   type UserCoverage,
@@ -207,10 +208,22 @@ function asDim(v: unknown, fallback: DimName): DimName {
   return typeof v === 'string' && (DIMS as string[]).includes(v) ? (v as DimName) : fallback;
 }
 
+/**
+ * Appended to the LLM system prompts when the junior's interaction language is
+ * 'ko': learner-facing strings come back Korean, code identifiers and the JSON
+ * shape stay untouched (contract in LanguageSchema, schema/config.ts).
+ */
+const KO_ITEM_INSTRUCTION =
+  ' Write every learner-facing string (question prompts, options, seed questions, ' +
+  'feedback) in Korean. Keep code identifiers, file paths, function/variable names, ' +
+  'and established technical terms in English. The JSON structure and its keys stay ' +
+  'exactly as specified.';
+
 async function llmQuizItems(
   provider: LlmProvider,
   model: string,
   paper: LoadedPaper,
+  language: Language = 'en',
 ): Promise<QuestItem[]> {
   const text = await chatText({
     provider,
@@ -221,7 +234,8 @@ async function llmQuizItems(
       'Ground every item strictly in the provided component paper (its concepts and ' +
       'rationale). Each item tags the comprehension dimension it probes: "structure" ' +
       '(how the component is built), "concepts" (its named ideas), or "rationale" ' +
-      '(why it was designed that way). Return ONLY JSON, no prose.',
+      '(why it was designed that way). Return ONLY JSON, no prose.' +
+      (language === 'ko' ? KO_ITEM_INSTRUCTION : ''),
     messages: [
       {
         role: 'user',
@@ -262,6 +276,7 @@ async function llmSocraticItems(
   provider: LlmProvider,
   model: string,
   paper: LoadedPaper,
+  language: Language = 'en',
 ): Promise<QuestItem[]> {
   const text = await chatText({
     provider,
@@ -270,7 +285,8 @@ async function llmSocraticItems(
     system:
       'You open a Socratic comprehension dialogue for a code-onboarding tutor. ' +
       'Ground the opening question strictly in the provided component paper. Do not ' +
-      'reveal answers. Return ONLY JSON, no prose.',
+      'reveal answers. Return ONLY JSON, no prose.' +
+      (language === 'ko' ? KO_ITEM_INSTRUCTION : ''),
     messages: [
       {
         role: 'user',
@@ -294,14 +310,28 @@ async function llmSocraticItems(
 // Deterministic fallback — synthesize valid items from the paper (offline-safe)
 // ---------------------------------------------------------------------------
 
-/** Pad `pool` (distractors) to at least `n` with generic fillers. */
-function padDistractors(pool: string[], n: number): string[] {
-  const generic = [
+/**
+ * Generic filler distractors per interaction language. Established technical
+ * terms (e.g. "deprecated") stay English inside the Korean strings.
+ */
+const GENERIC_DISTRACTORS: Record<Language, string[]> = {
+  en: [
     'None of the above',
     'It is unrelated to this component',
     'It is handled by an external service',
     'It is deprecated and no longer used',
-  ];
+  ],
+  ko: [
+    '위의 어느 것도 아니다',
+    '이 컴포넌트와 관련이 없다',
+    '외부 서비스가 처리한다',
+    '더 이상 사용되지 않는(deprecated) 기능이다',
+  ],
+};
+
+/** Pad `pool` (distractors) to at least `n` with generic fillers. */
+function padDistractors(pool: string[], n: number, language: Language = 'en'): string[] {
+  const generic = GENERIC_DISTRACTORS[language];
   const out = [...pool];
   for (const g of generic) {
     if (out.length >= n) break;
@@ -311,9 +341,17 @@ function padDistractors(pool: string[], n: number): string[] {
 }
 
 /** Build one MCQ item with `correct` as option A shuffled deterministically. */
-function mcqItem(stem: string, correct: string, distractors: string[], dim: DimName): QuestItem {
-  const opts = [correct, ...padDistractors(distractors, 3)].slice(0, 4);
+function mcqItem(
+  stem: string,
+  correct: string,
+  distractors: string[],
+  dim: DimName,
+  language: Language = 'en',
+): QuestItem {
+  const opts = [correct, ...padDistractors(distractors, 3, language)].slice(0, 4);
   // Deterministic rotation so the answer isn't always 'A' (seed off the stem).
+  // ko and en stems differ in length, so the rotation may differ per language —
+  // fine: `answer`/`correctIndex` are derived together and stay consistent.
   const shift = stem.length % 4;
   const rotated = opts.map((_, i) => opts[(i + shift) % 4]!);
   const correctIndex = (4 - shift) % 4;
@@ -326,8 +364,13 @@ function mcqItem(stem: string, correct: string, distractors: string[], dim: DimN
   };
 }
 
-export function deterministicQuizItems(paper: LoadedPaper, loaded: LoadedScale): QuestItem[] {
+export function deterministicQuizItems(
+  paper: LoadedPaper,
+  loaded: LoadedScale,
+  language: Language = 'en',
+): QuestItem[] {
   const fm = paper.frontmatter;
+  const ko = language === 'ko';
   const items: QuestItem[] = [];
 
   // Distractor pools drawn from OTHER components (grounded but wrong-for-this).
@@ -340,14 +383,19 @@ export function deterministicQuizItems(paper: LoadedPaper, loaded: LoadedScale):
   }
 
   // Item 1 (concepts): "which concept belongs to this component".
+  // Stems are per-language templates; embedded titles/concept names come from
+  // the (always-English) papers and stay English in the Korean stems.
   if (fm.concepts.length > 0) {
     const c = fm.concepts[0]!;
     items.push(
       mcqItem(
-        `Which of these is a core concept of "${fm.title}"?`,
+        ko
+          ? `다음 중 "${fm.title}"의 핵심 개념은 무엇인가요?`
+          : `Which of these is a core concept of "${fm.title}"?`,
         c.name,
         otherConcepts.length > 0 ? otherConcepts.slice(0, 3) : [],
         'concepts',
+        language,
       ),
     );
   }
@@ -357,10 +405,13 @@ export function deterministicQuizItems(paper: LoadedPaper, loaded: LoadedScale):
   if (r && r.why) {
     items.push(
       mcqItem(
-        `In "${fm.title}", why was this decision made — "${r.decision}"?`,
+        ko
+          ? `"${fm.title}"에서 "${r.decision}"라는 결정은 왜 내려졌을까요?`
+          : `In "${fm.title}", why was this decision made — "${r.decision}"?`,
         r.why,
         otherWhys.length > 0 ? otherWhys.slice(0, 3) : [],
         'rationale',
+        language,
       ),
     );
   }
@@ -372,20 +423,26 @@ export function deterministicQuizItems(paper: LoadedPaper, loaded: LoadedScale):
       const c = fm.concepts[items.length]!;
       items.push(
         mcqItem(
-          `Which idea does "${fm.title}" cover?`,
+          ko ? `"${fm.title}"가 다루는 개념은 무엇인가요?` : `Which idea does "${fm.title}" cover?`,
           c.name,
           otherConcepts.slice(0, 3),
           'concepts',
+          language,
         ),
       );
     } else {
       const src = fm.sources[0] ?? fm.title;
       items.push(
         mcqItem(
-          `Which area of the codebase does "${fm.title}" own?`,
+          ko
+            ? `"${fm.title}"가 담당하는 코드베이스 영역은 어디인가요?`
+            : `Which area of the codebase does "${fm.title}" own?`,
           src,
-          ['An unrelated module', 'The build system', 'Third-party dependencies'],
+          ko
+            ? ['관련 없는 모듈', '빌드 시스템', '서드파티 의존성']
+            : ['An unrelated module', 'The build system', 'Third-party dependencies'],
           'structure',
+          language,
         ),
       );
     }
@@ -394,15 +451,22 @@ export function deterministicQuizItems(paper: LoadedPaper, loaded: LoadedScale):
   return items.slice(0, 2);
 }
 
-export function deterministicSocraticItems(paper: LoadedPaper): QuestItem[] {
+export function deterministicSocraticItems(
+  paper: LoadedPaper,
+  language: Language = 'en',
+): QuestItem[] {
   const fm = paper.frontmatter;
   const firstConcept = fm.concepts[0]?.name ?? fm.title;
   const firstRationale = fm.rationale.find((r) => r.why);
+  // `focus` is tutor-facing grounding metadata, not shown to the junior — English.
   const focusBits = [`concept: ${firstConcept}`];
   if (firstRationale) focusBits.push(`rationale: ${firstRationale.decision}`);
   const seed =
-    `Walk me through how "${fm.title}" works and why it is designed that way. ` +
-    `Start with ${firstConcept}.`;
+    language === 'ko'
+      ? `"${fm.title}"가 어떻게 동작하는지, 왜 그렇게 설계되었는지 설명해 주세요. ` +
+        `${firstConcept}부터 시작해 보세요.`
+      : `Walk me through how "${fm.title}" works and why it is designed that way. ` +
+        `Start with ${firstConcept}.`;
   return [{ prompt: seed, dim: 'concepts', focus: focusBits.join(' | ') }];
 }
 
@@ -473,8 +537,8 @@ export async function generateQuests(
       try {
         items =
           modality === 'quiz'
-            ? await llmQuizItems(provider, model, paper)
-            : await llmSocraticItems(provider, model, paper);
+            ? await llmQuizItems(provider, model, paper, config.language)
+            : await llmSocraticItems(provider, model, paper, config.language);
         usedLlm = true;
       } catch {
         llmDisabled = true; // latch: no key / API error → fallback for the rest
@@ -484,8 +548,8 @@ export async function generateQuests(
     if (!items) {
       items =
         modality === 'quiz'
-          ? deterministicQuizItems(paper, loaded)
-          : deterministicSocraticItems(paper);
+          ? deterministicQuizItems(paper, loaded, config.language)
+          : deterministicSocraticItems(paper, config.language);
     }
     quests.push(makeQuest(componentId, modality, items));
   }
@@ -540,8 +604,8 @@ export async function generateVoluntaryQuest(
   try {
     items =
       modality === 'quiz'
-        ? await llmQuizItems(provider, model, paper)
-        : await llmSocraticItems(provider, model, paper);
+        ? await llmQuizItems(provider, model, paper, config.language)
+        : await llmSocraticItems(provider, model, paper, config.language);
     via = 'llm';
   } catch {
     items = null; // no key / API error → deterministic fallback below
@@ -549,8 +613,8 @@ export async function generateVoluntaryQuest(
   if (!items || items.length === 0) {
     items =
       modality === 'quiz'
-        ? deterministicQuizItems(paper, loaded)
-        : deterministicSocraticItems(paper);
+        ? deterministicQuizItems(paper, loaded, config.language)
+        : deterministicSocraticItems(paper, config.language);
     via = 'fallback';
   }
 

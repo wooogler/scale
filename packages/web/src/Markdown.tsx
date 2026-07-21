@@ -1,4 +1,5 @@
 import type { JSX } from 'react';
+import { useStrings } from './i18n.js';
 
 /**
  * Deliberately minimal markdown renderer for the skeleton — enough for the
@@ -90,6 +91,9 @@ function inline(text: string, keyPrefix: string): JSX.Element[] {
 }
 
 export function Markdown({ source }: { source: string }): JSX.Element {
+  // Paper CONTENT is never translated (repo-shared, always English) — but the
+  // placeholder chrome below is the VIEWER speaking, so it follows the language.
+  const S = useStrings();
   const blocks = parse(source);
   return (
     <div className="md">
@@ -105,9 +109,9 @@ export function Markdown({ source }: { source: string }): JSX.Element {
           case 'mermaid':
             return (
               <figure key={key} className="mermaid-placeholder">
-                <div className="mermaid-badge">mermaid diagram</div>
+                <div className="mermaid-badge">{S.mermaidBadge}</div>
                 <pre>{b.code}</pre>
-                <figcaption>Rendered diagram is a TODO for a later phase.</figcaption>
+                <figcaption>{S.mermaidTodo}</figcaption>
               </figure>
             );
           case 'code':

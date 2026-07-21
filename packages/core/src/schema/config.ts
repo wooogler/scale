@@ -7,6 +7,19 @@ export const ConditionSchema = z.object({
 });
 export type Condition = z.infer<typeof ConditionSchema>;
 
+/**
+ * Interaction language — everything SCALE says TO the junior: the serve web UI,
+ * quiz items, Socratic dialogue, and in-flow check instructions.
+ *
+ * `.scale/` papers are deliberately NOT affected: the coverage memory is
+ * repo-shared state (one build serves every user of the repo) and stays English,
+ * while `language` lives in per-user config. In either language, code
+ * identifiers — function/variable names, file paths, established dev terms —
+ * stay English.
+ */
+export const LanguageSchema = z.enum(['en', 'ko']);
+export type Language = z.infer<typeof LanguageSchema>;
+
 /** In-flow trigger kinds. The gate accepts new kinds without schema changes. */
 export const InflowTriggerSchema = z.enum(['pre-commit', 'post-task']);
 export type InflowTrigger = z.infer<typeof InflowTriggerSchema>;
@@ -150,6 +163,7 @@ export type Thresholds = z.infer<typeof ThresholdsSchema>;
 
 export const ScaleConfigSchema = z.object({
   user: z.string(),
+  language: LanguageSchema.default('en'),
   condition: ConditionSchema.default({ timing: 'inflow', modality: 'quiz' }),
   inflow: InflowConfigSchema.default({ triggers: ['pre-commit'] }),
   budgets: BudgetsSchema.default({}),

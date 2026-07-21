@@ -8,6 +8,7 @@ import {
 } from 'react';
 import type { MapJson, MapNode, UserCoverage, CoverageState, Quest } from '@scale/core/browser';
 import { skinFor, QUEST_SKIN } from './skin.js';
+import { useStrings } from './i18n.js';
 
 const VIEW_W = 1000;
 const VIEW_H = 680;
@@ -194,6 +195,7 @@ export function MapView({
   onStartQuest,
   highlightState,
 }: Props): JSX.Element {
+  const S = useStrings();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -649,7 +651,7 @@ export function MapView({
                       }}
                       role="button"
                       tabIndex={0}
-                      aria-label={`${QUEST_SKIN.offerEn} (${n.id})`}
+                      aria-label={`${S.questOffer} (${n.id})`}
                       onKeyDown={(ev) => {
                         if (ev.key === 'Enter' || ev.key === ' ') {
                           ev.preventDefault();
@@ -676,17 +678,17 @@ export function MapView({
       </svg>
 
       <div className="map-controls">
-        <button type="button" onClick={() => zoomBy(1.25)} aria-label="Zoom in">
+        <button type="button" onClick={() => zoomBy(1.25)} aria-label={S.zoomIn}>
           +
         </button>
-        <button type="button" onClick={() => zoomBy(1 / 1.25)} aria-label="Zoom out">
+        <button type="button" onClick={() => zoomBy(1 / 1.25)} aria-label={S.zoomOut}>
           −
         </button>
-        <button type="button" onClick={reset} aria-label="Reset view">
+        <button type="button" onClick={reset} aria-label={S.resetView}>
           ⤢
         </button>
       </div>
-      <div className="map-hint">Scroll or pinch to zoom into a territory · drag to pan</div>
+      <div className="map-hint">{S.mapHint}</div>
     </div>
   );
 }

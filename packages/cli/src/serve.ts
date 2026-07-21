@@ -23,6 +23,7 @@ import {
   UserCoverageSchema,
   emptyComponentCoverage,
   type ScaleConfig,
+  type Language,
   type UserCoverage,
   type MapJson,
   type DimName,
@@ -467,6 +468,7 @@ async function handleSettingsPatch(
   const next: Record<string, unknown> = {
     ...current,
     user: typeof patch.user === 'string' && patch.user.trim() ? patch.user.trim() : current.user,
+    language: typeof patch.language === 'string' ? patch.language : current.language,
     condition: mergeSection(current.condition, patch.condition),
     inflow: mergeSection(current.inflow, patch.inflow),
     budgets: mergeSection(current.budgets, patch.budgets),
@@ -551,11 +553,28 @@ function parseGrades(text: string): Record<DimName, number> {
   };
 }
 
+/**
+ * Appended to the socratic system prompts when the junior's interaction language
+ * is 'ko': the dialogue itself flips to Korean, while code identifiers stay
+ * English (see LanguageSchema, @scale/core). Two variants, because the JSON
+ * sentence must only appear where a JSON contract exists — mentioning a
+ * "closing JSON" in the mid-dialogue prompt can induce the model to wrap its
+ * follow-up question in JSON, which would go to the learner verbatim.
+ */
+const SOCRATIC_KO_DIALOGUE =
+  ' Conduct the dialogue in Korean. Keep code identifiers, file paths, and ' +
+  'established technical terms in English.';
+const SOCRATIC_KO_FINAL =
+  SOCRATIC_KO_DIALOGUE +
+  ' In the closing JSON, keys and numeric grades stay exactly as specified; ' +
+  "write the 'reply' text in Korean.";
+
 async function socraticReply(
   provider: LlmProvider,
   model: string,
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
+  language: Language = 'en',
 ): Promise<string> {
   const text = await chatText({
     provider,
@@ -566,10 +585,17 @@ async function socraticReply(
       'of a codebase component. Ask ONE probing follow-up question at a time, grounded ' +
       'in the component paper below. Do NOT reveal answers or lecture — draw the ' +
       'reasoning out of the learner. Keep each turn to 1-3 sentences; be brief and ' +
-      `supportive.\n\n${paperContext(paper)}`,
+      'supportive.' +
+      (language === 'ko' ? SOCRATIC_KO_DIALOGUE : '') +
+      `\n\n${paperContext(paper)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
-  return text || 'Can you say more about how that part works, and why?';
+  return (
+    text ||
+    (language === 'ko'
+      ? '그 부분이 어떻게 동작하는지, 왜 그런지 조금 더 설명해 주시겠어요?'
+      : 'Can you say more about how that part works, and why?')
+  );
 }
 
 async function socraticFinal(
@@ -577,6 +603,7 @@ async function socraticFinal(
   model: string,
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
+  language: Language = 'en',
 ): Promise<{ reply: string; grades: Record<DimName, number> }> {
   const text = await chatText({
     provider,
@@ -588,11 +615,16 @@ async function socraticFinal(
       'demonstrated comprehension on each dimension in [0,1]: "structure" (how it is ' +
       'built), "concepts" (its named ideas), "rationale" (why it is designed that way). ' +
       'Return ONLY JSON: {"reply":"...","grades":{"structure":0.0,"concepts":0.0,' +
-      `"rationale":0.0}}.\n\n${paperContext(paper)}`,
+      '"rationale":0.0}}.' +
+      (language === 'ko' ? SOCRATIC_KO_FINAL : '') +
+      `\n\n${paperContext(paper)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
   const grades = parseGrades(text);
-  let reply = 'Thanks — that gives me a good sense of your understanding.';
+  let reply =
+    language === 'ko'
+      ? '감사합니다 — 이해도를 잘 파악할 수 있었어요.'
+      : 'Thanks — that gives me a good sense of your understanding.';
   try {
     const parsed = stripJson(text) as Record<string, unknown>;
     if (typeof parsed.reply === 'string' && parsed.reply.trim()) reply = parsed.reply.trim();
@@ -642,28 +674,40 @@ async function handleSocraticMessage(
 
   // No key for the selected provider → roll back the speculative turn so a retry
   // after adding one in Settings works, and tell the UI precisely what's missing.
+  // The error prose is learner-facing (the web UI renders it verbatim), so it
+  // follows config.language; env-var names stay English.
   if (!resolveKey(provider)) {
     state.history.pop();
     state.userTurns--;
+    const envVar = provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
     sendJson(res, 200, {
       reply: null,
       done: false,
       needsKey: provider,
-      error: new MissingKeyError(provider).message,
+      error:
+        config.language === 'ko'
+          ? `${provider} API 키가 없습니다. ${envVar}를 설정하거나 설정(⚙)에서 키를 추가하세요.`
+          : new MissingKeyError(provider).message,
     });
     return;
   }
 
   try {
     if (!isFinal) {
-      const reply = await socraticReply(provider, model, paper, state.history);
+      const reply = await socraticReply(provider, model, paper, state.history, config.language);
       state.history.push({ role: 'assistant', content: reply });
       socraticDialogues.set(questId, state);
       sendJson(res, 200, { reply, done: false });
       return;
     }
 
-    const { reply, grades } = await socraticFinal(provider, model, paper, state.history);
+    const { reply, grades } = await socraticFinal(
+      provider,
+      model,
+      paper,
+      state.history,
+      config.language,
+    );
     const sha = shortHeadSha(cwd);
     const now = new Date().toISOString();
     try {
@@ -695,12 +739,17 @@ async function handleSocraticMessage(
     sendJson(res, 200, { reply, done: true, grades, componentId: quest.componentId, component });
   } catch (err) {
     // API error mid-dialogue — roll back the turn and report clearly (no crash).
+    // Prefix follows config.language; the provider's raw detail stays as-is
+    // (technical, often English regardless).
     state.history.pop();
     state.userTurns--;
     sendJson(res, 200, {
       reply: null,
       done: false,
-      error: `socratic proxy error: ${(err as Error).message}`,
+      error:
+        config.language === 'ko'
+          ? `문답 서버 오류: ${(err as Error).message}`
+          : `socratic proxy error: ${(err as Error).message}`,
     });
   }
 }

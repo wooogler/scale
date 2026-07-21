@@ -208,10 +208,18 @@ so opening it to the network is an explicit `--host 0.0.0.0` opt-in.
 
 ### Settings (⚙ in the header)
 
-Everything in `config.json` is editable from the browser — condition (timing ×
-modality), in-flow triggers, interruption budgets, and the model policy — plus API
-keys. Changes save immediately and are re-validated server-side against the schema,
-so an invalid value is rejected instead of landing on disk.
+Everything in `config.json` is editable from the browser — interaction language
+(the **Language** row at the top), condition (timing × modality), in-flow
+triggers, interruption budgets, and the model policy — plus API keys. Changes
+save immediately and are re-validated server-side against the schema, so an
+invalid value is rejected instead of landing on disk.
+
+**Language.** `scale config set language ko` (or the Language row in the modal)
+switches everything SCALE says to you into Korean — the web UI, quiz items,
+Socratic dialogue, and in-flow check delivery — while code identifiers, file
+paths, and established dev terms (EMA, hook, commit…) stay English. Default is
+`en` (pure English). The `.scale/` papers always stay English regardless: the
+coverage memory is repo-shared, and `language` is a per-user preference.
 
 **API keys.** Interventions run on Anthropic (default) or OpenAI; pick the provider
 in Settings. The key comes from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` if set

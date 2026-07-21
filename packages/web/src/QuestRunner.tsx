@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect, type JSX } from 'react';
+import { useRef, useState, useEffect, type JSX } from 'react';
 import type {
   ComponentCoverage,
   DimName,
@@ -6,7 +6,7 @@ import type {
   Quest,
   QuestItem,
 } from '@scale/core/browser';
-import { skinFor, QUEST_SKIN, DEV_STATS_LABEL_EN } from './skin.js';
+import { skinFor, QUEST_SKIN } from './skin.js';
 import {
   completeQuiz,
   sendSocraticMessage,
@@ -14,6 +14,7 @@ import {
   type DimResult,
   type SocraticResponse,
 } from './data.js';
+import { useLang, useStrings } from './i18n.js';
 
 interface Props {
   quest: Quest;
@@ -37,10 +38,11 @@ function itemField<T>(item: QuestItem, key: string): T | undefined {
 }
 
 function DimResultBar({ dim, score }: { dim: DimName; score: number }): JSX.Element {
+  const S = useStrings();
   const pct = Math.round(score * 100);
   return (
     <div className="qr-dimline">
-      <span className="qr-dimname">{dim}</span>
+      <span className="qr-dimname">{S.dim[dim]}</span>
       <div className="qr-dimbar">
         <div className="qr-dimfill" style={{ width: `${pct}%` }} />
       </div>
@@ -57,6 +59,7 @@ function Outcome({
   component: ComponentCoverage;
   grades?: Record<DimName, number>;
 }): JSX.Element {
+  const S = useStrings();
   const skin = skinFor(component.state);
   return (
     <div className="qr-outcome">
@@ -65,18 +68,15 @@ function Outcome({
           {QUEST_SKIN.badge}
         </span>
         <div>
-          <div className="qr-won-title">
-            {QUEST_SKIN.wonEn} <span className="ko-sub">{QUEST_SKIN.wonKo}</span>
-          </div>
+          <div className="qr-won-title">{S.quest.won}</div>
           <div className="qr-won-state">
-            → <strong style={{ color: skin.color }}>{skin.labelKo}</strong>{' '}
-            <span className="state-en">{skin.labelEn}</span>
+            → <strong style={{ color: skin.color }}>{S.state[component.state].label}</strong>
           </div>
         </div>
       </div>
       <div className="qr-outcome-stats">
         <div className="qr-outcome-head">
-          {DEV_STATS_LABEL_EN} {grades ? '· grades' : ''}
+          {S.devStats} {grades ? `· ${S.grades}` : ''}
         </div>
         {DIM_KEYS.map((d) => (
           <DimResultBar key={d} dim={d} score={grades ? grades[d] : component.dims[d]} />
@@ -91,6 +91,7 @@ function Outcome({
 // ---------------------------------------------------------------------------
 
 function QuizRunner({ quest, onCompleted }: { quest: Quest; onCompleted: Props['onCompleted'] }): JSX.Element {
+  const S = useStrings();
   const items = quest.items;
   const [picks, setPicks] = useState<(number | null)[]>(() => items.map(() => null));
   const [submitted, setSubmitted] = useState(false);
@@ -137,7 +138,7 @@ function QuizRunner({ quest, onCompleted }: { quest: Quest; onCompleted: Props['
             <div className="qr-card" key={i}>
               <div className="qr-card-head">
                 <span className="qr-card-num">Q{i + 1}</span>
-                <span className="qr-card-dim">{dim}</span>
+                <span className="qr-card-dim">{S.dim[dim]}</span>
               </div>
               <p className="qr-stem">{item.prompt}</p>
               <div className="qr-options">
@@ -171,7 +172,7 @@ function QuizRunner({ quest, onCompleted }: { quest: Quest; onCompleted: Props['
               </div>
               {submitted && (
                 <p className="qr-explain">
-                  <strong>Answer:</strong> {answer}
+                  <strong>{S.answerLabel}</strong> {answer}
                   {explanation ? ` — ${explanation}` : ''}
                 </p>
               )}
@@ -182,7 +183,7 @@ function QuizRunner({ quest, onCompleted }: { quest: Quest; onCompleted: Props['
 
       {!submitted ? (
         <button type="button" className="qr-submit" disabled={!allAnswered || busy} onClick={() => void submit()}>
-          {busy ? 'Recording…' : `Submit answers · ${QUEST_SKIN.startKo}`}
+          {busy ? S.recording : S.submitAnswers}
         </button>
       ) : (
         result && <Outcome component={result.component} />
@@ -211,7 +212,9 @@ function SocraticRunner({
   onReadPaper: Props['onReadPaper'];
   onOpenSettings: Props['onOpenSettings'];
 }): JSX.Element {
-  const seed = quest.items[0]?.prompt ?? 'Tell me what you understand about this component.';
+  const S = useStrings();
+  const lang = useLang();
+  const seed = quest.items[0]?.prompt ?? S.socraticSeed;
   const [messages, setMessages] = useState<ChatMsg[]>([{ role: 'assistant', text: seed }]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -235,7 +238,7 @@ function SocraticRunner({
     setMessages((m) => [...m, { role: 'user', text }]);
     setBusy(true);
     const turn = userTurns.current + 1;
-    const res = await sendSocraticMessage(quest.id, text, turn);
+    const res = await sendSocraticMessage(quest.id, text, turn, lang);
     setBusy(false);
 
     if (res.error) {
@@ -262,13 +265,13 @@ function SocraticRunner({
       <div className="qr-chat" ref={scrollRef}>
         {messages.map((m, i) => (
           <div key={i} className={`qr-msg qr-msg-${m.role}`}>
-            <span className="qr-msg-who">{m.role === 'assistant' ? '문답관' : '나'}</span>
+            <span className="qr-msg-who">{m.role === 'assistant' ? S.tutorName : S.youName}</span>
             <div className="qr-bubble">{m.text}</div>
           </div>
         ))}
         {busy && (
           <div className="qr-msg qr-msg-assistant">
-            <span className="qr-msg-who">문답관</span>
+            <span className="qr-msg-who">{S.tutorName}</span>
             <div className="qr-bubble qr-typing">…</div>
           </div>
         )}
@@ -276,7 +279,9 @@ function SocraticRunner({
 
       {error && (
         <div className="qr-error">
-          <p>Socratic dialogue is unavailable: {error}</p>
+          <p>
+            {S.socraticUnavailable} {error}
+          </p>
           <div className="qr-error-actions">
             {needsKey && (
               <button
@@ -284,7 +289,7 @@ function SocraticRunner({
                 className="qr-key-btn"
                 onClick={() => onOpenSettings(needsKey)}
               >
-                ⚙ Add {needsKey} API key
+                {S.addApiKey(needsKey)}
               </button>
             )}
             <button
@@ -295,10 +300,10 @@ function SocraticRunner({
                 setNeedsKey(null);
               }}
             >
-              Try again
+              {S.tryAgain}
             </button>
             <button type="button" className="qr-read-btn" onClick={onReadPaper}>
-              Just read the paper instead →
+              {S.readPaperInstead}
             </button>
           </div>
         </div>
@@ -318,12 +323,12 @@ function SocraticRunner({
             <input
               className="qr-input"
               value={input}
-              placeholder={done ? 'Dialogue complete' : 'Type your reasoning…'}
+              placeholder={done ? S.dialogueComplete : S.inputPlaceholder}
               disabled={busy || done}
               onChange={(e) => setInput(e.target.value)}
             />
             <button type="submit" className="qr-send" disabled={busy || done || !input.trim()}>
-              Send
+              {S.send}
             </button>
           </form>
         )
@@ -342,14 +347,9 @@ export function QuestRunner({
   onReadPaper,
   onOpenSettings,
 }: Props): JSX.Element {
+  const S = useStrings();
   const modality = quest.modality;
-  const label = useMemo(
-    () =>
-      modality === 'quiz'
-        ? { en: QUEST_SKIN.quizEn, ko: QUEST_SKIN.quizKo }
-        : { en: QUEST_SKIN.socraticEn, ko: QUEST_SKIN.socraticKo },
-    [modality],
-  );
+  const label = modality === 'quiz' ? S.quest.quiz : S.quest.socratic;
 
   return (
     <div className="qr-overlay" role="dialog" aria-modal="true" onClick={onClose}>
@@ -358,14 +358,14 @@ export function QuestRunner({
           <div>
             <div className="qr-kicker">
               <span className="qr-kicker-badge">{QUEST_SKIN.badge}</span>
-              {label.en} <span className="ko-sub">{label.ko}</span>
+              {label}
             </div>
             <div className="qr-title">{title}</div>
             <div className="qr-id">
-              {quest.componentId} · {quest.origin}
+              {quest.componentId} · {S.origin[quest.origin]}
             </div>
           </div>
-          <button type="button" className="panel-close" onClick={onClose} aria-label="Close quest">
+          <button type="button" className="panel-close" onClick={onClose} aria-label={S.closeQuest}>
             ×
           </button>
         </div>

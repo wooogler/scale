@@ -208,6 +208,12 @@ seven sections. Explain the `concepts` in the Description; explain the `rational
 in the Rationale section. Prose only — re-check for leaked code/paths before
 finishing.
 
+Papers are **always written in English**, regardless of the per-user
+`config.language` setting: the coverage memory is repo-shared state, while
+`language` is a per-user *interaction* preference (it changes what the tutor and
+the web UI say to the junior, not what the memory contains). A Korean-language
+session must not drift into Korean papers.
+
 Also write the province READMEs (orienting the province, linking its components)
 and the root `.scale/README.md` (orienting the whole realm, linking provinces).
 

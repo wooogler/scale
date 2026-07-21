@@ -4,14 +4,12 @@ import { MapView } from './MapView.js';
 import { Panel } from './Panel.js';
 import { QuestRunner } from './QuestRunner.js';
 import { Settings } from './Settings.js';
-import {
-  SKIN,
-  UNIFICATION_LABEL_EN,
-  UNIFICATION_LABEL_KO,
-} from './skin.js';
-import { loadMap, loadCoverage, loadQuests } from './data.js';
+import { SKIN } from './skin.js';
+import { LangContext, STRINGS } from './i18n.js';
+import { loadMap, loadCoverage, loadQuests, loadSettings } from './data.js';
 import type {
   CoverageState,
+  Language,
   LlmProvider,
   MapJson,
   Quest,
@@ -41,6 +39,19 @@ export function App(): JSX.Element {
   // (set when a Socratic dialogue was blocked by a missing key), else null.
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsFocus, setSettingsFocus] = useState<LlmProvider | null>(null);
+  // Interaction language (config.json `language`, per-user). Loaded with the
+  // other settings on mount; a pick in the Settings modal applies here
+  // optimistically so the whole tree re-renders before the server round-trip.
+  const [lang, setLang] = useState<Language>('en');
+  // App renders the Provider itself, so it reads the table directly — hooks
+  // below the Provider (children) use useStrings().
+  const S = STRINGS[lang];
+
+  // Keep the document's language honest (index.html ships lang="en"): screen
+  // readers, spellcheck, and font selection all key off this attribute.
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   const openSettings = useCallback((provider?: LlmProvider) => {
     setSettingsFocus(provider ?? null);
@@ -55,6 +66,14 @@ export function App(): JSX.Element {
       setCoverage(c);
       setQuests(q);
     });
+    // Language rides along with the other settings. loadSettings has no sample
+    // fallback (unlike map/coverage), so swallow the failure — offline vite dev
+    // simply stays on the 'en' default.
+    void loadSettings()
+      .then((s) => {
+        if (!cancelled) setLang(s.config.language);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -114,97 +133,102 @@ export function App(): JSX.Element {
   const loading = !map || !coverage;
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="brand">
-          <span className="brand-mark">◆</span>
-          <span className="brand-name">SCALE</span>
-          <span className="brand-sub">territory map</span>
-        </div>
-
-        <div className="progress">
-          <div className="progress-labels">
-            <span className="progress-en">{UNIFICATION_LABEL_EN}</span>
-            <span className="progress-ko">{UNIFICATION_LABEL_KO}</span>
-            <span className="progress-pct">{Math.round(progress * 100)}%</span>
+    <LangContext.Provider value={lang}>
+      <div className="app">
+        <header className="header">
+          <div className="brand">
+            <span className="brand-mark">◆</span>
+            <span className="brand-name">SCALE</span>
+            <span className="brand-sub">{S.brandSub}</span>
           </div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${Math.round(progress * 100)}%` }} />
+
+          <div className="progress">
+            <div className="progress-labels">
+              <span className="progress-en">{S.unificationProgress}</span>
+              <span className="progress-pct">{Math.round(progress * 100)}%</span>
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${Math.round(progress * 100)}%` }} />
+            </div>
           </div>
-        </div>
 
-        <div className="legend">
-          {LEGEND_ORDER.map((st) => (
-            <button
-              type="button"
-              className={`legend-item${highlightState === st ? ' legend-item-active' : ''}`}
-              key={st}
-              title={SKIN[st].labelEn}
-              aria-pressed={highlightState === st}
-              onMouseEnter={() => setHighlightState(st)}
-              onMouseLeave={() => setHighlightState((cur) => (cur === st ? null : cur))}
-              onFocus={() => setHighlightState(st)}
-              onBlur={() => setHighlightState((cur) => (cur === st ? null : cur))}
-            >
-              <span className="legend-dot" style={{ background: SKIN[st].color }} />
-              <span className="legend-ko">{SKIN[st].labelKo}</span>
-              <span className="legend-count">{counts[st]}</span>
-            </button>
-          ))}
-        </div>
+          <div className="legend">
+            {LEGEND_ORDER.map((st) => (
+              <button
+                type="button"
+                className={`legend-item${highlightState === st ? ' legend-item-active' : ''}`}
+                key={st}
+                title={S.state[st].blurb}
+                aria-pressed={highlightState === st}
+                onMouseEnter={() => setHighlightState(st)}
+                onMouseLeave={() => setHighlightState((cur) => (cur === st ? null : cur))}
+                onFocus={() => setHighlightState(st)}
+                onBlur={() => setHighlightState((cur) => (cur === st ? null : cur))}
+              >
+                <span className="legend-dot" style={{ background: SKIN[st].color }} />
+                <span className="legend-ko">{S.state[st].label}</span>
+                <span className="legend-count">{counts[st]}</span>
+              </button>
+            ))}
+          </div>
 
-        <button
-          type="button"
-          className="settings-btn"
-          title="Settings · 설정"
-          aria-label="Open settings"
-          onClick={() => openSettings()}
-        >
-          ⚙
-        </button>
-      </header>
+          <button
+            type="button"
+            className="settings-btn"
+            title={S.settingsButtonTitle}
+            aria-label={S.openSettings}
+            onClick={() => openSettings()}
+          >
+            ⚙
+          </button>
+        </header>
 
-      <main className="content">
-        {loading ? (
-          <div className="map-wrap map-loading">Loading territory map…</div>
-        ) : (
-          <MapView
-            map={map}
-            coverage={coverage}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            pendingByComponent={pendingByComponent}
-            justUpdatedId={justUpdatedId}
-            onStartQuest={startQuest}
-            highlightState={highlightState}
-          />
-        )}
-        {selectedId && (
-          <Panel
-            componentId={selectedId}
-            coverage={selectedCoverage}
-            quests={pendingByComponent.get(selectedId) ?? []}
-            onStartQuest={startQuest}
-            onClose={() => setSelectedId(null)}
-          />
-        )}
-        {activeQuest && (
-          <QuestRunner
-            quest={activeQuest}
-            title={activeQuest.componentId}
-            onClose={() => setActiveQuest(null)}
-            onCompleted={(componentId) => onQuestCompleted(componentId)}
-            onOpenSettings={openSettings}
-            onReadPaper={() => {
-              setSelectedId(activeQuest.componentId);
-              setActiveQuest(null);
-            }}
-          />
-        )}
-        {settingsOpen && (
-          <Settings focusProvider={settingsFocus} onClose={() => setSettingsOpen(false)} />
-        )}
-      </main>
-    </div>
+        <main className="content">
+          {loading ? (
+            <div className="map-wrap map-loading">{S.loadingMap}</div>
+          ) : (
+            <MapView
+              map={map}
+              coverage={coverage}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              pendingByComponent={pendingByComponent}
+              justUpdatedId={justUpdatedId}
+              onStartQuest={startQuest}
+              highlightState={highlightState}
+            />
+          )}
+          {selectedId && (
+            <Panel
+              componentId={selectedId}
+              coverage={selectedCoverage}
+              quests={pendingByComponent.get(selectedId) ?? []}
+              onStartQuest={startQuest}
+              onClose={() => setSelectedId(null)}
+            />
+          )}
+          {activeQuest && (
+            <QuestRunner
+              quest={activeQuest}
+              title={activeQuest.componentId}
+              onClose={() => setActiveQuest(null)}
+              onCompleted={(componentId) => onQuestCompleted(componentId)}
+              onOpenSettings={openSettings}
+              onReadPaper={() => {
+                setSelectedId(activeQuest.componentId);
+                setActiveQuest(null);
+              }}
+            />
+          )}
+          {settingsOpen && (
+            <Settings
+              focusProvider={settingsFocus}
+              onLanguageChange={setLang}
+              onClose={() => setSettingsOpen(false)}
+            />
+          )}
+        </main>
+      </div>
+    </LangContext.Provider>
   );
 }

@@ -22,6 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { Command } from 'commander';
 import {
   type ScaleConfig,
+  type Language,
   type EvidenceEntry,
   type MapJson,
   type LoadedScale,
@@ -257,8 +258,10 @@ function fmt(n: number): string {
  * Build the ≤3-line SessionStart coverage summary (injected into the agent's
  * context). Line 1: unification progress. Line 2: the weakest unconquered
  * territory. Line 3: territory that needs re-validation (stale). Kept terse.
+ * When the junior's interaction language is 'ko', one extra line tells the agent
+ * to deliver comprehension checks in Korean; 'en' adds nothing.
  */
-function contextSummary(res: RecomputeResult): string {
+function contextSummary(res: RecomputeResult, language: Language = 'en'): string {
   const { coverage, map } = res;
   const counts = coverageCounts(coverage, map);
   const scored = map.nodes.map((n) => {
@@ -284,6 +287,12 @@ function contextSummary(res: RecomputeResult): string {
   if (stale.length > 0) {
     lines.push(
       `${stale.length} territory needs re-validation (stale): ${stale.join(', ')}.`,
+    );
+  }
+
+  if (language === 'ko') {
+    lines.push(
+      'interaction language: ko — run comprehension checks in Korean (keep code identifiers in English)',
     );
   }
   return lines.join('\n');
@@ -344,7 +353,8 @@ program
       console.log(`SCALE: coverage unavailable (${(err as Error).message}).`);
       return;
     }
-    console.log(contextSummary(res));
+    // Per-user interaction language (config is optional pre-`init` → 'en').
+    console.log(contextSummary(res, readConfigSafe(dir)?.language ?? 'en'));
   });
 
 // ---------------------------------------------------------------------------

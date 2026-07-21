@@ -150,7 +150,7 @@ Single local user for the prototype (multi-user later = separate state dirs).
 - **`evidence.jsonl`** — append-only raw signals (kept raw so the coverage model can be re-fit later without data loss):
   - `prompt` (component mentions extracted by keyword/slug match), `touch` (files edited → components via index), `diff_review` (proposal→execution latency per Edit), `paper_read` (opened in web), `quiz_result` / `socratic_result` (per-dim scores), `intervention` (shown/deferred/completed).
 - **`quests.json`** — pending web quests: `{id, componentId, modality, items, origin: session|rebellion|voluntary, status}`.
-- **`config.json`** — `condition: {timing: inflow|postsession, modality: quiz|socratic}`, `inflow.triggers` (§6.1), budgets/thresholds (all tunable), user label.
+- **`config.json`** — `condition: {timing: inflow|postsession, modality: quiz|socratic}`, `inflow.triggers` (§6.1), `language: en|ko` (interaction language, §6), budgets/thresholds (all tunable), user label.
 
 ### 5.1 Coverage model v1 (simple, config-tunable constants)
 
@@ -168,7 +168,7 @@ Condition is read from `config.json`; each cell is fully functional.
 | **In-flow** (in Claude Code, at boundaries) | tutor skill asks 1–2 grounded MCQ/short items in chat | tutor skill runs a capped dialogue (≤ 3 exchanges) in chat |
 | **Post-session** (web map, after session) | quest = quiz cards on the map | quest = chat-style Socratic session in the web app (server proxies Claude API) |
 
-Both modalities: grounded in the component's paper (`concepts` + rationale) and, when available, the session's actual diff; graded per-dim; results recorded via `scale record` → coverage update → map state change.
+Both modalities: grounded in the component's paper (`concepts` + rationale) and, when available, the session's actual diff; graded per-dim; results recorded via `scale record` → coverage update → map state change. Intervention delivery language follows `config.language` (per-user, default `en`): with `ko` the whole check — items, dialogue, feedback — runs in Korean, keeping code identifiers and established dev terms English (the `.scale/` papers are repo-shared state and stay English regardless).
 
 ### 6.1 In-flow triggers & interruption budget (hard rules, deterministic in CLI)
 
@@ -218,7 +218,7 @@ Skills: **`scale-map`** (Mode B builder + sync; senior), **`scale-tutor`** (juni
 - **Component panel:** rendered paper (markdown + mermaid), 3 dev stats, state history, its quests, **Challenge** button (voluntary quest, §6.3).
 - **Quest runner:** quiz cards; Socratic chat panel (server proxies Claude API, capped exchanges, rubric at end). Completion → coverage update → map animates state change.
 - **Header:** unification progress (weighted coverage), session recap ("today you visited …"), **⚙ Settings**.
-- **Settings modal:** the whole of `config.json` — condition (timing × modality), in-flow triggers, budgets, model policy — plus API keys, editable without a terminal. Every write is re-validated server-side by `ScaleConfigSchema`. Keys are write-only: env vars (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`) take precedence, stored keys live in `~/.scale/keys.json` mode 0600, and only a masked tail ever crosses the API.
+- **Settings modal:** the whole of `config.json` — language (`en`/`ko`, a Language row at the top), condition (timing × modality), in-flow triggers, budgets, model policy — plus API keys, editable without a terminal. Every write is re-validated server-side by `ScaleConfigSchema`. Keys are write-only: env vars (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`) take precedence, stored keys live in `~/.scale/keys.json` mode 0600, and only a masked tail ever crosses the API.
 - API: `GET /api/map|coverage|paper/:id|quests|settings`, `POST /api/quests`, `POST /api/quests/:id/…`, `POST /api/socratic/:id/message`, `POST /api/settings|keys`. Binds loopback by default (no auth + accepts keys); `--host` is an explicit opt-in.
 
 ## 8. Phases

@@ -26736,6 +26736,7 @@ var ConditionSchema = external_exports.object({
   timing: external_exports.enum(["inflow", "postsession"]),
   modality: external_exports.enum(["quiz", "socratic"])
 });
+var LanguageSchema = external_exports.enum(["en", "ko"]);
 var InflowTriggerSchema = external_exports.enum(["pre-commit", "post-task"]);
 var InflowConfigSchema = external_exports.object({
   triggers: external_exports.array(InflowTriggerSchema).default(["pre-commit"])
@@ -26797,6 +26798,7 @@ var ThresholdsSchema = external_exports.object({
 });
 var ScaleConfigSchema = external_exports.object({
   user: external_exports.string(),
+  language: LanguageSchema.default("en"),
   condition: ConditionSchema.default({ timing: "inflow", modality: "quiz" }),
   inflow: InflowConfigSchema.default({ triggers: ["pre-commit"] }),
   budgets: BudgetsSchema.default({}),
@@ -27553,10 +27555,13 @@ function topCandidate(cands, importance) {
   });
   return sorted[0];
 }
-function gateDenyReason(component, modality) {
-  return `SCALE in-flow check \u2014 this is for the JUNIOR, not for you to resolve.
+function gateDenyReason(component, modality, language = "en") {
+  const reason = `SCALE in-flow check \u2014 this is for the JUNIOR, not for you to resolve.
 Run the ${modality} comprehension check on the '${component}' territory using the scale-tutor skill and put it in front of them now (it's fog/stale/low-coverage and they just changed it). After they complete it (scale record), retry the commit.
 Do NOT skip this on their behalf. If \u2014 and only if \u2014 they say to skip, run \`scale gate defer ${component}\`, then retry. If you skip without asking (e.g. you authored this commit yourself), you MUST run \`scale gate defer ${component} --by agent\` and say so in your reply.`;
+  if (language !== "ko")
+    return reason;
+  return reason + ` The junior's interaction language is KOREAN: deliver the check itself entirely in Korean, keeping code identifiers and technical terms in English.`;
 }
 function gateDecision(input) {
   const { config: config2, session } = input;
@@ -27587,7 +27592,7 @@ function gateDecision(input) {
   return {
     action: "deny",
     component: target.id,
-    reason: gateDenyReason(target.id, config2.condition.modality),
+    reason: gateDenyReason(target.id, config2.condition.modality, config2.language),
     spendBudget: true
   };
 }
@@ -28115,12 +28120,13 @@ var DIMS = ["structure", "concepts", "rationale"];
 function asDim(v, fallback) {
   return typeof v === "string" && DIMS.includes(v) ? v : fallback;
 }
-async function llmQuizItems(provider, model, paper) {
+var KO_ITEM_INSTRUCTION = " Write every learner-facing string (question prompts, options, seed questions, feedback) in Korean. Keep code identifiers, file paths, function/variable names, and established technical terms in English. The JSON structure and its keys stay exactly as specified.";
+async function llmQuizItems(provider, model, paper, language = "en") {
   const text = await chatText({
     provider,
     model,
     maxTokens: 1024,
-    system: 'You write multiple-choice comprehension items for a code-onboarding tutor. Ground every item strictly in the provided component paper (its concepts and rationale). Each item tags the comprehension dimension it probes: "structure" (how the component is built), "concepts" (its named ideas), or "rationale" (why it was designed that way). Return ONLY JSON, no prose.',
+    system: 'You write multiple-choice comprehension items for a code-onboarding tutor. Ground every item strictly in the provided component paper (its concepts and rationale). Each item tags the comprehension dimension it probes: "structure" (how the component is built), "concepts" (its named ideas), or "rationale" (why it was designed that way). Return ONLY JSON, no prose.' + (language === "ko" ? KO_ITEM_INSTRUCTION : ""),
     messages: [
       {
         role: "user",
@@ -28152,12 +28158,12 @@ Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be f
   if (items.length === 0) throw new Error("llm quiz produced no valid items");
   return items.slice(0, 2);
 }
-async function llmSocraticItems(provider, model, paper) {
+async function llmSocraticItems(provider, model, paper, language = "en") {
   const text = await chatText({
     provider,
     model,
     maxTokens: 512,
-    system: "You open a Socratic comprehension dialogue for a code-onboarding tutor. Ground the opening question strictly in the provided component paper. Do not reveal answers. Return ONLY JSON, no prose.",
+    system: "You open a Socratic comprehension dialogue for a code-onboarding tutor. Ground the opening question strictly in the provided component paper. Do not reveal answers. Return ONLY JSON, no prose." + (language === "ko" ? KO_ITEM_INSTRUCTION : ""),
     messages: [
       {
         role: "user",
@@ -28175,13 +28181,22 @@ The seedQuestion should invite the learner to explain how this component works a
   const focus = typeof parsed.focus === "string" ? parsed.focus : "";
   return [{ prompt: seed, dim: "concepts", focus }];
 }
-function padDistractors(pool, n) {
-  const generic = [
+var GENERIC_DISTRACTORS = {
+  en: [
     "None of the above",
     "It is unrelated to this component",
     "It is handled by an external service",
     "It is deprecated and no longer used"
-  ];
+  ],
+  ko: [
+    "\uC704\uC758 \uC5B4\uB290 \uAC83\uB3C4 \uC544\uB2C8\uB2E4",
+    "\uC774 \uCEF4\uD3EC\uB10C\uD2B8\uC640 \uAD00\uB828\uC774 \uC5C6\uB2E4",
+    "\uC678\uBD80 \uC11C\uBE44\uC2A4\uAC00 \uCC98\uB9AC\uD55C\uB2E4",
+    "\uB354 \uC774\uC0C1 \uC0AC\uC6A9\uB418\uC9C0 \uC54A\uB294(deprecated) \uAE30\uB2A5\uC774\uB2E4"
+  ]
+};
+function padDistractors(pool, n, language = "en") {
+  const generic = GENERIC_DISTRACTORS[language];
   const out = [...pool];
   for (const g of generic) {
     if (out.length >= n) break;
@@ -28189,8 +28204,8 @@ function padDistractors(pool, n) {
   }
   return out.slice(0, n);
 }
-function mcqItem(stem, correct, distractors, dim) {
-  const opts = [correct, ...padDistractors(distractors, 3)].slice(0, 4);
+function mcqItem(stem, correct, distractors, dim, language = "en") {
+  const opts = [correct, ...padDistractors(distractors, 3, language)].slice(0, 4);
   const shift = stem.length % 4;
   const rotated = opts.map((_, i) => opts[(i + shift) % 4]);
   const correctIndex = (4 - shift) % 4;
@@ -28202,8 +28217,9 @@ function mcqItem(stem, correct, distractors, dim) {
     dim
   };
 }
-function deterministicQuizItems(paper, loaded) {
+function deterministicQuizItems(paper, loaded, language = "en") {
   const fm = paper.frontmatter;
+  const ko = language === "ko";
   const items = [];
   const otherConcepts = [];
   const otherWhys = [];
@@ -28216,10 +28232,11 @@ function deterministicQuizItems(paper, loaded) {
     const c = fm.concepts[0];
     items.push(
       mcqItem(
-        `Which of these is a core concept of "${fm.title}"?`,
+        ko ? `\uB2E4\uC74C \uC911 "${fm.title}"\uC758 \uD575\uC2EC \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which of these is a core concept of "${fm.title}"?`,
         c.name,
         otherConcepts.length > 0 ? otherConcepts.slice(0, 3) : [],
-        "concepts"
+        "concepts",
+        language
       )
     );
   }
@@ -28227,10 +28244,11 @@ function deterministicQuizItems(paper, loaded) {
   if (r && r.why) {
     items.push(
       mcqItem(
-        `In "${fm.title}", why was this decision made \u2014 "${r.decision}"?`,
+        ko ? `"${fm.title}"\uC5D0\uC11C "${r.decision}"\uB77C\uB294 \uACB0\uC815\uC740 \uC65C \uB0B4\uB824\uC84C\uC744\uAE4C\uC694?` : `In "${fm.title}", why was this decision made \u2014 "${r.decision}"?`,
         r.why,
         otherWhys.length > 0 ? otherWhys.slice(0, 3) : [],
-        "rationale"
+        "rationale",
+        language
       )
     );
   }
@@ -28239,33 +28257,35 @@ function deterministicQuizItems(paper, loaded) {
       const c = fm.concepts[items.length];
       items.push(
         mcqItem(
-          `Which idea does "${fm.title}" cover?`,
+          ko ? `"${fm.title}"\uAC00 \uB2E4\uB8E8\uB294 \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which idea does "${fm.title}" cover?`,
           c.name,
           otherConcepts.slice(0, 3),
-          "concepts"
+          "concepts",
+          language
         )
       );
     } else {
       const src = fm.sources[0] ?? fm.title;
       items.push(
         mcqItem(
-          `Which area of the codebase does "${fm.title}" own?`,
+          ko ? `"${fm.title}"\uAC00 \uB2F4\uB2F9\uD558\uB294 \uCF54\uB4DC\uBCA0\uC774\uC2A4 \uC601\uC5ED\uC740 \uC5B4\uB514\uC778\uAC00\uC694?` : `Which area of the codebase does "${fm.title}" own?`,
           src,
-          ["An unrelated module", "The build system", "Third-party dependencies"],
-          "structure"
+          ko ? ["\uAD00\uB828 \uC5C6\uB294 \uBAA8\uB4C8", "\uBE4C\uB4DC \uC2DC\uC2A4\uD15C", "\uC11C\uB4DC\uD30C\uD2F0 \uC758\uC874\uC131"] : ["An unrelated module", "The build system", "Third-party dependencies"],
+          "structure",
+          language
         )
       );
     }
   }
   return items.slice(0, 2);
 }
-function deterministicSocraticItems(paper) {
+function deterministicSocraticItems(paper, language = "en") {
   const fm = paper.frontmatter;
   const firstConcept = fm.concepts[0]?.name ?? fm.title;
   const firstRationale = fm.rationale.find((r) => r.why);
   const focusBits = [`concept: ${firstConcept}`];
   if (firstRationale) focusBits.push(`rationale: ${firstRationale.decision}`);
-  const seed = `Walk me through how "${fm.title}" works and why it is designed that way. Start with ${firstConcept}.`;
+  const seed = language === "ko" ? `"${fm.title}"\uAC00 \uC5B4\uB5BB\uAC8C \uB3D9\uC791\uD558\uB294\uC9C0, \uC65C \uADF8\uB807\uAC8C \uC124\uACC4\uB418\uC5C8\uB294\uC9C0 \uC124\uBA85\uD574 \uC8FC\uC138\uC694. ${firstConcept}\uBD80\uD130 \uC2DC\uC791\uD574 \uBCF4\uC138\uC694.` : `Walk me through how "${fm.title}" works and why it is designed that way. Start with ${firstConcept}.`;
   return [{ prompt: seed, dim: "concepts", focus: focusBits.join(" | ") }];
 }
 function makeQuest(componentId, modality, items, origin = "session") {
@@ -28306,7 +28326,7 @@ async function generateQuests(cwd, opts = {}) {
     let items = null;
     if (!llmDisabled) {
       try {
-        items = modality === "quiz" ? await llmQuizItems(provider, model, paper) : await llmSocraticItems(provider, model, paper);
+        items = modality === "quiz" ? await llmQuizItems(provider, model, paper, config2.language) : await llmSocraticItems(provider, model, paper, config2.language);
         usedLlm = true;
       } catch {
         llmDisabled = true;
@@ -28314,7 +28334,7 @@ async function generateQuests(cwd, opts = {}) {
       }
     }
     if (!items) {
-      items = modality === "quiz" ? deterministicQuizItems(paper, loaded) : deterministicSocraticItems(paper);
+      items = modality === "quiz" ? deterministicQuizItems(paper, loaded, config2.language) : deterministicSocraticItems(paper, config2.language);
     }
     quests.push(makeQuest(componentId, modality, items));
   }
@@ -28344,13 +28364,13 @@ async function generateVoluntaryQuest(cwd, componentId) {
   let items = null;
   let via = "fallback";
   try {
-    items = modality === "quiz" ? await llmQuizItems(provider, model, paper) : await llmSocraticItems(provider, model, paper);
+    items = modality === "quiz" ? await llmQuizItems(provider, model, paper, config2.language) : await llmSocraticItems(provider, model, paper, config2.language);
     via = "llm";
   } catch {
     items = null;
   }
   if (!items || items.length === 0) {
-    items = modality === "quiz" ? deterministicQuizItems(paper, loaded) : deterministicSocraticItems(paper);
+    items = modality === "quiz" ? deterministicQuizItems(paper, loaded, config2.language) : deterministicSocraticItems(paper, config2.language);
     via = "fallback";
   }
   const quest2 = makeQuest(componentId, modality, items, "voluntary");
@@ -28738,6 +28758,7 @@ async function handleSettingsPatch(req, res, dir) {
   const next = {
     ...current,
     user: typeof patch.user === "string" && patch.user.trim() ? patch.user.trim() : current.user,
+    language: typeof patch.language === "string" ? patch.language : current.language,
     condition: mergeSection(current.condition, patch.condition),
     inflow: mergeSection(current.inflow, patch.inflow),
     budgets: mergeSection(current.budgets, patch.budgets),
@@ -28806,30 +28827,32 @@ function parseGrades(text) {
     rationale: clamp01(g.rationale, 0.5)
   };
 }
-async function socraticReply(provider, model, paper, history) {
+var SOCRATIC_KO_DIALOGUE = " Conduct the dialogue in Korean. Keep code identifiers, file paths, and established technical terms in English.";
+var SOCRATIC_KO_FINAL = SOCRATIC_KO_DIALOGUE + " In the closing JSON, keys and numeric grades stay exactly as specified; write the 'reply' text in Korean.";
+async function socraticReply(provider, model, paper, history, language = "en") {
   const text = await chatText({
     provider,
     model,
     maxTokens: 400,
-    system: `You are a Socratic tutor helping a junior engineer build genuine comprehension of a codebase component. Ask ONE probing follow-up question at a time, grounded in the component paper below. Do NOT reveal answers or lecture \u2014 draw the reasoning out of the learner. Keep each turn to 1-3 sentences; be brief and supportive.
+    system: "You are a Socratic tutor helping a junior engineer build genuine comprehension of a codebase component. Ask ONE probing follow-up question at a time, grounded in the component paper below. Do NOT reveal answers or lecture \u2014 draw the reasoning out of the learner. Keep each turn to 1-3 sentences; be brief and supportive." + (language === "ko" ? SOCRATIC_KO_DIALOGUE : "") + `
 
 ${paperContext(paper)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content }))
   });
-  return text || "Can you say more about how that part works, and why?";
+  return text || (language === "ko" ? "\uADF8 \uBD80\uBD84\uC774 \uC5B4\uB5BB\uAC8C \uB3D9\uC791\uD558\uB294\uC9C0, \uC65C \uADF8\uB7F0\uC9C0 \uC870\uAE08 \uB354 \uC124\uBA85\uD574 \uC8FC\uC2DC\uACA0\uC5B4\uC694?" : "Can you say more about how that part works, and why?");
 }
-async function socraticFinal(provider, model, paper, history) {
+async function socraticFinal(provider, model, paper, history, language = "en") {
   const text = await chatText({
     provider,
     model,
     maxTokens: 500,
-    system: `You are concluding a Socratic comprehension dialogue about a codebase component. Give brief supportive closing feedback (1-2 sentences), then grade the learner's demonstrated comprehension on each dimension in [0,1]: "structure" (how it is built), "concepts" (its named ideas), "rationale" (why it is designed that way). Return ONLY JSON: {"reply":"...","grades":{"structure":0.0,"concepts":0.0,"rationale":0.0}}.
+    system: `You are concluding a Socratic comprehension dialogue about a codebase component. Give brief supportive closing feedback (1-2 sentences), then grade the learner's demonstrated comprehension on each dimension in [0,1]: "structure" (how it is built), "concepts" (its named ideas), "rationale" (why it is designed that way). Return ONLY JSON: {"reply":"...","grades":{"structure":0.0,"concepts":0.0,"rationale":0.0}}.` + (language === "ko" ? SOCRATIC_KO_FINAL : "") + `
 
 ${paperContext(paper)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content }))
   });
   const grades = parseGrades(text);
-  let reply = "Thanks \u2014 that gives me a good sense of your understanding.";
+  let reply = language === "ko" ? "\uAC10\uC0AC\uD569\uB2C8\uB2E4 \u2014 \uC774\uD574\uB3C4\uB97C \uC798 \uD30C\uC545\uD560 \uC218 \uC788\uC5C8\uC5B4\uC694." : "Thanks \u2014 that gives me a good sense of your understanding.";
   try {
     const parsed = stripJson(text);
     if (typeof parsed.reply === "string" && parsed.reply.trim()) reply = parsed.reply.trim();
@@ -28861,23 +28884,30 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
   if (!resolveKey(provider)) {
     state.history.pop();
     state.userTurns--;
+    const envVar = provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
     sendJson(res, 200, {
       reply: null,
       done: false,
       needsKey: provider,
-      error: new MissingKeyError(provider).message
+      error: config2.language === "ko" ? `${provider} API \uD0A4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. ${envVar}\uB97C \uC124\uC815\uD558\uAC70\uB098 \uC124\uC815(\u2699)\uC5D0\uC11C \uD0A4\uB97C \uCD94\uAC00\uD558\uC138\uC694.` : new MissingKeyError(provider).message
     });
     return;
   }
   try {
     if (!isFinal) {
-      const reply2 = await socraticReply(provider, model, paper, state.history);
+      const reply2 = await socraticReply(provider, model, paper, state.history, config2.language);
       state.history.push({ role: "assistant", content: reply2 });
       socraticDialogues.set(questId, state);
       sendJson(res, 200, { reply: reply2, done: false });
       return;
     }
-    const { reply, grades } = await socraticFinal(provider, model, paper, state.history);
+    const { reply, grades } = await socraticFinal(
+      provider,
+      model,
+      paper,
+      state.history,
+      config2.language
+    );
     const sha = shortHeadSha3(cwd);
     const now = (/* @__PURE__ */ new Date()).toISOString();
     try {
@@ -28910,7 +28940,7 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
     sendJson(res, 200, {
       reply: null,
       done: false,
-      error: `socratic proxy error: ${err.message}`
+      error: config2.language === "ko" ? `\uBB38\uB2F5 \uC11C\uBC84 \uC624\uB958: ${err.message}` : `socratic proxy error: ${err.message}`
     });
   }
 }
@@ -29065,7 +29095,7 @@ function loadFileComponentIndex(cwd, loaded) {
 function fmt(n) {
   return n.toFixed(2).replace(/\.?0+$/, "") || "0";
 }
-function contextSummary(res) {
+function contextSummary(res, language = "en") {
   const { coverage: coverage2, map: map2 } = res;
   const counts = coverageCounts(coverage2, map2);
   const scored = map2.nodes.map((n) => {
@@ -29084,6 +29114,11 @@ function contextSummary(res) {
   if (stale.length > 0) {
     lines.push(
       `${stale.length} territory needs re-validation (stale): ${stale.join(", ")}.`
+    );
+  }
+  if (language === "ko") {
+    lines.push(
+      "interaction language: ko \u2014 run comprehension checks in Korean (keep code identifiers in English)"
     );
   }
   return lines.join("\n");
@@ -29118,7 +29153,7 @@ program2.command("context").description("Print the SessionStart coverage summary
     console.log(`SCALE: coverage unavailable (${err.message}).`);
     return;
   }
-  console.log(contextSummary(res));
+  console.log(contextSummary(res, readConfigSafe(dir)?.language ?? "en"));
 });
 function buildStatus(cwd, res, dir) {
   const { coverage: coverage2, map: map2 } = res;

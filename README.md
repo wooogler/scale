@@ -192,11 +192,12 @@ map on a phone over a trusted LAN).
 ## Settings
 
 Everything below lives in `~/.scale/<repo-id>/config.json`. Edit it with `scale config
-set <key> <value>`, or open the **⚙ Settings** modal in `scale serve` — same file, same
-validation, no terminal needed.
+set <key> <value>`, or open the **⚙ Settings** modal in `scale serve` — a **Language**
+row at the top, then the rest — same file, same validation, no terminal needed.
 
 | Setting | Values | What it changes |
 |---|---|---|
+| `language` | `en` \| `ko` | Interaction language for everything SCALE says to you — web UI, quiz items, Socratic dialogue, in-flow checks. Code identifiers, file paths, and established dev terms stay English. Default `en`. |
 | `condition.timing` | `inflow` \| `postsession` | Interrupt while working vs. at session end. |
 | `condition.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
 | `inflow.triggers` | `pre-commit`, `post-task` | Which in-flow moments the gate fires on. |
@@ -208,6 +209,9 @@ validation, no terminal needed.
 The build model is not listed: `/scale-map` runs inside a Claude Code session and uses
 that session's model (`/model`), so a setting here could only state an intention it cannot
 enforce. Only interventions follow `models.provider`.
+
+`language` never touches the coverage memory: the `.scale/` papers are always written in
+English — they are repo-shared state, and `language` is a per-user interaction preference.
 
 ### API keys
 
