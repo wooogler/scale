@@ -4,7 +4,10 @@
 > 다른 Claude Code 세션(Opus)이 이 대화 없이 실행할 수 있게 만든 자족 문서.
 > 모든 주장에는 파일:라인 근거가 있고, "검증됨" 표시는 실제 실행으로 재현했다는 뜻이다.
 >
-> 작성일: 2026-08-30 · 기준 HEAD: `f7109c6` · 작성 세션의 미커밋 변경 있음 (§1 참조)
+> 작성일: 2026-08-30 · 기준 HEAD: `f7109c6`
+>
+> **갱신 2026-08-30**: Task 0과 P0 완료. 결과와 계획 수정 사항은 **§9**를 먼저 읽을 것.
+> §1.1(미커밋 변경)과 §4의 Task 0 / P0 항목은 완료 상태로 표시돼 있다.
 
 ---
 
@@ -28,7 +31,7 @@ SCALE의 coverage memory(`.scale/`)는 `/scale-map` 스킬이 LLM으로 한 번 
 
 ## 1. 현재 리포 상태 — 실행 전 필독
 
-### 1.1 미커밋 변경 (훅 stdin 배관 수리 — 검증됨, 커밋 대기)
+### 1.1 ~~미커밋 변경~~ → ✅ 커밋됨 `515612d` (훅 stdin 배관 수리)
 
 이전 세션에서 고친 것: 훅 스크립트는 payload를 stdin으로 넘기는데 CLI가 stdin을
 전혀 읽지 않아, **evidence 569행 전부 빈 componentIds**로 기록되고 있었다
@@ -45,8 +48,8 @@ SCALE의 coverage memory(`.scale/`)는 `/scale-map` 스킬이 LLM으로 한 번 
 검증 완료: 테스트 112개 통과, 훅 지연 90–130ms(< 200ms 예산), 실제 훅 스크립트
 경유 종단 확인, 명시적 argv 경로 회귀 없음, 동시 세션이 서로의 proposal을 닫지 않음.
 
-**Task 0: 이 diff를 리뷰하고 커밋하라.** (사용자가 아직 승인만 하고 커밋 안 함 —
-커밋 전 사용자에게 확인.) 이후 모든 단계는 이 위에 쌓인다.
+~~**Task 0: 이 diff를 리뷰하고 커밋하라.**~~ → ✅ 완료. 커밋 `515612d`.
+브랜치 `fix/hook-evidence-capture` (main은 미변경 — fast-forward 여부는 사용자 판단).
 
 ### 1.2 알려진 문제 중 이 계획과 얽힌 것
 
@@ -110,16 +113,20 @@ SCALE의 coverage memory(`.scale/`)는 `/scale-map` 스킬이 LLM으로 한 번 
 
 - 코드 추출은 tree-sitter AST, **로컬·API 키 불필요** (`--code-only`).
   TS/TSX 지원 (37개 문법에 포함).
-- 노드 `{id, label, source_file, source_location}`, 엣지
-  `{source, target, relation: calls|imports|uses|inherits, confidence: EXTRACTED|INFERRED|AMBIGUOUS}`
-  (ARCHITECTURE.md, `tests/test_architecture_doc.py`가 스키마 드리프트 방지).
+- **graph.json 실제 형태 (실측)**: NetworkX node-link —
+  `{directed, multigraph, graph, nodes, links, hyperedges, built_at_commit}`.
+  엣지 배열 키는 `edges`가 아니라 **`links`** 다 (파서는 둘 다 받도록 할 것).
+  노드 `{id, label, source_file, source_location, community, ...}`, 엣지
+  `{source, target, relation, confidence}`.
 - `graphify cluster-only . --no-label`로 커뮤니티 라벨링 LLM 호출 차단 가능.
   `--resolution`으로 커뮤니티 수 조절.
 - `analyze.py`에 `graph_diff(G_old, G_new)` 실재 (P3 싱크용).
 - **graphify의 `EXTRACTED/INFERRED`와 SCALE paper의 `provenance`는 의미가 다르다.**
   전자 = 엣지가 소스에 명시됐나, 후자 = 설계 근거를 사람이 말했나. **자동 매핑 금지.**
 - 주의: v0.9.x, 거의 매일 릴리스. **버전 핀 필수.** Leiden extra는 Python < 3.13.
-- 클러스터링의 실행 간 결정론은 **미확인** — P0에서 같은 입력 2회 실행 diff로 확인할 것.
+- 클러스터링 결정론: **확인됨 (§9)**. 같은 입력 2회 추출에서 노드·엣지 집합, 배열
+  순서, 680개 노드 전부의 커뮤니티 배정이 동일. 유일한 바이트 차이는 graphify가
+  스탬프하는 `built_at_commit` 필드뿐.
 
 ---
 
@@ -158,11 +165,11 @@ SCALE의 coverage memory(`.scale/`)는 `/scale-map` 스킬이 LLM으로 한 번 
 
 ## 4. 단계별 실행 계획
 
-### Task 0 — stdin 수리 커밋 (§1.1)
+### ✅ Task 0 — stdin 수리 커밋 (§1.1) — 완료 `515612d`
 
-diff 리뷰 → 사용자 확인 → 커밋. 커밋 메시지에 evidence 파이프라인 수리임을 명시.
+### ✅ P0 — fidelity report — 완료. **결과는 §9 참조.**
 
-### P0 — fidelity report (읽기 전용, 리스크 0, 반나절)
+(아래는 원래 계획. 실제 실행에서 달라진 점은 §9에 기록.)
 
 graphify를 리포 의존성으로 만들지 **않고**, 한 번 돌려 현재 `.scale/`과 대조만 한다.
 
@@ -300,3 +307,97 @@ echo '{"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"fix the 
 2. P0.5 `/scale-map` 싱크의 LLM 비용 승인 (스킬의 cost gate가 어차피 묻는다).
 3. `--resolution` 값: P0 결과를 보고 20–60 component 밴드 기준으로 사용자와 결정.
 4. deps.json의 최소 count 임계 (기본 제안: raw 저장, 병합 시 ≥2).
+
+---
+
+## 9. P0 실행 결과 (2026-08-30)
+
+### 9.1 환경 — 실제로 설치된 것
+
+```
+uv tool install "graphifyy[leiden]" --python 3.12   →  graphify 0.9.53
+```
+
+**버전은 핀하지 않았다** (사용자가 최신 설치를 선택). 재현성이 필요한 시점에
+`graphifyy==0.9.53`으로 핀할 것. `graph.json`은 스스로 `built_at_commit`을
+스탬프하므로 어느 코드 상태에서 뽑았는지는 파일 안에 남는다.
+
+### 9.2 🆕 `.graphifyignore`가 필수다 — 계획에 없던 발견
+
+첫 추출 결과가 **2103 노드 중 1418개(67%)가 커밋된 생성 산출물**이었다:
+
+| 파일 | 노드 수 |
+|---|---|
+| `packages/plugin/bin/scale.mjs` | 787 |
+| `packages/plugin/web-dist/assets/index-*.js` | 631 |
+
+플러그인이 자족적이려고 **일부러 커밋하는** 번들이라 `.gitignore`에 없고,
+graphify에게는 그냥 소스로 보인다. 이미 진짜 소스로 그래프에 들어있는 코드가
+번들 형태로 한 번 더 들어와 모든 심볼이 이중 계산된다.
+
+→ `.graphifyignore`를 추가하고 `--force`로 재추출: **680 노드 / 1201 엣지 /
+31 커뮤니티 / 67개 소스 파일.** 이 단계 없이 P1을 하면 모든 엣지가 두 배로 잡힌다.
+
+### 9.3 결정론 — 확인됨 (논문에 쓸 수 있음)
+
+동일 입력으로 2회 추출한 결과:
+
+| 비교 항목 | 결과 |
+|---|---|
+| 노드 id 집합 / 엣지 집합 | 동일 |
+| 노드·엣지 **배열 순서** | 동일 |
+| 680개 노드의 커뮤니티 배정 | 전부 동일 (31개 커뮤니티) |
+| 원시 바이트 | `built_at_commit` 필드 하나만 다름 |
+
+→ "경계 후보는 결정론적으로 도출된다"는 서술이 가능하다. `--resolution`을 고정하고
+`graph.json` 스냅샷을 보존하라는 §3 지침은 그대로 유효하다(입력이 바뀌면 결과도 바뀐다).
+
+### 9.4 fidelity report 결과 — P1의 근거
+
+`scripts/graphify-check.mjs` (신규, 읽기 전용, 의존성 0). `npm run check:map`.
+
+**앵커 지표**
+
+| 지표 | 값 |
+|---|---|
+| 죽은 앵커 | **0** — paper가 주장하는 경로는 전부 실재 |
+| 고아 파일 (CODE tier) | **6 / 2748 LOC** — §1.2의 5개 + 스크립트 자신 |
+| 중복 주장 | 4 파일 (`index.ts`가 6개 컴포넌트에) |
+| Stale 앵커 | **20개 컴포넌트** — `config-schema`, `memory-builder-skill` 자동 검출 |
+
+**그래프 지표** (680 노드 / 1201 엣지, EXTRACTED 100%)
+
+| 지표 | 값 | 의미 |
+|---|---|---|
+| **link recall** | **68.0%** (51/75) | 실제 AST 의존 쌍의 2/3만 Related Work 링크 존재 — 24쌍 누락 |
+| **link precision** | **24.6%** (51/207) | **map.json reference 쌍의 3/4가 코드 근거 없음** |
+| link precision (보정) | 30.9% (51/165) | AST 노드가 없는 컴포넌트·앵커 집합이 포함관계인 쌍 42개 제외 |
+| cohesion | 69.7% | 최약 `browser-safe-surface` 0% (intra 0 / cross 23) |
+
+**precision 24.6%가 P1의 핵심 근거다.** §1.2에서 "밀도 24.3%는 Related Work 지시문이
+협업/의존/대조를 뭉뚱그린 탓"이라고 추정했던 것이 정량 확인됐다. 그리고 `importance`가
+바로 이 엣지의 in-degree(§2-2)이므로, **맵 배치와 게이트/quest 랭킹이 코드 근거 없는
+링크 4분의 3 위에 서 있다.**
+
+주의: 34/37 컴포넌트만 AST 노드를 가진다. 나머지 3개(`memory-builder-skill`,
+`slash-commands`, `tutor-skill`)는 마크다운 스킬 파일만 앵커하므로 코드 전용
+추출로는 원리적으로 corroborate 불가 — precision의 상한이 1.0이 아니다.
+
+### 9.5 계획 수정 사항
+
+1. **P0.5의 "orphan 0" 기준을 CODE tier로 한정하라.** 감사 표면을 `git ls-files`
+   기반으로 넓히니 고아가 7 → 29로 늘었는데, 늘어난 23개는 `package.json`,
+   `tsconfig.json`, 루트 `*.md`, `fixtures/` 다. 리포트는 tier를 분리해 출력한다.
+   "코드 고아 0"이 의미 있는 기준이고, 나머지는 앵커 정책 결정 사항이지 작업이 아니다.
+2. **`scripts/graphify-check.mjs` 자신이 고아다.** P0.5에서 `plugin-packaging`
+   (이미 `scripts/build-plugin.mjs`를 앵커함)에 편입하는 게 자연스럽다.
+3. **P1 파서는 `links` 키를 읽어야 한다** (§2 graphify 절 수정됨). `edges` 아니다.
+4. **`.graphifyignore`를 P1 파이프라인의 전제로 문서화**했다(§9.2). 커밋됨.
+
+### 9.6 다음 단계
+
+**P0.5 — `/scale-map` 싱크.** 입력은 `npm run check:map` 출력:
+- CODE tier 고아 6건 편입 (advisory owner가 후보를 제시함)
+- Stale 20개 컴포넌트 중 churn 상위부터 paper 갱신
+- `scale map layout` + `builtFromSha` 재스탬프
+- 수용 기준: `npm run check:map`에서 **CODE tier 고아 0, 죽은 앵커 0**

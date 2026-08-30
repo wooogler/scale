@@ -1,0 +1,17 @@
+# Files graphify must not treat as source (PLAN-GRAPHIFY §P0).
+#
+# .gitignore is merged in automatically and already covers dist/ and
+# node_modules/. What it does NOT cover is the generated payloads the plugin
+# COMMITS on purpose: `npm run build:plugin` bundles the CLI into bin/scale.mjs
+# and copies the built web app into web-dist/, and both are checked in so the
+# plugin stays self-contained (README "Architecture").
+#
+# Left in, those two files supplied 1418 of 2103 nodes (67%) on the first
+# extraction — a bundled copy of code that is already in the graph via its real
+# sources, which would double-count every symbol and swamp every metric.
+
+packages/plugin/bin/
+packages/plugin/web-dist/
+
+# graphify's own output, so a re-extraction never reads its previous run.
+graphify-out/
