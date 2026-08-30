@@ -73,7 +73,15 @@ import {
   defaultSession,
   readSessionSafe,
   writeSession,
+  readPendingEdits,
+  writePendingEdits,
 } from './state.js';
+import {
+  readHookPayload,
+  promptTextOf,
+  editedFilesOf,
+  sessionIdOf,
+} from './hook-input.js';
 
 const program = new Command();
 
@@ -100,6 +108,17 @@ function splitList(v?: string): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/**
+ * Normalize a hook-supplied path to a repo-relative one. Claude Code hands the
+ * edit hooks ABSOLUTE paths, while `.scale/index.json` is keyed relative to the
+ * repo root — so without this every hook-captured file misses the index. Paths
+ * outside the repo are left as-is (they simply won't match a component).
+ */
+function relToRepo(cwd: string, file: string): string {
+  const rel = path.relative(cwd, path.resolve(cwd, file));
+  return rel && !rel.startsWith('..') ? rel : file;
 }
 
 /** Best-effort short HEAD SHA of the repo at `cwd`; '' if not a git repo. */
@@ -336,15 +355,25 @@ program
 program
   .command('context')
   .description('Print the SessionStart coverage summary (injected to the agent)')
-  .action(() => {
+  .action(async () => {
     // SessionStart: (re)start the session record, re-materialize coverage, then
     // print a ≤3-line summary for injection. No LLM / no network — git+fs only.
     const cwd = process.cwd();
     const dir = stateDir(cwd);
     ensureStateDir(dir);
 
-    // Fresh session record (intervention budget accounting lives here — §6.1).
-    writeSession(dir, defaultSession(crypto.randomUUID(), nowIso()));
+    // The SessionStart payload carries the session id. A `compact` or `resume`
+    // start is the SAME session continuing, and it reports the same id — so
+    // reusing the existing record preserves the interruption budget instead of
+    // silently refilling it mid-session (PLAN §6.1). A genuinely new session
+    // (startup/clear) brings a new id and gets a fresh budget. Run by hand with
+    // no payload, there is no id to match and the behavior is a fresh session,
+    // as before.
+    const sessionId = sessionIdOf(await readHookPayload()) || crypto.randomUUID();
+    const existing = readSessionSafe(dir);
+    if (!existing || existing.sessionId !== sessionId) {
+      writeSession(dir, defaultSession(sessionId, nowIso()));
+    }
 
     let res: RecomputeResult;
     try {
@@ -520,7 +549,10 @@ log
   .action(async (parts: string[], opts: { components?: string; text?: string }) => {
     const cwd = process.cwd();
     const dir = stateDir(cwd);
-    const text = opts.text ?? parts.join(' ');
+    let text = opts.text ?? parts.join(' ');
+    // Hook path: prompt-submit.mjs pipes the UserPromptSubmit payload on stdin
+    // and passes no argv, so the prompt itself lives there.
+    if (!text.trim()) text = promptTextOf(await readHookPayload());
     // Explicit --components wins; otherwise keyword-match the text against ids,
     // titles, and concepts from .scale/.
     let componentIds = splitList(opts.components);
@@ -547,13 +579,21 @@ log
   .action(async (fileArgs: string[], opts: { files?: string; components?: string }) => {
     const cwd = process.cwd();
     const dir = stateDir(cwd);
-    const files = [...fileArgs, ...splitList(opts.files)];
+    let raw = [...fileArgs, ...splitList(opts.files)];
+    let sessionId = '';
+    // Hook path: post-edit.mjs pipes the PostToolUse payload on stdin and passes
+    // no argv, so the edited paths live in its tool_input.
+    if (raw.length === 0) {
+      const payload = await readHookPayload();
+      raw = editedFilesOf(payload);
+      sessionId = sessionIdOf(payload);
+    }
+    const files = raw.map((f) => relToRepo(cwd, f));
     // Map each file → component ids via .scale/index.json (nearest-dir fallback).
     const index = loadFileComponentIndex(cwd, loadScaleDir(cwd));
     const matched = new Set<string>(splitList(opts.components));
     for (const f of files) {
-      const rel = path.relative(cwd, path.resolve(cwd, f)) || f;
-      for (const id of componentsForFile(index, rel)) matched.add(id);
+      for (const id of componentsForFile(index, f)) matched.add(id);
     }
     const entry: EvidenceEntry = {
       type: 'touch',
@@ -563,10 +603,67 @@ log
       componentIds: [...matched],
     };
     await appendEvidence(dir, entry);
+    // Close the propose→execute pair opened by pre-edit.mjs, if any.
+    const reviews = await closePendingReviews(dir, sessionId, files, entry.user);
     console.log(
-      `scale: logged touch (${entry.files.length} file(s), ${entry.componentIds.length} component(s))`,
+      `scale: logged touch (${entry.files.length} file(s), ${entry.componentIds.length} component(s)` +
+        `${reviews > 0 ? `, ${reviews} diff_review` : ''})`,
     );
   });
+
+/**
+ * Key a pending proposal by the session that made it (pre-edit.mjs's stated
+ * contract: "keyed by session + target file"). Two concurrent Claude Code
+ * windows editing the same file would otherwise close each other's pair and
+ * report a latency that belongs to neither. NUL separates the parts because it
+ * is the one byte that can appear in neither a session id nor a path.
+ */
+function pendingKey(sessionId: string, file: string): string {
+  return `${sessionId}\u0000${file}`;
+}
+
+/**
+ * Close any recorded PreToolUse proposal timestamps for `files` into
+ * `diff_review` rows — the propose→execute latency pair opened by pre-edit.mjs.
+ * Best-effort: an absent or unreadable pending file simply yields no rows.
+ */
+async function closePendingReviews(
+  dir: string,
+  sessionId: string,
+  files: string[],
+  user: string,
+): Promise<number> {
+  if (files.length === 0) return 0;
+  const pending = readPendingEdits(dir);
+  const now = Date.now();
+  let closed = 0;
+  let changed = false;
+
+  for (const file of files) {
+    // Prefer this session's proposal; fall back to a session-less one (an
+    // explicit `scale log review`, or a payload that carried no session id).
+    let key = pendingKey(sessionId, file);
+    if (pending[key] === undefined && sessionId) key = pendingKey('', file);
+    const proposedAt = pending[key];
+    if (proposedAt === undefined) continue;
+
+    delete pending[key];
+    changed = true;
+    const ms = now - Date.parse(proposedAt);
+    if (!Number.isFinite(ms) || ms < 0) continue;
+    await appendEvidence(dir, {
+      type: 'diff_review',
+      ts: nowIso(),
+      user,
+      file,
+      proposeToExecuteMs: ms,
+    });
+    closed++;
+  }
+
+  if (changed) writePendingEdits(dir, pending);
+  return closed;
+}
 
 log
   .command('review')
@@ -581,23 +678,42 @@ log
       msArg: string | undefined,
       opts: { file?: string; ms?: string },
     ) => {
-      const dir = stateDir();
+      const cwd = process.cwd();
+      const dir = stateDir(cwd);
       const file = opts.file ?? fileArg;
       const ms = opts.ms ?? msArg;
-      if (!file || ms === undefined) {
-        console.error('scale: usage — scale log review <file> <ms>');
-        process.exitCode = 1;
+
+      // Explicit form — a caller that already measured the latency.
+      if (file && ms !== undefined) {
+        const entry: EvidenceEntry = {
+          type: 'diff_review',
+          ts: nowIso(),
+          user: currentUser(dir),
+          file: relToRepo(cwd, file),
+          proposeToExecuteMs: Number(ms),
+        };
+        await appendEvidence(dir, entry);
+        console.log(`scale: logged diff_review (${entry.proposeToExecuteMs} ms)`);
         return;
       }
-      const entry: EvidenceEntry = {
-        type: 'diff_review',
-        ts: nowIso(),
-        user: currentUser(dir),
-        file,
-        proposeToExecuteMs: Number(ms),
-      };
-      await appendEvidence(dir, entry);
-      console.log(`scale: logged diff_review (${entry.proposeToExecuteMs} ms)`);
+
+      // Hook path (propose phase): pre-edit.mjs pipes the PreToolUse payload and
+      // passes no argv. The latency isn't knowable yet, so record the proposal
+      // timestamp; the paired `log touch` (PostToolUse) closes it into a row.
+      const payload = await readHookPayload();
+      const files = editedFilesOf(payload).map((f) => relToRepo(cwd, f));
+      if (files.length > 0) {
+        const sessionId = sessionIdOf(payload);
+        const pending = readPendingEdits(dir);
+        const at = nowIso();
+        for (const f of files) pending[pendingKey(sessionId, f)] = at;
+        writePendingEdits(dir, pending);
+        console.log(`scale: recorded ${files.length} edit proposal(s)`);
+        return;
+      }
+
+      console.error('scale: usage — scale log review <file> <ms>');
+      process.exitCode = 1;
     },
   );
 

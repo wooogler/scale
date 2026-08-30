@@ -87,6 +87,7 @@ export const paths = {
   coverage: (dir: string) => path.join(dir, 'coverage.json'),
   evidence: (dir: string) => path.join(dir, 'evidence.jsonl'),
   quests: (dir: string) => path.join(dir, 'quests.json'),
+  pendingEdits: (dir: string) => path.join(dir, 'pending-edits.json'),
 };
 
 /** Create the state dir (idempotent). */
@@ -230,6 +231,67 @@ export function readSessionSafe(dir: string): SessionRecord | null {
 export function writeSession(dir: string, session: SessionRecord): void {
   ensureStateDir(dir);
   fs.writeFileSync(sessionPath(dir), JSON.stringify(session, null, 2) + '\n');
+}
+
+// ---------------------------------------------------------------------------
+// pending-edits.json  (PreToolUse → PostToolUse pairing for diff_review)
+// ---------------------------------------------------------------------------
+
+/**
+ * Proposal timestamps from `PreToolUse(Edit|Write|MultiEdit)`, awaiting the
+ * paired `PostToolUse` to close them into a `diff_review` evidence row
+ * (PLAN §5 `diff_review`, §7.2).
+ *
+ * Keys are opaque to this module — the CLI builds them from session id + target
+ * file so concurrent sessions can't close each other's pairs. Values are ISO-8601.
+ *
+ * Kept in its own file rather than session.json so the per-edit hook path never
+ * contends with the gate's session/budget writes.
+ */
+export type PendingEdits = Record<string, string>;
+
+/** Proposals older than this are abandoned (the edit was rejected or lost). */
+const PENDING_EDIT_TTL_MS = 10 * 60 * 1000;
+/** Hard cap so a pathological session can't grow the file without bound. */
+const PENDING_EDIT_MAX = 64;
+
+/** Read pending-edits.json, dropping expired and malformed entries. */
+export function readPendingEdits(dir: string, now: number = Date.now()): PendingEdits {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(paths.pendingEdits(dir), 'utf8'));
+  } catch {
+    return {};
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+
+  const out: PendingEdits = {};
+  for (const [file, ts] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof ts !== 'string') continue;
+    const at = Date.parse(ts);
+    if (!Number.isFinite(at) || now - at > PENDING_EDIT_TTL_MS) continue;
+    out[file] = ts;
+  }
+  return out;
+}
+
+/**
+ * Write pending-edits.json, keeping only the most recent PENDING_EDIT_MAX
+ * entries. Best-effort: a write failure must never break the edit hook.
+ */
+export function writePendingEdits(dir: string, pending: PendingEdits): void {
+  const entries = Object.entries(pending)
+    .sort((a, b) => (a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : 0))
+    .slice(0, PENDING_EDIT_MAX);
+  try {
+    ensureStateDir(dir);
+    fs.writeFileSync(
+      paths.pendingEdits(dir),
+      JSON.stringify(Object.fromEntries(entries), null, 2) + '\n',
+    );
+  } catch {
+    /* fail open — evidence capture is never worth breaking an edit over */
+  }
 }
 
 // ---------------------------------------------------------------------------

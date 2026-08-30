@@ -27696,7 +27696,8 @@ var paths = {
   config: (dir) => path2.join(dir, "config.json"),
   coverage: (dir) => path2.join(dir, "coverage.json"),
   evidence: (dir) => path2.join(dir, "evidence.jsonl"),
-  quests: (dir) => path2.join(dir, "quests.json")
+  quests: (dir) => path2.join(dir, "quests.json"),
+  pendingEdits: (dir) => path2.join(dir, "pending-edits.json")
 };
 function ensureStateDir(dir) {
   fs2.mkdirSync(dir, { recursive: true });
@@ -27771,6 +27772,36 @@ function readSessionSafe(dir) {
 function writeSession(dir, session) {
   ensureStateDir(dir);
   fs2.writeFileSync(sessionPath(dir), JSON.stringify(session, null, 2) + "\n");
+}
+var PENDING_EDIT_TTL_MS = 10 * 60 * 1e3;
+var PENDING_EDIT_MAX = 64;
+function readPendingEdits(dir, now = Date.now()) {
+  let raw;
+  try {
+    raw = JSON.parse(fs2.readFileSync(paths.pendingEdits(dir), "utf8"));
+  } catch {
+    return {};
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [file, ts] of Object.entries(raw)) {
+    if (typeof ts !== "string") continue;
+    const at = Date.parse(ts);
+    if (!Number.isFinite(at) || now - at > PENDING_EDIT_TTL_MS) continue;
+    out[file] = ts;
+  }
+  return out;
+}
+function writePendingEdits(dir, pending) {
+  const entries = Object.entries(pending).sort((a, b) => a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : 0).slice(0, PENDING_EDIT_MAX);
+  try {
+    ensureStateDir(dir);
+    fs2.writeFileSync(
+      paths.pendingEdits(dir),
+      JSON.stringify(Object.fromEntries(entries), null, 2) + "\n"
+    );
+  } catch {
+  }
 }
 
 // packages/cli/src/coverage.ts
@@ -28968,6 +28999,85 @@ function startServer(opts) {
   return server;
 }
 
+// packages/cli/src/hook-input.ts
+var STDIN_TIMEOUT_MS = 150;
+function readStdinRaw() {
+  return new Promise((resolve4) => {
+    if (process.stdin.isTTY) {
+      resolve4("");
+      return;
+    }
+    let data = "";
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      process.stdin.pause();
+      process.stdin.unref?.();
+      resolve4(data);
+    };
+    const timer = setTimeout(finish, STDIN_TIMEOUT_MS);
+    timer.unref?.();
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      data += chunk;
+    });
+    process.stdin.on("end", () => {
+      clearTimeout(timer);
+      finish();
+    });
+    process.stdin.on("error", () => {
+      clearTimeout(timer);
+      finish();
+    });
+  });
+}
+async function readHookPayload() {
+  const raw = await readStdinRaw();
+  if (!raw.trim()) return {};
+  return parseHookPayload(raw);
+}
+function parseHookPayload(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+function promptTextOf(payload) {
+  return typeof payload.prompt === "string" ? payload.prompt : "";
+}
+function editedFilesOf(payload) {
+  const input = payload.tool_input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return [];
+  const record = input;
+  const files = [];
+  const push = (value) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed && !files.includes(trimmed)) files.push(trimmed);
+  };
+  push(record.file_path);
+  push(record.notebook_path);
+  push(record.path);
+  const edits = record.edits;
+  if (Array.isArray(edits)) {
+    for (const edit of edits) {
+      if (edit && typeof edit === "object" && !Array.isArray(edit)) {
+        push(edit.file_path);
+      }
+    }
+  }
+  return files;
+}
+function sessionIdOf(payload) {
+  return typeof payload.session_id === "string" ? payload.session_id : "";
+}
+
 // packages/cli/src/index.ts
 var program2 = new Command();
 program2.name("scale").description("SCALE \u2014 coverage-memory state engine and tutor CLI").version("0.0.0");
@@ -28978,6 +29088,10 @@ function currentUser(dir) {
 function splitList(v) {
   if (!v) return [];
   return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
+function relToRepo(cwd, file) {
+  const rel = path10.relative(cwd, path10.resolve(cwd, file));
+  return rel && !rel.startsWith("..") ? rel : file;
 }
 function headSha(cwd) {
   try {
@@ -29141,11 +29255,15 @@ program2.command("init").description("Create the ~/.scale/<repo-id>/ state dir w
     `  condition: ${config2.condition.timing}/${config2.condition.modality}  user: ${config2.user}`
   );
 });
-program2.command("context").description("Print the SessionStart coverage summary (injected to the agent)").action(() => {
+program2.command("context").description("Print the SessionStart coverage summary (injected to the agent)").action(async () => {
   const cwd = process.cwd();
   const dir = stateDir(cwd);
   ensureStateDir(dir);
-  writeSession(dir, defaultSession(crypto3.randomUUID(), nowIso()));
+  const sessionId = sessionIdOf(await readHookPayload()) || crypto3.randomUUID();
+  const existing = readSessionSafe(dir);
+  if (!existing || existing.sessionId !== sessionId) {
+    writeSession(dir, defaultSession(sessionId, nowIso()));
+  }
   let res;
   try {
     res = recomputeCoverageFromDisk(cwd);
@@ -29254,7 +29372,8 @@ var log = program2.command("log").description("Append a raw signal to evidence.j
 log.command("prompt").description("Log a prompt signal (components mentioned in a user prompt)").argument("[text...]", "the prompt text (matched against components)").option("-c, --components <ids>", "comma-separated component ids (skip matching)").option("-t, --text <text>", "the prompt text (overrides positional)").action(async (parts, opts) => {
   const cwd = process.cwd();
   const dir = stateDir(cwd);
-  const text = opts.text ?? parts.join(" ");
+  let text = opts.text ?? parts.join(" ");
+  if (!text.trim()) text = promptTextOf(await readHookPayload());
   let componentIds = splitList(opts.components);
   if (componentIds.length === 0 && text.trim()) {
     componentIds = matchComponentsFromText(loadScaleDir(cwd), text);
@@ -29272,12 +29391,18 @@ log.command("prompt").description("Log a prompt signal (components mentioned in 
 log.command("touch").description("Log a touch signal (files edited \u2192 components)").argument("[files...]", "file paths that were edited").option("-f, --files <paths>", "comma-separated file paths (adds to positional)").option("-c, --components <ids>", "comma-separated component ids (adds to matched)").action(async (fileArgs, opts) => {
   const cwd = process.cwd();
   const dir = stateDir(cwd);
-  const files = [...fileArgs, ...splitList(opts.files)];
+  let raw = [...fileArgs, ...splitList(opts.files)];
+  let sessionId = "";
+  if (raw.length === 0) {
+    const payload = await readHookPayload();
+    raw = editedFilesOf(payload);
+    sessionId = sessionIdOf(payload);
+  }
+  const files = raw.map((f) => relToRepo(cwd, f));
   const index = loadFileComponentIndex(cwd, loadScaleDir(cwd));
   const matched = new Set(splitList(opts.components));
   for (const f of files) {
-    const rel = path10.relative(cwd, path10.resolve(cwd, f)) || f;
-    for (const id of componentsForFile(index, rel)) matched.add(id);
+    for (const id of componentsForFile(index, f)) matched.add(id);
   }
   const entry = {
     type: "touch",
@@ -29287,29 +29412,72 @@ log.command("touch").description("Log a touch signal (files edited \u2192 compon
     componentIds: [...matched]
   };
   await appendEvidence(dir, entry);
+  const reviews = await closePendingReviews(dir, sessionId, files, entry.user);
   console.log(
-    `scale: logged touch (${entry.files.length} file(s), ${entry.componentIds.length} component(s))`
+    `scale: logged touch (${entry.files.length} file(s), ${entry.componentIds.length} component(s)${reviews > 0 ? `, ${reviews} diff_review` : ""})`
   );
 });
-log.command("review").description("Log a diff-review latency signal (proposal \u2192 execution ms)").argument("[file]", "file that was reviewed").argument("[ms]", "propose-to-execute latency in ms").option("-f, --file <path>", "file that was reviewed (overrides positional)").option("-m, --ms <number>", "propose-to-execute latency in ms (overrides positional)").action(
-  async (fileArg, msArg, opts) => {
-    const dir = stateDir();
-    const file = opts.file ?? fileArg;
-    const ms = opts.ms ?? msArg;
-    if (!file || ms === void 0) {
-      console.error("scale: usage \u2014 scale log review <file> <ms>");
-      process.exitCode = 1;
-      return;
-    }
-    const entry = {
+function pendingKey(sessionId, file) {
+  return `${sessionId}\0${file}`;
+}
+async function closePendingReviews(dir, sessionId, files, user) {
+  if (files.length === 0) return 0;
+  const pending = readPendingEdits(dir);
+  const now = Date.now();
+  let closed = 0;
+  let changed = false;
+  for (const file of files) {
+    let key = pendingKey(sessionId, file);
+    if (pending[key] === void 0 && sessionId) key = pendingKey("", file);
+    const proposedAt = pending[key];
+    if (proposedAt === void 0) continue;
+    delete pending[key];
+    changed = true;
+    const ms = now - Date.parse(proposedAt);
+    if (!Number.isFinite(ms) || ms < 0) continue;
+    await appendEvidence(dir, {
       type: "diff_review",
       ts: nowIso(),
-      user: currentUser(dir),
+      user,
       file,
-      proposeToExecuteMs: Number(ms)
-    };
-    await appendEvidence(dir, entry);
-    console.log(`scale: logged diff_review (${entry.proposeToExecuteMs} ms)`);
+      proposeToExecuteMs: ms
+    });
+    closed++;
+  }
+  if (changed) writePendingEdits(dir, pending);
+  return closed;
+}
+log.command("review").description("Log a diff-review latency signal (proposal \u2192 execution ms)").argument("[file]", "file that was reviewed").argument("[ms]", "propose-to-execute latency in ms").option("-f, --file <path>", "file that was reviewed (overrides positional)").option("-m, --ms <number>", "propose-to-execute latency in ms (overrides positional)").action(
+  async (fileArg, msArg, opts) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    const file = opts.file ?? fileArg;
+    const ms = opts.ms ?? msArg;
+    if (file && ms !== void 0) {
+      const entry = {
+        type: "diff_review",
+        ts: nowIso(),
+        user: currentUser(dir),
+        file: relToRepo(cwd, file),
+        proposeToExecuteMs: Number(ms)
+      };
+      await appendEvidence(dir, entry);
+      console.log(`scale: logged diff_review (${entry.proposeToExecuteMs} ms)`);
+      return;
+    }
+    const payload = await readHookPayload();
+    const files = editedFilesOf(payload).map((f) => relToRepo(cwd, f));
+    if (files.length > 0) {
+      const sessionId = sessionIdOf(payload);
+      const pending = readPendingEdits(dir);
+      const at = nowIso();
+      for (const f of files) pending[pendingKey(sessionId, f)] = at;
+      writePendingEdits(dir, pending);
+      console.log(`scale: recorded ${files.length} edit proposal(s)`);
+      return;
+    }
+    console.error("scale: usage \u2014 scale log review <file> <ms>");
+    process.exitCode = 1;
   }
 );
 var gate = program2.command("gate").description(
