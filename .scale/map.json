@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "builtFromSha": "0b5c4c3",
+  "builtFromSha": "d51695f",
   "provinces": [
     {
       "id": "capture",
@@ -41,245 +41,245 @@
       "province": "capture",
       "x": 0.8970349013994325,
       "y": 0.3877410175892206,
-      "importance": 0.4375
+      "importance": 0.2916666666666667
     },
     {
       "id": "evidence-append",
       "province": "capture",
       "x": 0.8534407494403172,
       "y": 0.41729247228227156,
-      "importance": 0.4375
+      "importance": 0.4583333333333333
     },
     {
       "id": "plugin-hooks",
       "province": "capture",
       "x": 0.8509306907832357,
       "y": 0.36695501500105787,
-      "importance": 0.5
+      "importance": 0.4583333333333333
     },
     {
       "id": "session-lifecycle-hooks",
       "province": "capture",
       "x": 0.8991165013398208,
       "y": 0.43859706541180554,
-      "importance": 0.375
+      "importance": 0.25
     },
     {
       "id": "coverage-materialization",
       "province": "comprehension",
       "x": 0.8620069343123856,
       "y": 0.6937289254079968,
-      "importance": 0.9375
+      "importance": 1
     },
     {
       "id": "coverage-model",
       "province": "comprehension",
       "x": 0.8350981934390291,
       "y": 0.738181783503175,
-      "importance": 0.9375
+      "importance": 0.75
     },
     {
       "id": "coverage-schema",
       "province": "comprehension",
       "x": 0.8291339665212205,
       "y": 0.6555251561096538,
-      "importance": 0.875
+      "importance": 0.75
     },
     {
       "id": "evidence-log",
       "province": "comprehension",
       "x": 0.885496259288254,
       "y": 0.7386233247325045,
-      "importance": 0.75
+      "importance": 0.625
     },
     {
       "id": "state-engine",
       "province": "comprehension",
       "x": 0.803461874532174,
       "y": 0.6989478272149832,
-      "importance": 0.625
+      "importance": 0.4583333333333333
     },
     {
       "id": "commit-gate",
       "province": "interventions",
       "x": 0.6342933395959244,
       "y": 0.8826088429102306,
-      "importance": 0.5
+      "importance": 0.3333333333333333
     },
     {
       "id": "gate-enforcement",
       "province": "interventions",
       "x": 0.601601163312725,
       "y": 0.9233665266164196,
-      "importance": 0.5625
+      "importance": 0.375
     },
     {
       "id": "slash-commands",
       "province": "interventions",
       "x": 0.5918663370153456,
       "y": 0.8554038901988664,
-      "importance": 0.375
+      "importance": 0.25
     },
     {
       "id": "tutor-skill",
       "province": "interventions",
       "x": 0.6514727188768611,
       "y": 0.9306458085599411,
-      "importance": 0.5625
+      "importance": 0.375
     },
     {
       "id": "validation-recording",
       "province": "interventions",
       "x": 0.5602020523253921,
       "y": 0.8946215512388254,
-      "importance": 0.375
+      "importance": 0.25
     },
     {
       "id": "drift-detection",
       "province": "map",
       "x": 0.32739083490335696,
       "y": 0.849725767261048,
-      "importance": 0.5
+      "importance": 0.3333333333333333
     },
     {
       "id": "file-component-index",
       "province": "map",
       "x": 0.28713103100804543,
       "y": 0.8836799533059809,
-      "importance": 0.6875
+      "importance": 0.5
     },
     {
       "id": "frozen-layout",
       "province": "map",
       "x": 0.2793633937261891,
       "y": 0.8338821239249976,
-      "importance": 0.4375
+      "importance": 0.3333333333333333
     },
     {
       "id": "map-schema",
       "province": "map",
       "x": 0.33478667650649263,
       "y": 0.9000842043442431,
-      "importance": 0.8125
+      "importance": 0.75
     },
     {
       "id": "build-cost-estimator",
       "province": "memory",
       "x": 0.13543364945903227,
       "y": 0.6153221566986298,
-      "importance": 0.1875
+      "importance": 0.125
     },
     {
       "id": "memory-builder-skill",
       "province": "memory",
       "x": 0.0936075881141538,
       "y": 0.6473271430607159,
-      "importance": 0.5
+      "importance": 0.3333333333333333
     },
     {
       "id": "paper-format",
       "province": "memory",
       "x": 0.08821235776086958,
       "y": 0.5972167500325726,
-      "importance": 0.5625
+      "importance": 0.4583333333333333
     },
     {
       "id": "paper-loader",
       "province": "memory",
       "x": 0.14043089396021108,
       "y": 0.6659748783024706,
-      "importance": 0.625
+      "importance": 0.4166666666666667
     },
     {
       "id": "browser-safe-surface",
       "province": "platform",
       "x": 0.17622740989737015,
       "y": 0.31293540846265383,
-      "importance": 0.4375
+      "importance": 0.2916666666666667
     },
     {
       "id": "cli-surface",
       "province": "platform",
       "x": 0.1369882585591222,
       "y": 0.34727069459500215,
-      "importance": 1
+      "importance": 0.6666666666666666
     },
     {
       "id": "config-schema",
       "province": "platform",
       "x": 0.12892781901829203,
       "y": 0.2955311359219289,
-      "importance": 0.6875
+      "importance": 0.5833333333333334
     },
     {
       "id": "plugin-packaging",
       "province": "platform",
       "x": 0.18469711676619757,
       "y": 0.3635195360483839,
-      "importance": 0.375
+      "importance": 0.25
     },
     {
       "id": "state-directory",
       "province": "platform",
       "x": 0.09040126393956557,
       "y": 0.3280401997413224,
-      "importance": 0.5625
+      "importance": 0.75
     },
     {
       "id": "quest-completion",
       "province": "quests",
       "x": 0.4081799859132141,
       "y": 0.13841766943270323,
-      "importance": 0.5
+      "importance": 0.625
     },
     {
       "id": "quest-generation",
       "province": "quests",
       "x": 0.3614179516150916,
       "y": 0.15899760979508987,
-      "importance": 0.625
+      "importance": 0.7083333333333334
     },
     {
       "id": "quest-schema",
       "province": "quests",
       "x": 0.366924928099669,
       "y": 0.10889937419743322,
-      "importance": 0.3125
+      "importance": 0.25
     },
     {
       "id": "app-shell",
       "province": "viewer",
       "x": 0.681949152701949,
       "y": 0.1674723490849928,
-      "importance": 0.375
+      "importance": 0.25
     },
     {
       "id": "component-panel",
       "province": "viewer",
       "x": 0.6466450759269742,
       "y": 0.2034415326045787,
-      "importance": 0.5
+      "importance": 0.3333333333333333
     },
     {
       "id": "local-server",
       "province": "viewer",
       "x": 0.6684161550402993,
       "y": 0.11859258550448494,
-      "importance": 0.5625
+      "importance": 0.625
     },
     {
       "id": "map-canvas",
       "province": "viewer",
       "x": 0.7307297647429829,
       "y": 0.18014562367767667,
-      "importance": 0.3125
+      "importance": 0.20833333333333334
     },
     {
       "id": "quest-runner-ui",
       "province": "viewer",
       "x": 0.633188940703609,
       "y": 0.1547208109081083,
-      "importance": 0.5
+      "importance": 0.3333333333333333
     },
     {
       "id": "terminology-skin",
@@ -293,7 +293,7 @@
       "province": "viewer",
       "x": 0.695502714681157,
       "y": 0.2162247255558932,
-      "importance": 0.4375
+      "importance": 0.4166666666666667
     }
   ],
   "edges": [
@@ -1916,6 +1916,386 @@
       "from": "viewer-data-layer",
       "to": "coverage-model",
       "kind": "reference"
+    },
+    {
+      "from": "app-shell",
+      "to": "terminology-skin",
+      "kind": "depends_on"
+    },
+    {
+      "from": "app-shell",
+      "to": "viewer-data-layer",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "config-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "coverage-model",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "coverage-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "evidence-log",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "file-component-index",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "frozen-layout",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "map-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "paper-format",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "quest-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "state-engine",
+      "kind": "depends_on"
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "local-server",
+      "kind": "depends_on"
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "quest-completion",
+      "kind": "depends_on"
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "quest-generation",
+      "kind": "depends_on"
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "state-directory",
+      "kind": "depends_on"
+    },
+    {
+      "from": "cli-surface",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "cli-surface",
+      "to": "local-server",
+      "kind": "depends_on"
+    },
+    {
+      "from": "cli-surface",
+      "to": "quest-completion",
+      "kind": "depends_on"
+    },
+    {
+      "from": "cli-surface",
+      "to": "quest-generation",
+      "kind": "depends_on"
+    },
+    {
+      "from": "cli-surface",
+      "to": "state-directory",
+      "kind": "depends_on"
+    },
+    {
+      "from": "commit-gate",
+      "to": "config-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "commit-gate",
+      "to": "coverage-model",
+      "kind": "depends_on"
+    },
+    {
+      "from": "commit-gate",
+      "to": "coverage-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "component-panel",
+      "to": "terminology-skin",
+      "kind": "depends_on"
+    },
+    {
+      "from": "component-panel",
+      "to": "viewer-data-layer",
+      "kind": "depends_on"
+    },
+    {
+      "from": "coverage-materialization",
+      "to": "evidence-append",
+      "kind": "depends_on"
+    },
+    {
+      "from": "coverage-materialization",
+      "to": "state-directory",
+      "kind": "depends_on"
+    },
+    {
+      "from": "coverage-model",
+      "to": "coverage-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "coverage-model",
+      "to": "map-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "drift-detection",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "drift-detection",
+      "to": "local-server",
+      "kind": "depends_on"
+    },
+    {
+      "from": "drift-detection",
+      "to": "quest-completion",
+      "kind": "depends_on"
+    },
+    {
+      "from": "drift-detection",
+      "to": "quest-generation",
+      "kind": "depends_on"
+    },
+    {
+      "from": "drift-detection",
+      "to": "state-directory",
+      "kind": "depends_on"
+    },
+    {
+      "from": "edit-and-prompt-hooks",
+      "to": "plugin-hooks",
+      "kind": "depends_on"
+    },
+    {
+      "from": "evidence-append",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "evidence-append",
+      "to": "local-server",
+      "kind": "depends_on"
+    },
+    {
+      "from": "evidence-append",
+      "to": "quest-completion",
+      "kind": "depends_on"
+    },
+    {
+      "from": "evidence-append",
+      "to": "quest-generation",
+      "kind": "depends_on"
+    },
+    {
+      "from": "frozen-layout",
+      "to": "map-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "local-server",
+      "kind": "depends_on"
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "plugin-hooks",
+      "kind": "depends_on"
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "quest-completion",
+      "kind": "depends_on"
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "quest-generation",
+      "kind": "depends_on"
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "state-directory",
+      "kind": "depends_on"
+    },
+    {
+      "from": "local-server",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "local-server",
+      "to": "evidence-append",
+      "kind": "depends_on"
+    },
+    {
+      "from": "local-server",
+      "to": "quest-completion",
+      "kind": "depends_on"
+    },
+    {
+      "from": "local-server",
+      "to": "quest-generation",
+      "kind": "depends_on"
+    },
+    {
+      "from": "local-server",
+      "to": "state-directory",
+      "kind": "depends_on"
+    },
+    {
+      "from": "map-canvas",
+      "to": "terminology-skin",
+      "kind": "depends_on"
+    },
+    {
+      "from": "paper-loader",
+      "to": "map-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "paper-loader",
+      "to": "paper-format",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-completion",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-completion",
+      "to": "evidence-append",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-completion",
+      "to": "state-directory",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-generation",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-generation",
+      "to": "evidence-append",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-generation",
+      "to": "state-directory",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-runner-ui",
+      "to": "terminology-skin",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-runner-ui",
+      "to": "viewer-data-layer",
+      "kind": "depends_on"
+    },
+    {
+      "from": "quest-schema",
+      "to": "evidence-log",
+      "kind": "depends_on"
+    },
+    {
+      "from": "session-lifecycle-hooks",
+      "to": "plugin-hooks",
+      "kind": "depends_on"
+    },
+    {
+      "from": "state-engine",
+      "to": "config-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "state-engine",
+      "to": "coverage-model",
+      "kind": "depends_on"
+    },
+    {
+      "from": "state-engine",
+      "to": "coverage-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "state-engine",
+      "to": "evidence-log",
+      "kind": "depends_on"
+    },
+    {
+      "from": "state-engine",
+      "to": "map-schema",
+      "kind": "depends_on"
+    },
+    {
+      "from": "validation-recording",
+      "to": "coverage-materialization",
+      "kind": "depends_on"
+    },
+    {
+      "from": "validation-recording",
+      "to": "local-server",
+      "kind": "depends_on"
+    },
+    {
+      "from": "validation-recording",
+      "to": "quest-completion",
+      "kind": "depends_on"
+    },
+    {
+      "from": "validation-recording",
+      "to": "quest-generation",
+      "kind": "depends_on"
+    },
+    {
+      "from": "validation-recording",
+      "to": "state-directory",
+      "kind": "depends_on"
     }
   ]
 }

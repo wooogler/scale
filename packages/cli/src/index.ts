@@ -28,6 +28,7 @@ import {
   type LoadedScale,
   type DimName,
   type FileComponentIndex,
+  type MapEdge,
   type GateInput,
   ScaleConfigSchema,
   buildFileComponentIndex,
@@ -52,6 +53,7 @@ import {
   completeQuizQuest,
   completeSocraticQuest,
 } from './quest.js';
+import { loadDependsOnEdges, DEPS_MIN_COUNT } from './deps.js';
 import {
   recomputeCoverageFromDisk,
   coverageCounts,
@@ -1510,6 +1512,7 @@ quest
 // ---------------------------------------------------------------------------
 const map = program.command('map').description('Map layout, drift, and index operations');
 
+
 map
   .command('layout')
   .description('Compute/extend the frozen spatial layout → .scale/map.json (deterministic)')
@@ -1532,11 +1535,13 @@ map
     const existingIds = new Set((existing?.nodes ?? []).map((n) => n.id));
     const newCount = loaded.papers.filter((p) => !existingIds.has(p.id)).length;
 
+    const nodeIds = new Set(loaded.papers.map((p) => p.id));
+    const dependsOn = loadDependsOnEdges(cwd, nodeIds);
     const mapJson = computeLayout(
       {
         provinces: loaded.provinces,
         nodes: loaded.papers.map((p) => ({ id: p.id, province: p.province })),
-        edges: loaded.edges,
+        edges: [...loaded.edges, ...dependsOn],
         builtFromSha: headSha(cwd) || existing?.builtFromSha || '',
       },
       // --relayout forces a full recompute; otherwise honor existing coords.
@@ -1554,6 +1559,12 @@ map
           `${mapJson.provinces.length} provinces → .scale/map.json`,
       );
     } else {
+      if (dependsOn.length > 0) {
+        console.log(
+          `scale: merged ${dependsOn.length} depends_on edge(s) from .scale/deps.json ` +
+            `(min ${DEPS_MIN_COUNT} AST edges).`,
+        );
+      }
       console.log(
         `scale: ${mapJson.provinces.length} province(s), ` +
           `${mapJson.nodes.length} component(s) (${newCount} new) → .scale/map.json`,

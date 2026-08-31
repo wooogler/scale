@@ -1,0 +1,639 @@
+{
+  "builtFromSha": "ce028811968c46fc0ebd5116e4618d83c4c0340f",
+  "graphifyVersion": "graphify 0.9.53",
+  "distilledFrom": "graphify-out/graph.json",
+  "edges": [
+    {
+      "from": "app-shell",
+      "to": "terminology-skin",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "app-shell",
+      "to": "viewer-data-layer",
+      "count": 9,
+      "extracted": 9,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "build-cost-estimator",
+      "count": 1,
+      "extracted": 1,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "commit-gate",
+      "count": 1,
+      "extracted": 1,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "config-schema",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "coverage-model",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "coverage-schema",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "evidence-log",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "file-component-index",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "frozen-layout",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "map-schema",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "paper-format",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "paper-loader",
+      "count": 1,
+      "extracted": 1,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "quest-schema",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "browser-safe-surface",
+      "to": "state-engine",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "coverage-materialization",
+      "count": 6,
+      "extracted": 6,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "local-server",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "quest-completion",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "quest-generation",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "build-cost-estimator",
+      "to": "state-directory",
+      "count": 24,
+      "extracted": 24,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "cli-surface",
+      "to": "coverage-materialization",
+      "count": 6,
+      "extracted": 6,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "cli-surface",
+      "to": "local-server",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "cli-surface",
+      "to": "quest-completion",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "cli-surface",
+      "to": "quest-generation",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "cli-surface",
+      "to": "state-directory",
+      "count": 24,
+      "extracted": 24,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "commit-gate",
+      "to": "config-schema",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "commit-gate",
+      "to": "coverage-model",
+      "count": 3,
+      "extracted": 3,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "commit-gate",
+      "to": "coverage-schema",
+      "count": 3,
+      "extracted": 3,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "component-panel",
+      "to": "terminology-skin",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "component-panel",
+      "to": "viewer-data-layer",
+      "count": 6,
+      "extracted": 6,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "coverage-materialization",
+      "to": "evidence-append",
+      "count": 10,
+      "extracted": 10,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "coverage-materialization",
+      "to": "state-directory",
+      "count": 10,
+      "extracted": 10,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "coverage-model",
+      "to": "coverage-schema",
+      "count": 6,
+      "extracted": 6,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "coverage-model",
+      "to": "map-schema",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "drift-detection",
+      "to": "coverage-materialization",
+      "count": 6,
+      "extracted": 6,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "drift-detection",
+      "to": "local-server",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "drift-detection",
+      "to": "quest-completion",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "drift-detection",
+      "to": "quest-generation",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "drift-detection",
+      "to": "state-directory",
+      "count": 24,
+      "extracted": 24,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "edit-and-prompt-hooks",
+      "to": "plugin-hooks",
+      "count": 9,
+      "extracted": 9,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "evidence-append",
+      "to": "coverage-materialization",
+      "count": 6,
+      "extracted": 6,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "evidence-append",
+      "to": "local-server",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "evidence-append",
+      "to": "quest-completion",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "evidence-append",
+      "to": "quest-generation",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "frozen-layout",
+      "to": "map-schema",
+      "count": 8,
+      "extracted": 8,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "coverage-materialization",
+      "count": 6,
+      "extracted": 6,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "local-server",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "plugin-hooks",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "quest-completion",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "quest-generation",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "gate-enforcement",
+      "to": "state-directory",
+      "count": 24,
+      "extracted": 24,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "local-server",
+      "to": "coverage-materialization",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "local-server",
+      "to": "evidence-append",
+      "count": 20,
+      "extracted": 20,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "local-server",
+      "to": "quest-completion",
+      "count": 5,
+      "extracted": 5,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "local-server",
+      "to": "quest-generation",
+      "count": 5,
+      "extracted": 5,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "local-server",
+      "to": "state-directory",
+      "count": 20,
+      "extracted": 20,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "map-canvas",
+      "to": "terminology-skin",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "paper-loader",
+      "to": "map-schema",
+      "count": 5,
+      "extracted": 5,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "paper-loader",
+      "to": "paper-format",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-completion",
+      "to": "coverage-materialization",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-completion",
+      "to": "evidence-append",
+      "count": 25,
+      "extracted": 25,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-completion",
+      "to": "state-directory",
+      "count": 25,
+      "extracted": 25,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-generation",
+      "to": "coverage-materialization",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-generation",
+      "to": "evidence-append",
+      "count": 25,
+      "extracted": 25,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-generation",
+      "to": "state-directory",
+      "count": 25,
+      "extracted": 25,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-runner-ui",
+      "to": "terminology-skin",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-runner-ui",
+      "to": "viewer-data-layer",
+      "count": 8,
+      "extracted": 8,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "quest-schema",
+      "to": "evidence-log",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "session-lifecycle-hooks",
+      "to": "plugin-hooks",
+      "count": 7,
+      "extracted": 7,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "state-engine",
+      "to": "config-schema",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "state-engine",
+      "to": "coverage-model",
+      "count": 8,
+      "extracted": 8,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "state-engine",
+      "to": "coverage-schema",
+      "count": 5,
+      "extracted": 5,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "state-engine",
+      "to": "evidence-log",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "state-engine",
+      "to": "map-schema",
+      "count": 3,
+      "extracted": 3,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "validation-recording",
+      "to": "coverage-materialization",
+      "count": 6,
+      "extracted": 6,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "validation-recording",
+      "to": "local-server",
+      "count": 2,
+      "extracted": 2,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "validation-recording",
+      "to": "quest-completion",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "validation-recording",
+      "to": "quest-generation",
+      "count": 4,
+      "extracted": 4,
+      "inferred": 0,
+      "ambiguous": 0
+    },
+    {
+      "from": "validation-recording",
+      "to": "state-directory",
+      "count": 24,
+      "extracted": 24,
+      "inferred": 0,
+      "ambiguous": 0
+    }
+  ]
+}

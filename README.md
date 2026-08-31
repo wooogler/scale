@@ -278,6 +278,7 @@ web map viewer + JSON API. All four 2×2 condition cells switch by `config.json`
 ```bash
 npm run build:plugin   # regenerate the plugin payload (bin/scale.mjs + web-dist/)
 npm run check:map      # audit .scale/ against the code — read-only, no API, free
+npm run distill        # graphify graph -> .scale/deps.json (senior side only)
 ```
 
 **`check:map`** ([`scripts/graphify-check.mjs`](./scripts/graphify-check.mjs)) is the
@@ -291,6 +292,28 @@ precision/recall and cohesion against the AST. It never writes anything.
 extraction. Those are generated payloads the plugin commits on purpose, so `.gitignore`
 does not cover them; leaving them in supplied 67% of the nodes on the first run and
 double-counted every symbol. Do not delete the file because nothing imports it.
+
+**`distill`** ([`scripts/distill-graph.mjs`](./scripts/distill-graph.mjs)) turns a
+[graphify](https://github.com/Graphify-Labs/graphify) AST extraction into
+`.scale/deps.json`, which `scale map layout` merges as `depends_on` edges. Those edges
+put measured dependency centrality into `importance` — which drives node size, the
+gate's candidate ranking, and quest selection, and until now came only from the
+markdown links an LLM wrote in each paper's Related Work section (24.6% of which have
+any code path behind them, per `check:map`). The LLM's `reference` edges are kept
+alongside rather than replaced: the difference between them is the measurement.
+
+This is a **senior-side, build-time** step. graphify is Python and never runs on the
+junior's path — they read the committed JSON:
+
+```bash
+uv tool install graphifyy       # once, senior machine only
+graphify extract . --code-only  # local, deterministic, no API key, no LLM
+npm run distill                 # -> .scale/deps.json  (commit it)
+scale map layout                # merges it; coordinates stay frozen
+```
+
+With no `.scale/deps.json` the layout is byte-identical to what it was before
+graphify existed — the integration is optional at every step.
 
 CI ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml)) typechecks and tests on
 Node 20/22, and separately rebuilds the plugin payload and fails if it differs from
