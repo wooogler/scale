@@ -27151,8 +27151,34 @@ var DEFAULT_MAX_BODY_CHARS = 16e3;
 function withoutRelatedWork(body) {
   return body.replace(/^##\s*Related Work\b[\s\S]*?(?=^##\s|\Z)/gim, "").trim();
 }
+function neighbourIndex(map2) {
+  const index = /* @__PURE__ */ new Map();
+  const entry = (id) => {
+    let e = index.get(id);
+    if (!e) {
+      e = { dependsOn: [], dependedOnBy: [] };
+      index.set(id, e);
+    }
+    return e;
+  };
+  for (const edge of map2.edges) {
+    if (edge.kind !== "depends_on" || edge.from === edge.to)
+      continue;
+    const from = entry(edge.from);
+    const to = entry(edge.to);
+    if (!from.dependsOn.includes(edge.to))
+      from.dependsOn.push(edge.to);
+    if (!to.dependedOnBy.includes(edge.from))
+      to.dependedOnBy.push(edge.from);
+  }
+  for (const e of index.values()) {
+    e.dependsOn.sort();
+    e.dependedOnBy.sort();
+  }
+  return index;
+}
 function paperGrounding(paper, opts = {}) {
-  const { includeBody = true, maxBodyChars = DEFAULT_MAX_BODY_CHARS } = opts;
+  const { includeBody = true, maxBodyChars = DEFAULT_MAX_BODY_CHARS, neighbours } = opts;
   const fm = paper.frontmatter;
   const concepts = fm.concepts.map((c) => `- ${c.name} (id: ${c.id})`).join("\n") || "- (none)";
   const rationale = fm.rationale.map((r) => {
@@ -27182,6 +27208,17 @@ ${rationale}`
 Paper (prose \u2014 how it works and why):
 ${clipped}`);
     }
+  }
+  if (neighbours && (neighbours.dependsOn.length > 0 || neighbours.dependedOnBy.length > 0)) {
+    const lines = ["\nMeasured dependencies (from the code, not from this paper):"];
+    if (neighbours.dependsOn.length > 0) {
+      lines.push(`  this component's code reaches into: ${neighbours.dependsOn.join(", ")}`);
+    }
+    if (neighbours.dependedOnBy.length > 0) {
+      lines.push(`  code that reaches into it: ${neighbours.dependedOnBy.join(", ")}`);
+    }
+    lines.push("  Use this to ask what BREAKS if this component changed, or what a caller would observe \u2014 never to ask which name is connected to which.");
+    parts.push(lines.join("\n"));
   }
   return parts.join("\n");
 }
@@ -28078,6 +28115,7 @@ function coverageCounts(coverage2, map2) {
 
 // packages/cli/src/quest.ts
 import fs8 from "node:fs";
+import nodePath from "node:path";
 import crypto3 from "node:crypto";
 import { execFileSync as execFileSync3 } from "node:child_process";
 
@@ -28217,6 +28255,15 @@ async function chatText(req) {
 
 // packages/cli/src/quest.ts
 var DEFAULT_TOP_K = 3;
+function readMapJsonSafe(cwd) {
+  try {
+    return JSON.parse(
+      fs8.readFileSync(nodePath.join(cwd, ".scale", "map.json"), "utf8")
+    );
+  } catch {
+    return null;
+  }
+}
 function shortHeadSha2(cwd) {
   try {
     return execFileSync3("git", ["rev-parse", "--short", "HEAD"], {
@@ -28276,8 +28323,8 @@ function pickComponents(coverage2, map2, touched, config2, k) {
   if (primary.length > 0) return primary.slice(0, k).map((s) => s.id);
   return [...scored].sort((a, b) => a.mean - b.mean || b.importance - a.importance).slice(0, k).map((s) => s.id);
 }
-function groundingText(paper) {
-  return paperGrounding(paper);
+function groundingText(paper, neighbours) {
+  return paperGrounding(paper, { neighbours });
 }
 function parseJsonLoose(text) {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
@@ -28289,7 +28336,7 @@ function asDim(v, fallback) {
   return typeof v === "string" && DIMS.includes(v) ? v : fallback;
 }
 var KO_ITEM_INSTRUCTION = " Write every learner-facing string (question prompts, options, seed questions, feedback) in Korean. Keep code identifiers, file paths, function/variable names, and established technical terms in English. The JSON structure and its keys stay exactly as specified.";
-async function llmQuizItems(provider, model, paper, language = "en") {
+async function llmQuizItems(provider, model, paper, language = "en", neighbours) {
   const text = await chatText({
     provider,
     model,
@@ -28298,7 +28345,7 @@ async function llmQuizItems(provider, model, paper, language = "en") {
     messages: [
       {
         role: "user",
-        content: `${groundingText(paper)}
+        content: `${groundingText(paper, neighbours)}
 
 Write exactly 2 multiple-choice items. Return JSON of the form:
 {"items":[{"stem":"...","options":["A","B","C","D"],"correctIndex":0,"dim":"concepts"}]}
@@ -28328,7 +28375,7 @@ Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be f
   if (items.length === 0) throw new Error("llm quiz produced no valid items");
   return items.slice(0, 2);
 }
-async function llmSocraticItems(provider, model, paper, language = "en") {
+async function llmSocraticItems(provider, model, paper, language = "en", neighbours) {
   const text = await chatText({
     provider,
     model,
@@ -28337,7 +28384,7 @@ async function llmSocraticItems(provider, model, paper, language = "en") {
     messages: [
       {
         role: "user",
-        content: `${groundingText(paper)}
+        content: `${groundingText(paper, neighbours)}
 
 Return JSON of the form:
 {"seedQuestion":"...","focus":"one sentence naming the concept/rationale to probe"}
@@ -28373,19 +28420,22 @@ function hashKey(s) {
   }
   return h >>> 0;
 }
-function pickDistractors(pool, correct, n, seedKey) {
+function pickDistractors(near, far, correct, n, seedKey) {
   const seen = /* @__PURE__ */ new Set([correct]);
-  const unique = [];
-  for (const candidate of pool) {
-    if (seen.has(candidate)) continue;
-    seen.add(candidate);
-    unique.push(candidate);
-  }
-  if (unique.length === 0) return [];
-  const start = hashKey(seedKey) % unique.length;
   const out = [];
-  for (let i = 0; i < unique.length && out.length < n; i++) {
-    out.push(unique[(start + i) % unique.length]);
+  for (const tier of [near, far]) {
+    const unique = [];
+    for (const candidate of tier) {
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      unique.push(candidate);
+    }
+    if (unique.length === 0) continue;
+    const start = hashKey(seedKey) % unique.length;
+    for (let i = 0; i < unique.length && out.length < n; i++) {
+      out.push(unique[(start + i) % unique.length]);
+    }
+    if (out.length >= n) break;
   }
   return out;
 }
@@ -28411,16 +28461,25 @@ function mcqItem(stem, correct, distractors, dim, language = "en") {
     dim
   };
 }
-function deterministicQuizItems(paper, loaded, language = "en") {
+function deterministicQuizItems(paper, loaded, language = "en", neighbours) {
   const fm = paper.frontmatter;
   const ko = language === "ko";
   const items = [];
-  const otherConcepts = [];
-  const otherWhys = [];
+  const nearIds = /* @__PURE__ */ new Set([
+    ...neighbours?.dependsOn ?? [],
+    ...neighbours?.dependedOnBy ?? []
+  ]);
+  const nearConcepts = [];
+  const farConcepts = [];
+  const nearWhys = [];
+  const farWhys = [];
   for (const p of loaded.papers) {
     if (p.id === fm.id) continue;
-    for (const c of p.frontmatter.concepts) otherConcepts.push(c.name);
-    for (const r2 of p.frontmatter.rationale) if (r2.why) otherWhys.push(r2.why);
+    const isNear = nearIds.has(p.id);
+    for (const c of p.frontmatter.concepts) (isNear ? nearConcepts : farConcepts).push(c.name);
+    for (const r2 of p.frontmatter.rationale) {
+      if (r2.why) (isNear ? nearWhys : farWhys).push(r2.why);
+    }
   }
   if (fm.concepts.length > 0) {
     const c = fm.concepts[0];
@@ -28428,7 +28487,7 @@ function deterministicQuizItems(paper, loaded, language = "en") {
       mcqItem(
         ko ? `\uB2E4\uC74C \uC911 "${fm.title}"\uC758 \uD575\uC2EC \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which of these is a core concept of "${fm.title}"?`,
         c.name,
-        pickDistractors(otherConcepts, c.name, 3, `${fm.id}:concepts`),
+        pickDistractors(nearConcepts, farConcepts, c.name, 3, `${fm.id}:concepts`),
         "concepts",
         language
       )
@@ -28440,7 +28499,7 @@ function deterministicQuizItems(paper, loaded, language = "en") {
       mcqItem(
         ko ? `"${fm.title}"\uC5D0\uC11C "${r.decision}"\uB77C\uB294 \uACB0\uC815\uC740 \uC65C \uB0B4\uB824\uC84C\uC744\uAE4C\uC694?` : `In "${fm.title}", why was this decision made \u2014 "${r.decision}"?`,
         r.why,
-        pickDistractors(otherWhys, r.why, 3, `${fm.id}:rationale`),
+        pickDistractors(nearWhys, farWhys, r.why, 3, `${fm.id}:rationale`),
         "rationale",
         language
       )
@@ -28453,7 +28512,7 @@ function deterministicQuizItems(paper, loaded, language = "en") {
         mcqItem(
           ko ? `"${fm.title}"\uAC00 \uB2E4\uB8E8\uB294 \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which idea does "${fm.title}" cover?`,
           c.name,
-          pickDistractors(otherConcepts, c.name, 3, `${fm.id}:concepts2`),
+          pickDistractors(nearConcepts, farConcepts, c.name, 3, `${fm.id}:concepts2`),
           "concepts",
           language
         )
@@ -28511,6 +28570,7 @@ async function generateQuests(cwd, opts = {}) {
   const k = opts.topK ?? DEFAULT_TOP_K;
   const picked = pickComponents(coverage2, map2, touched, config2, k);
   const modality = config2.condition.modality;
+  const neighbours = neighbourIndex(map2);
   let llmDisabled = false;
   let usedLlm = false;
   let usedFallback = false;
@@ -28521,7 +28581,13 @@ async function generateQuests(cwd, opts = {}) {
     let items = null;
     if (!llmDisabled) {
       try {
-        items = modality === "quiz" ? await llmQuizItems(provider, model, paper, config2.language) : await llmSocraticItems(provider, model, paper, config2.language);
+        items = modality === "quiz" ? await llmQuizItems(provider, model, paper, config2.language, neighbours.get(componentId)) : await llmSocraticItems(
+          provider,
+          model,
+          paper,
+          config2.language,
+          neighbours.get(componentId)
+        );
         usedLlm = true;
       } catch (err) {
         if (err instanceof MissingKeyError) llmDisabled = true;
@@ -28531,7 +28597,7 @@ async function generateQuests(cwd, opts = {}) {
     }
     if (!items) {
       usedFallback = true;
-      items = modality === "quiz" ? deterministicQuizItems(paper, loaded, config2.language) : deterministicSocraticItems(paper, config2.language);
+      items = modality === "quiz" ? deterministicQuizItems(paper, loaded, config2.language, neighbours.get(componentId)) : deterministicSocraticItems(paper, config2.language);
     }
     quests.push(makeQuest(componentId, modality, items));
   }
@@ -28557,17 +28623,18 @@ async function generateVoluntaryQuest(cwd, componentId) {
   const loaded = loadScaleDir(cwd);
   const paper = paperById(loaded, componentId);
   if (!paper) return null;
+  const neighbours = readMapJsonSafe(cwd) ? neighbourIndex(readMapJsonSafe(cwd)).get(componentId) : void 0;
   const modality = config2.condition.modality;
   let items = null;
   let via = "fallback";
   try {
-    items = modality === "quiz" ? await llmQuizItems(provider, model, paper, config2.language) : await llmSocraticItems(provider, model, paper, config2.language);
+    items = modality === "quiz" ? await llmQuizItems(provider, model, paper, config2.language, neighbours) : await llmSocraticItems(provider, model, paper, config2.language);
     via = "llm";
   } catch {
     items = null;
   }
   if (!items || items.length === 0) {
-    items = modality === "quiz" ? deterministicQuizItems(paper, loaded, config2.language) : deterministicSocraticItems(paper, config2.language);
+    items = modality === "quiz" ? deterministicQuizItems(paper, loaded, config2.language, neighbours) : deterministicSocraticItems(paper, config2.language);
     via = "fallback";
   }
   const quest2 = makeQuest(componentId, modality, items, "voluntary");
@@ -29025,9 +29092,11 @@ async function handleKeySet(req, res) {
   }
   sendJson(res, 200, { keys: keyStatus() });
 }
-function paperContext(paper) {
+function paperContext(paper, cwd) {
   if (!paper) return "No component paper is available; keep the dialogue general but rigorous.";
-  return paperGrounding(paper);
+  const map2 = cwd ? readMapJson(cwd) : null;
+  const neighbours = map2 ? neighbourIndex(map2).get(paper.frontmatter.id) : void 0;
+  return paperGrounding(paper, { neighbours });
 }
 function stripJson(text) {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
@@ -29057,26 +29126,26 @@ function parseGrades(text) {
 }
 var SOCRATIC_KO_DIALOGUE = " Conduct the dialogue in Korean. Keep code identifiers, file paths, and established technical terms in English.";
 var SOCRATIC_KO_FINAL = SOCRATIC_KO_DIALOGUE + " In the closing JSON, keys and numeric grades stay exactly as specified; write the 'reply' text in Korean.";
-async function socraticReply(provider, model, paper, history, language = "en") {
+async function socraticReply(provider, model, paper, history, language = "en", cwd) {
   const text = await chatText({
     provider,
     model,
     maxTokens: 400,
     system: "You are a Socratic tutor helping a junior engineer build genuine comprehension of a codebase component. Ask ONE probing follow-up question at a time, grounded in the component paper below. Do NOT reveal answers or lecture \u2014 draw the reasoning out of the learner. Keep each turn to 1-3 sentences; be brief and supportive." + (language === "ko" ? SOCRATIC_KO_DIALOGUE : "") + `
 
-${paperContext(paper)}`,
+${paperContext(paper, cwd)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content }))
   });
   return text || (language === "ko" ? "\uADF8 \uBD80\uBD84\uC774 \uC5B4\uB5BB\uAC8C \uB3D9\uC791\uD558\uB294\uC9C0, \uC65C \uADF8\uB7F0\uC9C0 \uC870\uAE08 \uB354 \uC124\uBA85\uD574 \uC8FC\uC2DC\uACA0\uC5B4\uC694?" : "Can you say more about how that part works, and why?");
 }
-async function socraticFinal(provider, model, paper, history, language = "en") {
+async function socraticFinal(provider, model, paper, history, language = "en", cwd) {
   const text = await chatText({
     provider,
     model,
     maxTokens: 500,
     system: `You are concluding a Socratic comprehension dialogue about a codebase component. Give brief supportive closing feedback (1-2 sentences), then grade the learner's demonstrated comprehension on each dimension in [0,1]: "structure" (how it is built), "concepts" (its named ideas), "rationale" (why it is designed that way). Return ONLY JSON: {"reply":"...","grades":{"structure":0.0,"concepts":0.0,"rationale":0.0}}.` + (language === "ko" ? SOCRATIC_KO_FINAL : "") + `
 
-${paperContext(paper)}`,
+${paperContext(paper, cwd)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content }))
   });
   const grades = parseGrades(text);
@@ -29129,7 +29198,14 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
   }
   try {
     if (!isFinal) {
-      const reply2 = await socraticReply(provider, model, paper, state.history, config2.language);
+      const reply2 = await socraticReply(
+        provider,
+        model,
+        paper,
+        state.history,
+        config2.language,
+        cwd
+      );
       state.history.push({ role: "assistant", content: reply2 });
       socraticDialogues.set(questId, state);
       sendJson(res, 200, { reply: reply2, done: false });
@@ -29140,7 +29216,8 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
       model,
       paper,
       state.history,
-      config2.language
+      config2.language,
+      cwd
     );
     const sha = shortHeadSha3(cwd);
     const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -29423,7 +29500,7 @@ function recentlyAddressedComponents(dir, now, ttlMinutes) {
   }
   return [...ids];
 }
-function readMapJsonSafe(cwd) {
+function readMapJsonSafe2(cwd) {
   try {
     return JSON.parse(
       fs11.readFileSync(path11.join(cwd, ".scale", "map.json"), "utf8")
@@ -30274,7 +30351,7 @@ map.command("layout").description("Compute/extend the frozen spatial layout \u21
     return;
   }
   const loaded = loadScaleDir(cwd);
-  const existing = readMapJsonSafe(cwd);
+  const existing = readMapJsonSafe2(cwd);
   const existingIds = new Set((existing?.nodes ?? []).map((n) => n.id));
   const newCount = loaded.papers.filter((p) => !existingIds.has(p.id)).length;
   const nodeIds = new Set(loaded.papers.map((p) => p.id));
@@ -30311,7 +30388,7 @@ map.command("layout").description("Compute/extend the frozen spatial layout \u21
 });
 map.command("drift").description("Flag components whose sources changed since map.builtFromSha (minimal stub)").action(() => {
   const cwd = process.cwd();
-  const map2 = readMapJsonSafe(cwd);
+  const map2 = readMapJsonSafe2(cwd);
   if (!map2) {
     console.log("scale: no .scale/map.json \u2014 run `scale map layout` first.");
     return;

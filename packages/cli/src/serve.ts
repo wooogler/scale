@@ -30,6 +30,7 @@ import {
   type LlmProvider,
   type LoadedPaper,
   paperGrounding,
+  neighbourIndex,
 } from '@scale/core';
 
 import {
@@ -601,11 +602,15 @@ async function handleKeySet(req: http.IncomingMessage, res: http.ServerResponse)
 // ---------------------------------------------------------------------------
 
 /** Component-paper grounding for the socratic system prompt. */
-function paperContext(paper: LoadedPaper | undefined): string {
+function paperContext(paper: LoadedPaper | undefined, cwd?: string): string {
   if (!paper) return 'No component paper is available; keep the dialogue general but rigorous.';
   // Shared with quest generation. This path used to drop `alternatives` — the
   // exact material the rationale rubric's top band asks the junior to explain.
-  return paperGrounding(paper);
+  // Measured dependencies come along too: a Socratic opener is exactly the place
+  // for "what breaks if this changed", which needs to know what depends on it.
+  const map = cwd ? readMapJson(cwd) : null;
+  const neighbours = map ? neighbourIndex(map).get(paper.frontmatter.id) : undefined;
+  return paperGrounding(paper, { neighbours });
 }
 
 /** Strip ```json fences and parse; throws on failure. */
@@ -673,6 +678,7 @@ async function socraticReply(
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
   language: Language = 'en',
+  cwd?: string,
 ): Promise<string> {
   const text = await chatText({
     provider,
@@ -685,7 +691,7 @@ async function socraticReply(
       'reasoning out of the learner. Keep each turn to 1-3 sentences; be brief and ' +
       'supportive.' +
       (language === 'ko' ? SOCRATIC_KO_DIALOGUE : '') +
-      `\n\n${paperContext(paper)}`,
+      `\n\n${paperContext(paper, cwd)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
   return (
@@ -702,6 +708,7 @@ async function socraticFinal(
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
   language: Language = 'en',
+  cwd?: string,
 ): Promise<{ reply: string; grades: Record<DimName, number> | null }> {
   const text = await chatText({
     provider,
@@ -715,7 +722,7 @@ async function socraticFinal(
       'Return ONLY JSON: {"reply":"...","grades":{"structure":0.0,"concepts":0.0,' +
       '"rationale":0.0}}.' +
       (language === 'ko' ? SOCRATIC_KO_FINAL : '') +
-      `\n\n${paperContext(paper)}`,
+      `\n\n${paperContext(paper, cwd)}`,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
   const grades = parseGrades(text);
@@ -798,7 +805,14 @@ async function handleSocraticMessage(
 
   try {
     if (!isFinal) {
-      const reply = await socraticReply(provider, model, paper, state.history, config.language);
+      const reply = await socraticReply(
+        provider,
+        model,
+        paper,
+        state.history,
+        config.language,
+        cwd,
+      );
       state.history.push({ role: 'assistant', content: reply });
       socraticDialogues.set(questId, state);
       sendJson(res, 200, { reply, done: false });
@@ -811,6 +825,7 @@ async function handleSocraticMessage(
       paper,
       state.history,
       config.language,
+      cwd,
     );
     const sha = shortHeadSha(cwd);
     const now = new Date().toISOString();

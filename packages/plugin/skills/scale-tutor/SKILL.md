@@ -123,6 +123,10 @@ dimension and a concept the junior's diff actually exercised.
   name what breaks if a decision were reversed, or pick the consequence of an
   invariant being violated. The paper's Description and Rationale sections are
   the material for this; its Related Work links are not.
+- **Measured dependencies, when the grounding shows them,** are the setup for a
+  counterfactual — "you changed this; which of these callers notices first?" —
+  and never the answer itself. `which component does this depend on` is the
+  lookup the rule above forbids, made easy.
 - **Exactly 4 options (A–D):** 1 correct + 3 plausible distractors that
   represent REAL misconceptions (e.g. the plausible-but-wrong reading of the
   design, the alternative the paper rejected, the naive assumption the code

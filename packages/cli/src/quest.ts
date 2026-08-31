@@ -18,6 +18,7 @@
  * no-op (stale territory surfaces through the map + re-encounter gates instead).
  */
 import fs from 'node:fs';
+import nodePath from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
@@ -41,6 +42,8 @@ import {
   meanDims,
   resolveInterventionModel,
   paperGrounding,
+  neighbourIndex,
+  type ComponentNeighbours,
   type LlmProvider,
 } from '@scale/core';
 
@@ -73,6 +76,17 @@ export interface QuestGenResult {
   path: string;
   /** Component ids the quests target. */
   components: string[];
+}
+
+/** Read `.scale/map.json`, or null when it is missing/invalid. */
+function readMapJsonSafe(cwd: string): MapJson | null {
+  try {
+    return JSON.parse(
+      fs.readFileSync(nodePath.join(cwd, '.scale', 'map.json'), 'utf8'),
+    ) as MapJson;
+  } catch {
+    return null;
+  }
 }
 
 /** Best-effort short HEAD sha of the repo at `cwd`; '' when not a git repo. */
@@ -185,8 +199,8 @@ export function pickComponents(
  * the two prompts cannot drift apart again, and it now carries the paper's PROSE
  * — the mechanism the generator needs to write a `structure` item at all.
  */
-function groundingText(paper: LoadedPaper): string {
-  return paperGrounding(paper);
+function groundingText(paper: LoadedPaper, neighbours?: ComponentNeighbours): string {
+  return paperGrounding(paper, { neighbours });
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +235,7 @@ async function llmQuizItems(
   model: string,
   paper: LoadedPaper,
   language: Language = 'en',
+  neighbours?: ComponentNeighbours,
 ): Promise<QuestItem[]> {
   const text = await chatText({
     provider,
@@ -250,7 +265,7 @@ async function llmQuizItems(
       {
         role: 'user',
         content:
-          `${groundingText(paper)}\n\n` +
+          `${groundingText(paper, neighbours)}\n\n` +
           'Write exactly 2 multiple-choice items. Return JSON of the form:\n' +
           '{"items":[{"stem":"...","options":["A","B","C","D"],"correctIndex":0,"dim":"concepts"}]}\n' +
           'Rules: exactly 4 options each; correctIndex is 0-3; the correct option must ' +
@@ -301,6 +316,7 @@ async function llmSocraticItems(
   model: string,
   paper: LoadedPaper,
   language: Language = 'en',
+  neighbours?: ComponentNeighbours,
 ): Promise<QuestItem[]> {
   const text = await chatText({
     provider,
@@ -315,7 +331,7 @@ async function llmSocraticItems(
       {
         role: 'user',
         content:
-          `${groundingText(paper)}\n\n` +
+          `${groundingText(paper, neighbours)}\n\n` +
           'Return JSON of the form:\n' +
           '{"seedQuestion":"...","focus":"one sentence naming the concept/rationale to probe"}\n' +
           'The seedQuestion should invite the learner to explain how this component works ' +
@@ -380,24 +396,32 @@ function hashKey(s: string): number {
  * them keyed right and one keyed wrong.
  */
 function pickDistractors(
-  pool: string[],
+  near: string[],
+  far: string[],
   correct: string,
   n: number,
   seedKey: string,
 ): string[] {
   const seen = new Set<string>([correct]);
-  const unique: string[] = [];
-  for (const candidate of pool) {
-    if (seen.has(candidate)) continue;
-    seen.add(candidate);
-    unique.push(candidate);
-  }
-  if (unique.length === 0) return [];
-
-  const start = hashKey(seedKey) % unique.length;
   const out: string[] = [];
-  for (let i = 0; i < unique.length && out.length < n; i++) {
-    out.push(unique[(start + i) % unique.length]!);
+
+  // `near` is exhausted before `far` is touched, so a measured neighbour always
+  // outranks an unrelated component. Each tier is rotated independently — the
+  // rotation exists to stop every component sharing one distractor set, and
+  // rotating the pools together would just scramble the priority back out.
+  for (const tier of [near, far]) {
+    const unique: string[] = [];
+    for (const candidate of tier) {
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      unique.push(candidate);
+    }
+    if (unique.length === 0) continue;
+    const start = hashKey(seedKey) % unique.length;
+    for (let i = 0; i < unique.length && out.length < n; i++) {
+      out.push(unique[(start + i) % unique.length]!);
+    }
+    if (out.length >= n) break;
   }
   return out;
 }
@@ -450,18 +474,37 @@ export function deterministicQuizItems(
   paper: LoadedPaper,
   loaded: LoadedScale,
   language: Language = 'en',
+  neighbours?: ComponentNeighbours,
 ): QuestItem[] {
   const fm = paper.frontmatter;
   const ko = language === 'ko';
   const items: QuestItem[] = [];
 
-  // Distractor pools drawn from OTHER components (grounded but wrong-for-this).
-  const otherConcepts: string[] = [];
-  const otherWhys: string[] = [];
+  // Distractor pools drawn from OTHER components (grounded but wrong-for-this),
+  // with the component's MEASURED 1-hop neighbours first.
+  //
+  // A distractor only discriminates if it is plausible. A concept lifted from an
+  // unrelated province is dismissable on sight, which is how the correct answer
+  // becomes findable as the odd one out without reading anything. Components
+  // that genuinely call into each other are the ones a junior can actually
+  // confuse, so they make the item hard in the way it is supposed to be hard.
+  // With no `depends_on` edges (no graphify extraction distilled) this is empty
+  // and the ordering falls back to the hash rotation, unchanged.
+  const nearIds = new Set([
+    ...(neighbours?.dependsOn ?? []),
+    ...(neighbours?.dependedOnBy ?? []),
+  ]);
+  const nearConcepts: string[] = [];
+  const farConcepts: string[] = [];
+  const nearWhys: string[] = [];
+  const farWhys: string[] = [];
   for (const p of loaded.papers) {
     if (p.id === fm.id) continue;
-    for (const c of p.frontmatter.concepts) otherConcepts.push(c.name);
-    for (const r of p.frontmatter.rationale) if (r.why) otherWhys.push(r.why);
+    const isNear = nearIds.has(p.id);
+    for (const c of p.frontmatter.concepts) (isNear ? nearConcepts : farConcepts).push(c.name);
+    for (const r of p.frontmatter.rationale) {
+      if (r.why) (isNear ? nearWhys : farWhys).push(r.why);
+    }
   }
 
   // Item 1 (concepts): "which concept belongs to this component".
@@ -475,7 +518,7 @@ export function deterministicQuizItems(
           ? `다음 중 "${fm.title}"의 핵심 개념은 무엇인가요?`
           : `Which of these is a core concept of "${fm.title}"?`,
         c.name,
-        pickDistractors(otherConcepts, c.name, 3, `${fm.id}:concepts`),
+        pickDistractors(nearConcepts, farConcepts, c.name, 3, `${fm.id}:concepts`),
         'concepts',
         language,
       ),
@@ -491,7 +534,7 @@ export function deterministicQuizItems(
           ? `"${fm.title}"에서 "${r.decision}"라는 결정은 왜 내려졌을까요?`
           : `In "${fm.title}", why was this decision made — "${r.decision}"?`,
         r.why,
-        pickDistractors(otherWhys, r.why, 3, `${fm.id}:rationale`),
+        pickDistractors(nearWhys, farWhys, r.why, 3, `${fm.id}:rationale`),
         'rationale',
         language,
       ),
@@ -507,7 +550,7 @@ export function deterministicQuizItems(
         mcqItem(
           ko ? `"${fm.title}"가 다루는 개념은 무엇인가요?` : `Which idea does "${fm.title}" cover?`,
           c.name,
-          pickDistractors(otherConcepts, c.name, 3, `${fm.id}:concepts2`),
+          pickDistractors(nearConcepts, farConcepts, c.name, 3, `${fm.id}:concepts2`),
           'concepts',
           language,
         ),
@@ -603,6 +646,8 @@ export async function generateQuests(
   const k = opts.topK ?? DEFAULT_TOP_K;
   const picked = pickComponents(coverage, map, touched, config, k);
   const modality = config.condition.modality;
+  // Measured dependencies, empty when no graphify extraction has been distilled.
+  const neighbours = neighbourIndex(map);
 
   // Try the LLM path once; on any failure (no key, API error) latch to the
   // deterministic fallback for every remaining component.
@@ -620,8 +665,14 @@ export async function generateQuests(
       try {
         items =
           modality === 'quiz'
-            ? await llmQuizItems(provider, model, paper, config.language)
-            : await llmSocraticItems(provider, model, paper, config.language);
+            ? await llmQuizItems(provider, model, paper, config.language, neighbours.get(componentId))
+            : await llmSocraticItems(
+                provider,
+                model,
+                paper,
+                config.language,
+                neighbours.get(componentId),
+              );
         usedLlm = true;
       } catch (err) {
         // Only a MISSING KEY is permanent — retrying it K times is pure latency
@@ -638,7 +689,7 @@ export async function generateQuests(
       usedFallback = true;
       items =
         modality === 'quiz'
-          ? deterministicQuizItems(paper, loaded, config.language)
+          ? deterministicQuizItems(paper, loaded, config.language, neighbours.get(componentId))
           : deterministicSocraticItems(paper, config.language);
     }
     quests.push(makeQuest(componentId, modality, items));
@@ -687,6 +738,11 @@ export async function generateVoluntaryQuest(
   const loaded = loadScaleDir(cwd);
   const paper = paperById(loaded, componentId);
   if (!paper) return null;
+  // Same measured-dependency grounding the post-session path gets. Read from the
+  // frozen map directly: this path does not otherwise need a coverage recompute.
+  const neighbours = readMapJsonSafe(cwd)
+    ? neighbourIndex(readMapJsonSafe(cwd)!).get(componentId)
+    : undefined;
 
   const modality = config.condition.modality;
   let items: QuestItem[] | null = null;
@@ -694,7 +750,7 @@ export async function generateVoluntaryQuest(
   try {
     items =
       modality === 'quiz'
-        ? await llmQuizItems(provider, model, paper, config.language)
+        ? await llmQuizItems(provider, model, paper, config.language, neighbours)
         : await llmSocraticItems(provider, model, paper, config.language);
     via = 'llm';
   } catch {
@@ -703,7 +759,7 @@ export async function generateVoluntaryQuest(
   if (!items || items.length === 0) {
     items =
       modality === 'quiz'
-        ? deterministicQuizItems(paper, loaded, config.language)
+        ? deterministicQuizItems(paper, loaded, config.language, neighbours)
         : deterministicSocraticItems(paper, config.language);
     via = 'fallback';
   }
