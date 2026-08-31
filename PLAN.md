@@ -61,7 +61,7 @@ flowchart LR
     WEB -- reads --> MEM
 ```
 
-Monorepo (pnpm workspaces, TypeScript everywhere):
+Monorepo (npm workspaces, TypeScript everywhere):
 
 ```
 scale/
@@ -73,8 +73,12 @@ scale/
 │   ├── web/         # React + Vite + SVG map app (served by `scale serve`)
 │   └── plugin/      # Claude Code plugin: hooks.json + hook scripts,
 │                    #   skills (scale-map, scale-tutor), commands
-└── pilot/           # pinned fork/clone of the pilot repo (fixed SHA)
+└── scripts/         # build-plugin.mjs (plugin payload), graphify-check.mjs (map audit)
 ```
+
+*A `pilot/` directory was planned to hold a pinned clone of the study's pilot
+repository. It does not exist: the pilot repo is still unpicked, and SCALE is
+currently its own target (`.scale/` in this repo maps this codebase).*
 
 Single language (TS) so CLI, hooks, and web share the schema types in `core`.
 
@@ -125,9 +129,9 @@ Spatial stability is the point of a map (survey knowledge / method-of-loci): lay
 }
 ```
 
-- Layout: d3-force with province clustering, run offline by `scale map layout`, coordinates normalized 0–1.
-- `importance`: dependency-graph centrality × git churn (drives node size and unification weighting).
-- `edges.kind`: `hierarchy` (parent/child) | `reference` (Related Work links).
+- Layout: deterministic seeded placement (per-province sunflower spiral + collision relaxation against fixed neighbours), run offline by `scale map layout`, coordinates normalized 0–1. *Designed as d3-force; the shipped layout has no d3 dependency.*
+- `importance`: normalized in-degree of `reference`/`depends_on` edges — how many papers link to a component (drives node size and unification weighting). *Designed as dependency-graph centrality × git churn; **not implemented** — see `.scale/map/frozen-layout/`.*
+- `edges.kind`: `hierarchy` (parent/child) | `reference` (Related Work links) | `depends_on` (reserved for AST-derived dependencies; no producer yet).
 - Generated artifacts: `map.json` committed; `index.json` (file→component reverse index from all `sources`) regenerated on demand, gitignored.
 
 ### 4.3 Mode B builder — `scale-map` skill (senior side, delegated to Opus)
@@ -230,7 +234,7 @@ Skills: **`scale-map`** (Mode B builder + sync; senior), **`scale-tutor`** (juni
 | 2 | Map viewer (read-only) | `scale serve` + map screen + paper panel; renders hand-seeded coverage.json | pilot repo demoable as a map; castle click → paper | M (2–3d) |
 | 3 | Evidence & state engine | junior hooks (capture only), file→component join, coverage model v1, drift/loyalty | work one real session → map afterwards shows explored territory + review latencies logged; zero perceived latency | M (2–3d) |
 | 4 | In-flow interventions | tutor skill (both modalities), configurable triggers (pre-commit default, post-task opt-in) + budget policy, record→conquest, `/scale-study` voluntary path | budget rules provably honored (≤1/commit, ≤2/session, cooldown, defer=drop, nothing leaks to quest queue); both modalities complete in chat | M (2–3d) |
-| 5 | Post-session interventions + quest runner | quest generation (async), web quest runner (quiz + Socratic via API proxy), rebellion quests, voluntary Challenge (§6.3) | end session → quests on map → complete → territory updates; works on phone via LAN | L (3–4d) |
+| 5 | Post-session interventions + quest runner | quest generation (async), web quest runner (quiz + Socratic via API proxy), ~~rebellion quests~~ (**not built** — the `rebellion` quest origin and the map ring exist, but nothing produces one and `scale map drift` is still a stub), voluntary Challenge (§6.3) | end session → quests on map → complete → territory updates; works on phone via LAN | L (3–4d) |
 | 6 | 2×2 wiring & polish | condition switch end-to-end, interruption audit, seed/demo script, README | all 4 conditions runnable by flipping `config.json`; demo script clean | S–M (1–2d) |
 
 Dependencies: 1→2→(3,4,5 partially parallel)→6. Phases 4 and 5 both depend on 3's state engine and share the tutor's item-generation core.

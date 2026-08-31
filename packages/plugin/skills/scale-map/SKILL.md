@@ -232,10 +232,17 @@ Run the CLI to compute and **freeze** the spatial map:
 scale map layout
 ```
 
-This is deterministic (d3-force with province clustering, coordinates normalized
-0–1) and writes `map.json` with `provinces`, `nodes` (each with `x`, `y`,
-`importance`), and `edges` (`hierarchy` from the folder tree + `reference` from
-Related Work links). `importance` = dependency centrality × git churn.
+This is deterministic — a seeded PRNG keyed off the sorted node ids, a compact
+sunflower spiral per province, then collision relaxation against fixed neighbours;
+coordinates normalized 0–1 — and writes `map.json` with `provinces`, `nodes` (each
+with `x`, `y`, `importance`), and `edges` (`hierarchy` from the folder tree +
+`reference` from Related Work links).
+
+`importance` is the **normalized in-degree of a component's `reference` /
+`depends_on` edges** — how many other papers link *to* it. It is not dependency
+centrality and not git churn: that measure was designed and never built, and the
+component's own paper records why (`.scale/map/frozen-layout/`). Write Related
+Work links because they are true, not to inflate a component's size.
 
 **You never hand-place nodes and never edit `map.json` coordinates.** Spatial
 stability is the entire point of the map (survey knowledge / method-of-loci —

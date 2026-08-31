@@ -60,7 +60,7 @@ Monorepo, TypeScript throughout (npm workspaces), so CLI, hooks, and web share o
 |---|---|
 | **`@scale/core`** | Shared engine: zod schemas, coverage model, paper loader, file→component index, layout, drift, cost estimator. |
 | **`@scale/cli`** | The `scale` CLI wrapping core (also the binary the plugin hooks call). |
-| **`@scale/plugin`** | Claude Code plugin: hooks (capture + commit gate) and `/scale-*` skills/commands. Static, no build step. |
+| **`@scale/plugin`** | Claude Code plugin: hooks (capture + commit gate) and `/scale-*` skills/commands. Ships two **generated, committed** payloads — `bin/scale.mjs` (the bundled CLI) and `web-dist/` — so it stays self-contained; regenerate with `npm run build:plugin`. |
 | **`@scale/web`** | React + Vite + SVG map viewer served by `scale serve`, plus a local JSON API. |
 
 ---
@@ -136,12 +136,17 @@ scale map index                # build .scale/index.json (file → component rev
 scale init --user <label>      # create ~/.scale/<repo-id>/ with a default config.json
 ```
 
-Install the plugin in the repo's `.claude/settings.json` so hooks + `/scale-*` commands
-wire up:
+Install the plugin so hooks + `/scale-*` commands wire up. The repo root ships
+`.claude-plugin/marketplace.json`, so:
 
-```json
-{ "plugins": ["/absolute/path/to/scale/packages/plugin"] }
+```bash
+claude plugin marketplace add /absolute/path/to/scale
+claude plugin install scale@scale-marketplace
 ```
+
+(There is no `plugins` key in `.claude/settings.json`; installing writes
+`enabledPlugins` in `~/.claude/settings.json`. See `packages/plugin/README.md`
+for the release procedure — a plugin update needs a version bump.)
 
 Then work normally in Claude Code:
 
@@ -200,7 +205,7 @@ row at the top, then the rest — same file, same validation, no terminal needed
 | `language` | `en` \| `ko` | Interaction language for everything SCALE says to you — web UI, quiz items, Socratic dialogue, in-flow checks. Code identifiers, file paths, and established dev terms stay English. Default `en`. |
 | `condition.timing` | `inflow` \| `postsession` | Interrupt while working vs. at session end. |
 | `condition.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
-| `inflow.triggers` | `pre-commit`, `post-task` | Which in-flow moments the gate fires on. |
+| `inflow.triggers` | `pre-commit` | Which in-flow moments the gate fires on. The schema also accepts `post-task`, but **nothing implements it** — there is no Stop hook, so enabling it alone yields a silently zero-intervention session. |
 | `budgets.*` | non-negative numbers | Interruption ceiling: per commit, per session, cooldown, minimum changed lines. `0` means "off". |
 | `models.provider` | `anthropic` \| `openai` | Which API serves **interventions**. |
 | `models.intervention` | `sonnet` \| `opus` | Intervention tier; resolves per provider (see table above). |
@@ -252,6 +257,9 @@ web map viewer + JSON API. All four 2×2 condition cells switch by `config.json`
 
 **Not yet**
 
+- **`inflow.triggers: post-task`** — accepted by the schema and shown in the Settings
+  modal, but no Stop hook exists. Turning it on (with `pre-commit` off) produces a
+  session that looks like `inflow` and delivers no interventions.
 - **2×2 study auto-driving** — the tutor runs a check when invoked; nothing fires the
   configured modality automatically on schedule.
 - **Mode A live co-construction** — building the memory alongside the junior in-flow (hook
@@ -261,6 +269,31 @@ web map viewer + JSON API. All four 2×2 condition cells switch by `config.json`
 - **API-dependent paths** — LLM quest generation and the web Socratic proxy need an API key
   (Anthropic or OpenAI); both fall back to deterministic behavior offline (quest generation
   synthesizes items from the paper; the Socratic proxy is unavailable without a key).
+
+---
+
+## Repo tooling
+
+```bash
+npm run build:plugin   # regenerate the plugin payload (bin/scale.mjs + web-dist/)
+npm run check:map      # audit .scale/ against the code — read-only, no API, free
+```
+
+**`check:map`** ([`scripts/graphify-check.mjs`](./scripts/graphify-check.mjs)) is the
+only check that the coverage memory still matches the code. It reports stale anchors
+(what changed since `map.json`'s `builtFromSha`), orphan source files no component
+claims, anchors pointing at files that no longer exist, and double-claimed files. Given
+a [graphify](https://github.com/Graphify-Labs/graphify) extraction it adds link
+precision/recall and cohesion against the AST. It never writes anything.
+
+**`.graphifyignore`** excludes `packages/plugin/bin/` and `web-dist/` from a graphify
+extraction. Those are generated payloads the plugin commits on purpose, so `.gitignore`
+does not cover them; leaving them in supplied 67% of the nodes on the first run and
+double-counted every symbol. Do not delete the file because nothing imports it.
+
+CI ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml)) typechecks and tests on
+Node 20/22, and separately rebuilds the plugin payload and fails if it differs from
+what is committed.
 
 ---
 

@@ -68,8 +68,9 @@ resolves per provider, so switching provider keeps the tier you chose:
 | `sonnet` | `claude-sonnet-5` | `gpt-5.6-terra` |
 | `opus` | `claude-opus-4-8` | `gpt-5.6-sol` |
 
-Set `models.openaiModel` to pin an explicit GPT model id instead. Build tokens map
-to `claude-opus-4-8` / `claude-fable-5`.
+Set `models.openaiModel` to pin an explicit GPT model id instead. There is **no
+build-model config key** — `/scale-map` runs inside a Claude Code session, so the
+build model is whatever that session is on; pick it with `/model` beforehand.
 
 The manipulated **2×2 study condition** lives in the same config:
 
@@ -98,12 +99,12 @@ end is that measurement and the high end is ~1.5× output. Fable's rates are 2×
 Opus's on top of that. Example (this repo):
 
 ```
-repo: 40 files, 6,862 LOC → ~25 components
+repo: 47 files, 11,711 LOC → ~42 components
 
 Build model  est. cost      est. time (single-agent)
 -----------  -------------  ------------------------
-Opus 5       $11.33–$13.59  ~18 min
-Fable 5      $22.67–$27.19  ~18 min
+Opus 5       $19.34–$23.21  ~31 min
+Fable 5      $38.68–$46.41  ~31 min
 ```
 
 **Then build** with the `/scale-map` command (the Mode B skill): Survey (propose
@@ -133,12 +134,19 @@ In the target repo:
 scale init --user <label>   # creates ~/.scale/<repo-id>/ with a default config.json
 ```
 
-Install the SCALE plugin so Claude Code wires the hooks + `/scale-*` commands. In
-the repo's `.claude/settings.json`:
+Install the SCALE plugin so Claude Code wires the hooks + `/scale-*` commands.
+The repo root ships `.claude-plugin/marketplace.json`, so:
 
-```json
-{ "plugins": ["/absolute/path/to/scale/packages/plugin"] }
+```bash
+claude plugin marketplace add /absolute/path/to/scale
+claude plugin install scale@scale-marketplace
 ```
+
+There is no `plugins` key in `.claude/settings.json`; installing writes
+`enabledPlugins` in `~/.claude/settings.json`. Confirm what is actually running
+with `scale --version` — it prints the installed plugin's release, and a number
+behind `packages/plugin/.claude-plugin/plugin.json` means the session is serving
+a stale cache (`packages/plugin/README.md` has the release procedure).
 
 The plugin (see `packages/plugin/README.md`) captures evidence silently
 (SessionStart context, prompt/edit signals) and runs the in-flow commit gate. All
@@ -251,8 +259,9 @@ still get a valid `quests.json`. In-flow conditions generate no quests (a no-op)
 
 Quests appear on the map as pending; you **complete them in the web app** (the
 quest runner POSTs to `/api/quests/:id/complete` or `/api/socratic/:id/message`),
-which records the result and moves the component's coverage. (`scale quest
-complete` on the CLI is not yet implemented — completion is via the web runner.)
+which records the result and moves the component's coverage. `scale quest
+complete <questId> --results '<json>'` does the same from the CLI — both paths
+share one implementation, so either works.
 
 ---
 
@@ -264,7 +273,7 @@ complete` on the CLI is not yet implemented — completion is via the web runner
   defer`, `record`, `coverage recompute`, `estimate`, `map layout|index`, `quest
   generate|list`, `serve`, `reset`.
 - Plugin: all hooks (fail-open) + `/scale-map`, `/scale-status`, `/scale-study`,
-  `/scale-quiz`. (`/scale-status` reports via `scale context`.)
+  `/scale-quiz`. (`/scale-status` reports via `scale status`.)
 - In-flow gate: deterministic deny/allow with budget enforcement + `gate defer`.
 - Interventions: quiz + socratic in chat; post-session quest generation (LLM with
   deterministic fallback); web quest runner (quiz offline; socratic needs an API
@@ -279,7 +288,6 @@ complete` on the CLI is not yet implemented — completion is via the web runner
   flow (the hook infrastructure exists; the mode does not).
 - **Full drift / rebellion detection** — `scale map drift` reports SHAs only;
   per-component source-churn staleness is not yet wired.
-- **`scale quest complete` (CLI)** — a stub; complete quests via the web runner.
 - Senior rationale interviews (schema-ready via `provenance`) and study-logging /
   condition-assignment infra are deferred (`PLAN.md` §11).
 

@@ -433,18 +433,29 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
           <div className="set-row">
             <div className="set-label">{S.set.triggers}</div>
             <div className="set-choices">
-              {(['pre-commit', 'post-task'] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  className={`set-choice${triggers.includes(t) ? ' set-choice-on' : ''}`}
-                  aria-pressed={triggers.includes(t)}
-                  disabled={saving || config.condition.timing !== 'inflow'}
-                  onClick={() => toggleTrigger(t)}
-                >
-                  {t}
-                </button>
-              ))}
+              {(['pre-commit', 'post-task'] as const).map((t) => {
+                // `post-task` is in the schema but has no implementation — there
+                // is no Stop hook, so the gate can never fire on it. Rendering it
+                // as an equal choice lets someone switch off pre-commit, keep a
+                // config that still reads `inflow`, and receive nothing at all.
+                // Until a Stop hook exists it stays visible but inert, so the
+                // deferred trigger is documented rather than silently missing.
+                const unimplemented = t === 'post-task';
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`set-choice${triggers.includes(t) ? ' set-choice-on' : ''}`}
+                    aria-pressed={triggers.includes(t)}
+                    disabled={saving || unimplemented || config.condition.timing !== 'inflow'}
+                    title={unimplemented ? 'Not implemented yet — no Stop hook exists' : undefined}
+                    onClick={() => toggleTrigger(t)}
+                  >
+                    {t}
+                    {unimplemented ? ' (n/a)' : ''}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </section>
