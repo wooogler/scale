@@ -48,6 +48,13 @@ export interface ChatRequest {
   maxTokens?: number;
 }
 
+/**
+ * Wall-clock ceiling for the OpenAI request. Callers on the detached quest path
+ * treat any throw as "fall back to deterministic items", so a bounded failure is
+ * always better than an unbounded wait.
+ */
+const OPENAI_TIMEOUT_MS = 60_000;
+
 /** One chat completion → plain text. Throws MissingKeyError / provider errors. */
 export async function chatText(req: ChatRequest): Promise<string> {
   const apiKey = resolveKey(req.provider);
@@ -55,21 +62,37 @@ export async function chatText(req: ChatRequest): Promise<string> {
   const maxTokens = req.maxTokens ?? 1024;
 
   if (req.provider === 'openai') {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: req.model,
-        max_completion_tokens: maxTokens,
-        messages: [
-          { role: 'system', content: req.system },
-          ...req.messages.map((m) => ({ role: m.role, content: m.content })),
-        ],
-      }),
-    });
+    // The Anthropic branch below inherits the SDK's timeout and retries; this
+    // hand-rolled fetch had neither, so a hung connection left `quest generate`
+    // — which runs DETACHED off SessionEnd — alive indefinitely with no quests
+    // and nobody watching. A bounded failure that falls back beats a live
+    // process that never finishes.
+    let res: Response;
+    try {
+      res = await fetch('https://api.openai.com/v1/chat/completions', {
+        signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: req.model,
+          max_completion_tokens: maxTokens,
+          messages: [
+            { role: 'system', content: req.system },
+            ...req.messages.map((m) => ({ role: m.role, content: m.content })),
+          ],
+        }),
+      });
+    } catch (err) {
+      // AbortSignal.timeout rejects with a TimeoutError DOMException; anything
+      // else here is a transport failure. Either way, name it plainly.
+      const why = (err as Error)?.name === 'TimeoutError'
+        ? `no response in ${OPENAI_TIMEOUT_MS / 1000}s`
+        : ((err as Error)?.message ?? 'network error');
+      throw new Error(`openai request failed: ${why}`);
+    }
     if (!res.ok) {
       // Surface status + a short body slice; never echo the key.
       const body = await res.text().catch(() => '');

@@ -50,8 +50,30 @@ const raw = await readStdin();
 const input = parseHookInput(raw);
 
 // Cheap pre-filter so non-commit Bash calls cost ~nothing (regex only).
+//
+// The git word may be a bare `git` or any path ending in `/git`, and everything
+// between it and `commit` is option noise. The earlier pattern only skipped
+// FLAG-shaped words, so `git -C /repo commit` (the form an agent uses when it is
+// not cd'd into the repo) and `git -c user.name=x commit` both slipped past, as
+// did `/usr/bin/git commit` — the gate simply never fired, and nothing recorded
+// that it hadn't. Options and their detached values are now both skipped, and a
+// leading path is allowed.
+//
+// Only git's own value-taking global options are allowed to swallow a following
+// word; skipping ARBITRARY words instead would match `git log --grep commit`.
+//
+//   (^|[\s;&|(])                    start, or a shell separator
+//   (?:[^\s;&|]*\/)?                optional leading path, e.g. /usr/bin/
+//   git\s+
+//   (?: (-C|-c|--git-dir|…)\s+\S+\s+   a global option AND its detached value
+//     | --?[^\s]+\s+ )*                any other flag-shaped token
+//   commit(?=$|[\s;&|)])            the subcommand, not `commit.template`
+//                                     and not `commit-tree`
 const cmd = String(input?.tool_input?.command ?? "");
-const isGitCommit = /(^|[\s;&|(])git\s+(?:-[^\s]+\s+)*commit\b/.test(cmd);
+const isGitCommit =
+  /(^|[\s;&|(])(?:[^\s;&|]*\/)?git\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace|--exec-path)\s+\S+\s+|--?[^\s]+\s+)*commit(?=$|[\s;&|)])/.test(
+    cmd,
+  );
 if (!isGitCommit) allow();
 
 // Ask the CLI for the policy decision. Contract with `scale gate commit`:

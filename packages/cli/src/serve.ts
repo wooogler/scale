@@ -536,16 +536,32 @@ function clamp01(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fallback;
 }
 
-/** Parse per-dim grades from a model reply; neutral 0.5 default on any gap. */
-function parseGrades(text: string): Record<DimName, number> {
+/**
+ * Parse per-dim grades from a model reply, or `null` when the reply carried no
+ * usable grade at all.
+ *
+ * This used to default every dimension to a neutral 0.5 on a parse failure. That
+ * is not neutral: the caller writes the result as a `socratic_result`, which
+ * EMA-updates all three dimensions and counts toward `minActiveValidations` — so
+ * a model that answered in prose instead of JSON handed the learner a graded,
+ * validation-counting result on no evidence, moving territory toward `validated`.
+ * A missing grade is missing data, and the only honest thing to record is
+ * nothing. A PARTIAL reply still grades: 0.5 fills the gaps only when at least
+ * one dimension was genuinely returned.
+ */
+function parseGrades(text: string): Record<DimName, number> | null {
   let g: Record<string, unknown> = {};
   try {
     const parsed = stripJson(text) as Record<string, unknown>;
     const raw = (parsed.grades ?? parsed) as Record<string, unknown>;
     if (raw && typeof raw === 'object') g = raw;
   } catch {
-    /* neutral defaults below */
+    return null;
   }
+  const graded = (['structure', 'concepts', 'rationale'] as const).filter(
+    (d) => typeof g[d] === 'number' && Number.isFinite(g[d] as number),
+  );
+  if (graded.length === 0) return null;
   return {
     structure: clamp01(g.structure, 0.5),
     concepts: clamp01(g.concepts, 0.5),
@@ -604,7 +620,7 @@ async function socraticFinal(
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
   language: Language = 'en',
-): Promise<{ reply: string; grades: Record<DimName, number> }> {
+): Promise<{ reply: string; grades: Record<DimName, number> | null }> {
   const text = await chatText({
     provider,
     model,
@@ -710,18 +726,29 @@ async function handleSocraticMessage(
     );
     const sha = shortHeadSha(cwd);
     const now = new Date().toISOString();
-    try {
-      await appendEvidence(dir, {
-        type: 'socratic_result',
-        ts: now,
-        user: config.user,
-        componentId: quest.componentId,
-        dims: grades,
-        sha,
-        origin: 'session',
-      });
-    } catch {
-      /* recording is best-effort — still conclude the dialogue */
+    // No parseable grade means no evidence. Conclude the dialogue and mark the
+    // quest done — the learner did the work and must not be asked again — but
+    // record NOTHING, rather than an invented score that would EMA three
+    // dimensions and count as an active validation toward `validated`.
+    if (grades) {
+      try {
+        await appendEvidence(dir, {
+          type: 'socratic_result',
+          ts: now,
+          user: config.user,
+          componentId: quest.componentId,
+          dims: grades,
+          sha,
+          origin: 'session',
+        });
+      } catch {
+        /* recording is best-effort — still conclude the dialogue */
+      }
+    } else {
+      console.warn(
+        `scale serve: socratic grader returned no usable grades for quest ${questId} — ` +
+          'concluding without recording a score.',
+      );
     }
     const updated = quests.map((q) =>
       q.id === questId ? { ...q, status: 'completed' as const } : q,

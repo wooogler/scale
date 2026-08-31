@@ -28025,26 +28025,34 @@ var MissingKeyError = class extends Error {
     this.provider = provider;
   }
 };
+var OPENAI_TIMEOUT_MS = 6e4;
 async function chatText(req) {
   const apiKey = resolveKey(req.provider);
   if (!apiKey) throw new MissingKeyError(req.provider);
   const maxTokens = req.maxTokens ?? 1024;
   if (req.provider === "openai") {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: req.model,
-        max_completion_tokens: maxTokens,
-        messages: [
-          { role: "system", content: req.system },
-          ...req.messages.map((m) => ({ role: m.role, content: m.content }))
-        ]
-      })
-    });
+    let res;
+    try {
+      res = await fetch("https://api.openai.com/v1/chat/completions", {
+        signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: req.model,
+          max_completion_tokens: maxTokens,
+          messages: [
+            { role: "system", content: req.system },
+            ...req.messages.map((m) => ({ role: m.role, content: m.content }))
+          ]
+        })
+      });
+    } catch (err) {
+      const why = err?.name === "TimeoutError" ? `no response in ${OPENAI_TIMEOUT_MS / 1e3}s` : err?.message ?? "network error";
+      throw new Error(`openai request failed: ${why}`);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`openai ${res.status}: ${body.slice(0, 200)}`);
@@ -28181,8 +28189,10 @@ Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be f
     const stem = typeof raw.stem === "string" ? raw.stem : null;
     const options = Array.isArray(raw.options) ? raw.options.filter((o) => typeof o === "string") : [];
     if (!stem || options.length !== 4) continue;
-    let correctIndex = typeof raw.correctIndex === "number" ? raw.correctIndex : 0;
-    if (correctIndex < 0 || correctIndex > 3) correctIndex = 0;
+    const correctIndex = raw.correctIndex;
+    if (typeof correctIndex !== "number" || !Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) {
+      continue;
+    }
     items.push({
       prompt: stem,
       options,
@@ -28231,17 +28241,41 @@ var GENERIC_DISTRACTORS = {
     "\uB354 \uC774\uC0C1 \uC0AC\uC6A9\uB418\uC9C0 \uC54A\uB294(deprecated) \uAE30\uB2A5\uC774\uB2E4"
   ]
 };
-function padDistractors(pool, n, language = "en") {
+function hashKey(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+function pickDistractors(pool, correct, n, seedKey) {
+  const seen = /* @__PURE__ */ new Set([correct]);
+  const unique = [];
+  for (const candidate of pool) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    unique.push(candidate);
+  }
+  if (unique.length === 0) return [];
+  const start = hashKey(seedKey) % unique.length;
+  const out = [];
+  for (let i = 0; i < unique.length && out.length < n; i++) {
+    out.push(unique[(start + i) % unique.length]);
+  }
+  return out;
+}
+function padDistractors(pool, n, language = "en", correct) {
   const generic = GENERIC_DISTRACTORS[language];
   const out = [...pool];
   for (const g of generic) {
     if (out.length >= n) break;
-    if (!out.includes(g)) out.push(g);
+    if (!out.includes(g) && g !== correct) out.push(g);
   }
   return out.slice(0, n);
 }
 function mcqItem(stem, correct, distractors, dim, language = "en") {
-  const opts = [correct, ...padDistractors(distractors, 3, language)].slice(0, 4);
+  const opts = [correct, ...padDistractors(distractors, 3, language, correct)].slice(0, 4);
   const shift = stem.length % 4;
   const rotated = opts.map((_, i) => opts[(i + shift) % 4]);
   const correctIndex = (4 - shift) % 4;
@@ -28270,7 +28304,7 @@ function deterministicQuizItems(paper, loaded, language = "en") {
       mcqItem(
         ko ? `\uB2E4\uC74C \uC911 "${fm.title}"\uC758 \uD575\uC2EC \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which of these is a core concept of "${fm.title}"?`,
         c.name,
-        otherConcepts.length > 0 ? otherConcepts.slice(0, 3) : [],
+        pickDistractors(otherConcepts, c.name, 3, `${fm.id}:concepts`),
         "concepts",
         language
       )
@@ -28282,7 +28316,7 @@ function deterministicQuizItems(paper, loaded, language = "en") {
       mcqItem(
         ko ? `"${fm.title}"\uC5D0\uC11C "${r.decision}"\uB77C\uB294 \uACB0\uC815\uC740 \uC65C \uB0B4\uB824\uC84C\uC744\uAE4C\uC694?` : `In "${fm.title}", why was this decision made \u2014 "${r.decision}"?`,
         r.why,
-        otherWhys.length > 0 ? otherWhys.slice(0, 3) : [],
+        pickDistractors(otherWhys, r.why, 3, `${fm.id}:rationale`),
         "rationale",
         language
       )
@@ -28295,7 +28329,7 @@ function deterministicQuizItems(paper, loaded, language = "en") {
         mcqItem(
           ko ? `"${fm.title}"\uAC00 \uB2E4\uB8E8\uB294 \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which idea does "${fm.title}" cover?`,
           c.name,
-          otherConcepts.slice(0, 3),
+          pickDistractors(otherConcepts, c.name, 3, `${fm.id}:concepts2`),
           "concepts",
           language
         )
@@ -28355,6 +28389,7 @@ async function generateQuests(cwd, opts = {}) {
   const modality = config2.condition.modality;
   let llmDisabled = false;
   let usedLlm = false;
+  let usedFallback = false;
   const quests = [];
   for (const componentId of picked) {
     const paper = paperById(loaded, componentId);
@@ -28364,12 +28399,14 @@ async function generateQuests(cwd, opts = {}) {
       try {
         items = modality === "quiz" ? await llmQuizItems(provider, model, paper, config2.language) : await llmSocraticItems(provider, model, paper, config2.language);
         usedLlm = true;
-      } catch {
-        llmDisabled = true;
+      } catch (err) {
+        if (err instanceof MissingKeyError) llmDisabled = true;
+        usedFallback = true;
         items = null;
       }
     }
     if (!items) {
+      usedFallback = true;
       items = modality === "quiz" ? deterministicQuizItems(paper, loaded, config2.language) : deterministicSocraticItems(paper, config2.language);
     }
     quests.push(makeQuest(componentId, modality, items));
@@ -28381,7 +28418,7 @@ async function generateQuests(cwd, opts = {}) {
   ensureStateDir(dir);
   fs8.writeFileSync(questsPath, JSON.stringify(merged, null, 2) + "\n");
   return {
-    via: usedLlm ? "llm" : "fallback",
+    via: usedLlm ? usedFallback ? "mixed" : "llm" : "fallback",
     model,
     count: quests.length,
     path: questsPath,
@@ -28856,7 +28893,12 @@ function parseGrades(text) {
     const raw = parsed.grades ?? parsed;
     if (raw && typeof raw === "object") g = raw;
   } catch {
+    return null;
   }
+  const graded = ["structure", "concepts", "rationale"].filter(
+    (d) => typeof g[d] === "number" && Number.isFinite(g[d])
+  );
+  if (graded.length === 0) return null;
   return {
     structure: clamp01(g.structure, 0.5),
     concepts: clamp01(g.concepts, 0.5),
@@ -28946,17 +28988,23 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
     );
     const sha = shortHeadSha3(cwd);
     const now = (/* @__PURE__ */ new Date()).toISOString();
-    try {
-      await appendEvidence(dir, {
-        type: "socratic_result",
-        ts: now,
-        user: config2.user,
-        componentId: quest2.componentId,
-        dims: grades,
-        sha,
-        origin: "session"
-      });
-    } catch {
+    if (grades) {
+      try {
+        await appendEvidence(dir, {
+          type: "socratic_result",
+          ts: now,
+          user: config2.user,
+          componentId: quest2.componentId,
+          dims: grades,
+          sha,
+          origin: "session"
+        });
+      } catch {
+      }
+    } else {
+      console.warn(
+        `scale serve: socratic grader returned no usable grades for quest ${questId} \u2014 concluding without recording a score.`
+      );
     }
     const updated = quests.map(
       (q) => q.id === questId ? { ...q, status: "completed" } : q

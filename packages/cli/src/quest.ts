@@ -53,15 +53,17 @@ import {
   readSessionSafe,
 } from './state.js';
 import { recomputeCoverageFromDisk } from './coverage.js';
-import { chatText } from './llm.js';
+import { chatText, MissingKeyError } from './llm.js';
 
 /** Default number of quests generated per post-session run (PLAN §6.2). */
 export const DEFAULT_TOP_K = 3;
 
 export interface QuestGenResult {
-  /** 'llm' when the configured model produced items; 'fallback' when synthesized
-   *  deterministically; 'skip' when the condition is in-flow (no generation). */
-  via: 'llm' | 'fallback' | 'skip';
+  /** 'llm' when the configured model produced every quest; 'fallback' when all
+   *  were synthesized deterministically; 'mixed' when some of each — reporting
+   *  'llm' for a partly-synthesized batch hid that a transient API failure had
+   *  silently downgraded the rest; 'skip' when the condition is in-flow. */
+  via: 'llm' | 'fallback' | 'mixed' | 'skip';
   /** The resolved intervention model id used (or attempted). */
   model: string;
   /** Number of quests written. */
@@ -258,12 +260,25 @@ async function llmQuizItems(
       ? raw.options.filter((o): o is string => typeof o === 'string')
       : [];
     if (!stem || options.length !== 4) continue;
-    let correctIndex = typeof raw.correctIndex === 'number' ? raw.correctIndex : 0;
-    if (correctIndex < 0 || correctIndex > 3) correctIndex = 0;
+    // A malformed index must DROP the item, never default to 0. Defaulting
+    // silently makes option A the key: `"2"` (string) and `4` (1-indexed) both
+    // used to land there, so the junior was graded against an answer the model
+    // never chose, and `2.5` passed the range check and indexed to `undefined`.
+    // Dropping is the same policy the `options.length !== 4` guard above uses,
+    // and an item short of two is caught by the throw below.
+    const correctIndex = raw.correctIndex;
+    if (
+      typeof correctIndex !== 'number' ||
+      !Number.isInteger(correctIndex) ||
+      correctIndex < 0 ||
+      correctIndex > 3
+    ) {
+      continue;
+    }
     items.push({
       prompt: stem,
       options,
-      answer: options[correctIndex],
+      answer: options[correctIndex]!,
       correctIndex,
       dim: asDim(raw.dim, 'concepts'),
     });
@@ -329,13 +344,71 @@ const GENERIC_DISTRACTORS: Record<Language, string[]> = {
   ],
 };
 
-/** Pad `pool` (distractors) to at least `n` with generic fillers. */
-function padDistractors(pool: string[], n: number, language: Language = 'en'): string[] {
+/** FNV-1a over a string — a small deterministic hash for stable pool rotation. */
+function hashKey(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * Choose up to `n` distractors from `pool`, deterministically but DIFFERENTLY
+ * per component.
+ *
+ * The pool is every other component's concepts (or rationale) in paper-load
+ * order, and taking `slice(0, 3)` from it handed 36 of the 37 components a
+ * byte-identical set of options — two distinct distractor sets across the whole
+ * repo. That does not just make items easy; it makes the correct answer findable
+ * as the odd one out without reading anything, while the score is still recorded
+ * as an active validation. Rotating by a hash of the component id keeps the
+ * output reproducible (same paper set → same items) while making the options
+ * actually vary.
+ *
+ * `correct` is excluded so an item can never offer the answer twice — one of
+ * them keyed right and one keyed wrong.
+ */
+function pickDistractors(
+  pool: string[],
+  correct: string,
+  n: number,
+  seedKey: string,
+): string[] {
+  const seen = new Set<string>([correct]);
+  const unique: string[] = [];
+  for (const candidate of pool) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    unique.push(candidate);
+  }
+  if (unique.length === 0) return [];
+
+  const start = hashKey(seedKey) % unique.length;
+  const out: string[] = [];
+  for (let i = 0; i < unique.length && out.length < n; i++) {
+    out.push(unique[(start + i) % unique.length]!);
+  }
+  return out;
+}
+
+/**
+ * Pad `pool` to `n` with generic fillers, never repeating `correct`. Generic
+ * fillers are a last resort — they are recognizably not-an-answer, so an item
+ * that needs them is already weak.
+ */
+function padDistractors(
+  pool: string[],
+  n: number,
+  language: Language = 'en',
+  correct?: string,
+): string[] {
   const generic = GENERIC_DISTRACTORS[language];
   const out = [...pool];
   for (const g of generic) {
     if (out.length >= n) break;
-    if (!out.includes(g)) out.push(g);
+    if (!out.includes(g) && g !== correct) out.push(g);
   }
   return out.slice(0, n);
 }
@@ -348,7 +421,7 @@ function mcqItem(
   dim: DimName,
   language: Language = 'en',
 ): QuestItem {
-  const opts = [correct, ...padDistractors(distractors, 3, language)].slice(0, 4);
+  const opts = [correct, ...padDistractors(distractors, 3, language, correct)].slice(0, 4);
   // Deterministic rotation so the answer isn't always 'A' (seed off the stem).
   // ko and en stems differ in length, so the rotation may differ per language —
   // fine: `answer`/`correctIndex` are derived together and stay consistent.
@@ -393,7 +466,7 @@ export function deterministicQuizItems(
           ? `다음 중 "${fm.title}"의 핵심 개념은 무엇인가요?`
           : `Which of these is a core concept of "${fm.title}"?`,
         c.name,
-        otherConcepts.length > 0 ? otherConcepts.slice(0, 3) : [],
+        pickDistractors(otherConcepts, c.name, 3, `${fm.id}:concepts`),
         'concepts',
         language,
       ),
@@ -409,7 +482,7 @@ export function deterministicQuizItems(
           ? `"${fm.title}"에서 "${r.decision}"라는 결정은 왜 내려졌을까요?`
           : `In "${fm.title}", why was this decision made — "${r.decision}"?`,
         r.why,
-        otherWhys.length > 0 ? otherWhys.slice(0, 3) : [],
+        pickDistractors(otherWhys, r.why, 3, `${fm.id}:rationale`),
         'rationale',
         language,
       ),
@@ -425,7 +498,7 @@ export function deterministicQuizItems(
         mcqItem(
           ko ? `"${fm.title}"가 다루는 개념은 무엇인가요?` : `Which idea does "${fm.title}" cover?`,
           c.name,
-          otherConcepts.slice(0, 3),
+          pickDistractors(otherConcepts, c.name, 3, `${fm.id}:concepts2`),
           'concepts',
           language,
         ),
@@ -526,6 +599,7 @@ export async function generateQuests(
   // deterministic fallback for every remaining component.
   let llmDisabled = false;
   let usedLlm = false;
+  let usedFallback = false;
 
   const quests: Quest[] = [];
   for (const componentId of picked) {
@@ -540,12 +614,19 @@ export async function generateQuests(
             ? await llmQuizItems(provider, model, paper, config.language)
             : await llmSocraticItems(provider, model, paper, config.language);
         usedLlm = true;
-      } catch {
-        llmDisabled = true; // latch: no key / API error → fallback for the rest
+      } catch (err) {
+        // Only a MISSING KEY is permanent — retrying it K times is pure latency
+        // for a guaranteed failure, so latch and synthesize the rest. Everything
+        // else (a 429, a socket reset, one unparseable reply) is per-request:
+        // latching on those let a single transient error downgrade the whole
+        // batch to the deterministic fallback, which is the weakest path here.
+        if (err instanceof MissingKeyError) llmDisabled = true;
+        usedFallback = true;
         items = null;
       }
     }
     if (!items) {
+      usedFallback = true;
       items =
         modality === 'quiz'
           ? deterministicQuizItems(paper, loaded, config.language)
@@ -564,7 +645,7 @@ export async function generateQuests(
   fs.writeFileSync(questsPath, JSON.stringify(merged, null, 2) + '\n');
 
   return {
-    via: usedLlm ? 'llm' : 'fallback',
+    via: usedLlm ? (usedFallback ? 'mixed' : 'llm') : 'fallback',
     model,
     count: quests.length,
     path: questsPath,
