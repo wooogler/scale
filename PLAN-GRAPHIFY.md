@@ -401,3 +401,45 @@ graphify에게는 그냥 소스로 보인다. 이미 진짜 소스로 그래프�
 - Stale 20개 컴포넌트 중 churn 상위부터 paper 갱신
 - `scale map layout` + `builtFromSha` 재스탬프
 - 수용 기준: `npm run check:map`에서 **CODE tier 고아 0, 죽은 앵커 0**
+
+---
+
+## 10. P1 실행 결과 (2026-08-30)
+
+### 10.1 완료
+
+| 항목 | 상태 |
+|---|---|
+| P1.1 `scripts/distill-graph.mjs` | ✅ `npm run distill` |
+| P1.2 `scale map layout`의 deps.json 병합 | ✅ `packages/cli/src/deps.ts` |
+| P1.4 layout 재실행 → importance 갱신 | ✅ 좌표 0개 이동 |
+| P1.5 SKILL/PLAN의 importance 공식 오류 | ✅ (커밋 `1887f49`) |
+| P1.6 테스트 | ✅ 7건 (선택성 불변식 포함) |
+| **P1.3 symbols.json** | ⏸ **보류** — 유일한 소비자인 `UserPromptSubmit` 훅이 꺼져 있음. 플러그인을 다시 켤 때 진행 |
+
+### 10.2 측정값
+
+```
+AST 엣지 1201 (노드 680) → 컴포넌트 쌍 79 → 임계(≥2) 통과 76
+map.json edges: reference 324 + depends_on 76
+importance      mean 0.547 → 0.450   sd 0.184 → 0.197   min 0.19 → 0.13
+```
+
+`state-directory`가 상위 5위로 진입 — Related Work 링크는 중간(9)인데 **실제 인바운드 의존이 9개**입니다. 반대로 `app-shell`·`map-canvas`·`build-cost-estimator`는 dep=0으로 하위로 내려갔습니다.
+
+### 10.3 지켜진 불변식 (전부 실측 검증)
+
+1. **선택성** — `deps.json`이 없으면 graphify 도입 **이전 map과 0개 노드 차이**. 있으면 재실행 시 byte-identical.
+2. **좌표 동결** — 증분 layout에서 이동 노드 0개. 바뀐 건 `importance`뿐.
+3. **baseline 불가침** — `check:map`은 `kind === 'reference'`만 세므로 `depends_on` 추가가 정밀도를 부풀리지 못함. **precision 24.6% / recall 68.0% 그대로.**
+
+### 10.4 남은 것
+
+- **P1.3** (symbols.json) — 플러그인 재활성화 시
+- **P0.5** (`/scale-map` 싱크) — §9.5대로 **측정된 개입**으로 나중에. 지금 돌리면 24.6% baseline이 사라짐
+- **P2 그래프 절반** — `groundingText()`에 `depends_on` 이웃 블록. 이제 map.json에 엣지가 있으므로 **차단 해제됨** (P2의 나머지는 커밋 `c3c95c5`에서 완료)
+- **P3** — 드롭 (§3 참조)
+
+### 10.5 freeze 제약 — 이제부터 적용
+
+`importance`가 바뀌면 게이트 후보 랭킹과 quest 선정이 바뀝니다(§2-2). 이 커밋으로 그 변경은 끝났습니다. **스터디 참가자가 돌기 시작하면 `deps.json`·`map.json`의 엣지 집합을 더 이상 건드리지 마세요.**
