@@ -1336,3 +1336,20 @@ body {
     min-width: 0;
   }
 }
+
+/* Demo-data banner (dev builds only — see data.ts SAMPLE_FALLBACK_ALLOWED).
+   Loud on purpose: a fabricated map that looks like the user's own repo makes
+   every screenshot of it untrustworthy. */
+.sample-banner {
+  padding: 0.6rem 1rem;
+  background: #7a2d2d;
+  color: #ffe9e9;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  border-bottom: 1px solid #a33;
+}
+.sample-banner code {
+  background: rgba(0, 0, 0, 0.28);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+}

@@ -55,7 +55,40 @@ interface DialogueTurn {
   content: string;
 }
 /** In-memory socratic dialogue state, keyed by quest id (server-side, §7.3). */
-const socraticDialogues = new Map<string, { history: DialogueTurn[]; userTurns: number }>();
+/**
+ * In-flight Socratic dialogues, keyed by quest id.
+ *
+ * Deliberately in memory: a dialogue is one sitting, and the graded result is
+ * what gets persisted. But it is only ever deleted on a SUCCESSFUL final
+ * exchange, so an abandoned dialogue — the learner closed the tab, or the model
+ * errored on the last turn — used to sit here for the life of the process. TTL
+ * and cap mirror `pending-edits.json`, which bounds the same kind of state.
+ */
+interface DialogueState {
+  history: DialogueTurn[];
+  userTurns: number;
+  touchedAt: number;
+}
+const socraticDialogues = new Map<string, DialogueState>();
+
+/** A dialogue untouched for this long is abandoned. */
+const DIALOGUE_TTL_MS = 60 * 60 * 1000;
+/** Hard cap so a long-lived server cannot accumulate without bound. */
+const DIALOGUE_MAX = 32;
+
+/** Drop expired dialogues, then the oldest ones over the cap. */
+function pruneDialogues(now: number): void {
+  for (const [id, state] of socraticDialogues) {
+    if (now - state.touchedAt > DIALOGUE_TTL_MS) socraticDialogues.delete(id);
+  }
+  if (socraticDialogues.size <= DIALOGUE_MAX) return;
+  const oldestFirst = [...socraticDialogues.entries()].sort(
+    (a, b) => a[1].touchedAt - b[1].touchedAt,
+  );
+  for (const [id] of oldestFirst.slice(0, socraticDialogues.size - DIALOGUE_MAX)) {
+    socraticDialogues.delete(id);
+  }
+}
 
 /** Best-effort short HEAD sha of the repo at `cwd`; '' when not a git repo. */
 function shortHeadSha(cwd: string): string {
@@ -131,19 +164,55 @@ const MIME: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 };
 
-/** Permissive CORS so the local vite dev origin can POST to the API. */
-const CORS_HEADERS: Record<string, string> = {
-  'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type',
-};
+/**
+ * Is this request's `Origin` one we serve?
+ *
+ * The API had `access-control-allow-origin: *` on an unauthenticated server
+ * whose POST endpoints write config and API keys — and `~/.scale/keys.json` is
+ * USER-GLOBAL, so one page overwrote the key for every repo, not just this one.
+ * The wildcard was never needed either: `vite dev` proxies `/api` server-side
+ * (vite.config.ts) and the production build is served by this process at the
+ * same origin, so no browser ever makes a cross-origin request here.
+ *
+ * Absent `Origin` means a non-browser client (curl, a test, the CLI); browsers
+ * always send it cross-origin, including on the "simple" POSTs that skip
+ * preflight — which is why blocking the RESPONSE is not enough on its own and
+ * this is enforced before the handler runs.
+ */
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  let host: string;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return false; // including the literal "null" origin of a sandboxed frame
+  }
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+}
+
+/**
+ * Echo an allowed origin back, once per request, so every later `writeHead`
+ * inherits it (Node merges previously-set headers). The origin is echoed rather
+ * than wildcarded so the set stays closed, and `Vary` keeps a cache from serving
+ * one origin's response to another.
+ *
+ * This only matters for a loopback page that reaches the API directly — `vite
+ * preview` on its own port. The usual dev path proxies `/api` server-side and
+ * the production build is same-origin, so neither sends an `Origin` at all.
+ */
+function applyCors(res: http.ServerResponse, origin: string | undefined): void {
+  if (!origin) return;
+  res.setHeader('access-control-allow-origin', origin);
+  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('access-control-allow-headers', 'content-type');
+  res.setHeader('vary', 'Origin');
+}
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(json),
-    ...CORS_HEADERS,
   });
   res.end(json);
 }
@@ -246,9 +315,22 @@ async function handle(
   const url = req.url ?? '/';
   const pathname = url.split('?')[0] ?? '/';
 
-  // CORS preflight for the POST API (local vite dev origin).
+  const origin = req.headers.origin;
+  const originAllowed = isAllowedOrigin(origin);
+  // Refuse a cross-origin request outright rather than merely withholding the
+  // response headers: a simple POST is delivered and its side effect happens
+  // before the browser ever inspects them.
+  if (!originAllowed) {
+    res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'cross-origin request refused' }));
+    return;
+  }
+  applyCors(res, origin);
+
+  // CORS preflight — only ever reached for an origin we serve; a refused one
+  // returned 403 above.
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, CORS_HEADERS);
+    res.writeHead(204);
     res.end();
     return;
   }
@@ -683,7 +765,13 @@ async function handleSocraticMessage(
   const model = resolveInterventionModel(config.models);
   const paper = paperById(loadScaleDir(cwd), quest.componentId);
 
-  const state = socraticDialogues.get(questId) ?? { history: [], userTurns: 0 };
+  pruneDialogues(Date.now());
+  const state: DialogueState = socraticDialogues.get(questId) ?? {
+    history: [],
+    userTurns: 0,
+    touchedAt: Date.now(),
+  };
+  state.touchedAt = Date.now();
   state.history.push({ role: 'user', content: message });
   state.userTurns++;
   const isFinal = state.userTurns >= SOCRATIC_MAX_EXCHANGES;
@@ -800,6 +888,25 @@ export function startServer(opts: ServeOptions): http.Server {
     handle(req, res, cwd).catch((err) => {
       sendJson(res, 500, { error: (err as Error).message });
     });
+  });
+  // Without this, EADDRINUSE — the single most common failure here — surfaces as
+  // a seven-frame node:net stack trace and looks like a crash.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `scale: port ${opts.port} is already in use on ${host}. ` +
+          `Another \`scale serve\` is probably running — stop it, or pick another port ` +
+          `with \`scale serve -p ${opts.port + 1}\`.`,
+      );
+    } else if (err.code === 'EACCES') {
+      console.error(
+        `scale: not allowed to bind ${host}:${opts.port} (ports below 1024 need root). ` +
+          'Pick a higher port with `scale serve -p 4318`.',
+      );
+    } else {
+      console.error(`scale: could not start the server — ${err.message}`);
+    }
+    process.exitCode = 1;
   });
   server.listen(opts.port, host, () => {
     const scalePresent = fs.existsSync(path.join(cwd, '.scale'));

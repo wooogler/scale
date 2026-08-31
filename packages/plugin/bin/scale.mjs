@@ -28664,6 +28664,20 @@ function finishCompletion(cwd, dir, quests, questId, componentId, recorded) {
 // packages/cli/src/serve.ts
 var SOCRATIC_MAX_EXCHANGES = 3;
 var socraticDialogues = /* @__PURE__ */ new Map();
+var DIALOGUE_TTL_MS = 60 * 60 * 1e3;
+var DIALOGUE_MAX = 32;
+function pruneDialogues(now) {
+  for (const [id, state] of socraticDialogues) {
+    if (now - state.touchedAt > DIALOGUE_TTL_MS) socraticDialogues.delete(id);
+  }
+  if (socraticDialogues.size <= DIALOGUE_MAX) return;
+  const oldestFirst = [...socraticDialogues.entries()].sort(
+    (a, b) => a[1].touchedAt - b[1].touchedAt
+  );
+  for (const [id] of oldestFirst.slice(0, socraticDialogues.size - DIALOGUE_MAX)) {
+    socraticDialogues.delete(id);
+  }
+}
 function shortHeadSha3(cwd) {
   try {
     return execFileSync4("git", ["rev-parse", "--short", "HEAD"], {
@@ -28717,17 +28731,28 @@ var MIME = {
   ".woff2": "font/woff2",
   ".map": "application/json; charset=utf-8"
 };
-var CORS_HEADERS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
-  "access-control-allow-headers": "content-type"
-};
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  let host;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+}
+function applyCors(res, origin) {
+  if (!origin) return;
+  res.setHeader("access-control-allow-origin", origin);
+  res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+  res.setHeader("access-control-allow-headers", "content-type");
+  res.setHeader("vary", "Origin");
+}
 function sendJson(res, status, body) {
   const json = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
-    "content-length": Buffer.byteLength(json),
-    ...CORS_HEADERS
+    "content-length": Buffer.byteLength(json)
   });
   res.end(json);
 }
@@ -28806,8 +28831,16 @@ async function handle(req, res, cwd) {
   const dir = stateDir(cwd);
   const url = req.url ?? "/";
   const pathname = url.split("?")[0] ?? "/";
+  const origin = req.headers.origin;
+  const originAllowed = isAllowedOrigin(origin);
+  if (!originAllowed) {
+    res.writeHead(403, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ error: "cross-origin request refused" }));
+    return;
+  }
+  applyCors(res, origin);
   if (req.method === "OPTIONS") {
-    res.writeHead(204, CORS_HEADERS);
+    res.writeHead(204);
     res.end();
     return;
   }
@@ -29072,7 +29105,13 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
   const provider = config2.models.provider;
   const model = resolveInterventionModel(config2.models);
   const paper = paperById(loadScaleDir(cwd), quest2.componentId);
-  const state = socraticDialogues.get(questId) ?? { history: [], userTurns: 0 };
+  pruneDialogues(Date.now());
+  const state = socraticDialogues.get(questId) ?? {
+    history: [],
+    userTurns: 0,
+    touchedAt: Date.now()
+  };
+  state.touchedAt = Date.now();
   state.history.push({ role: "user", content: message });
   state.userTurns++;
   const isFinal = state.userTurns >= SOCRATIC_MAX_EXCHANGES;
@@ -29153,6 +29192,20 @@ function startServer(opts) {
     handle(req, res, cwd).catch((err) => {
       sendJson(res, 500, { error: err.message });
     });
+  });
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `scale: port ${opts.port} is already in use on ${host}. Another \`scale serve\` is probably running \u2014 stop it, or pick another port with \`scale serve -p ${opts.port + 1}\`.`
+      );
+    } else if (err.code === "EACCES") {
+      console.error(
+        `scale: not allowed to bind ${host}:${opts.port} (ports below 1024 need root). Pick a higher port with \`scale serve -p 4318\`.`
+      );
+    } else {
+      console.error(`scale: could not start the server \u2014 ${err.message}`);
+    }
+    process.exitCode = 1;
   });
   server.listen(opts.port, host, () => {
     const scalePresent = fs9.existsSync(path9.join(cwd, ".scale"));

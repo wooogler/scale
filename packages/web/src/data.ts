@@ -9,10 +9,6 @@ import type {
   LlmProvider,
   ScaleConfig,
 } from '@scale/core/browser';
-import { sampleMap } from './sample/map.js';
-import { sampleCoverage } from './sample/coverage.js';
-import { samplePapers } from './sample/papers.js';
-import { sampleQuests } from './sample/quests.js';
 
 /**
  * Data layer (PLAN §7.3). The viewer normally reads LIVE data from the
@@ -21,9 +17,17 @@ import { sampleQuests } from './sample/quests.js';
  * relative fetch just works; in `vite dev` a proxy (vite.config.ts) forwards
  * `/api/*` to the serve port.
  *
- * On ANY fetch failure (e.g. running `vite dev` with no server up) each loader
- * FALLS BACK to the bundled hand-seeded sample data, so the UI still renders
- * for standalone dev. A console note is logged when that happens.
+ * On a fetch failure each loader can fall back to bundled hand-seeded sample
+ * data so the UI still renders for standalone `vite dev`. That fallback is
+ * restricted to DEV BUILDS and announced through {@link sampleDataActive}.
+ *
+ * It used to apply everywhere, silently: a repo with no `.scale/` — or a server
+ * that had stopped — rendered a complete, interactive map of a DIFFERENT,
+ * invented codebase, with coverage numbers and answerable quiz items, behind
+ * nothing but a `console.warn`. No screenshot or participant report of the map
+ * was trustworthy without opening the console first. A production build now
+ * fails loudly instead, and a dev build says on screen that what you are
+ * looking at is not your repo.
  */
 
 /** Shape returned by GET /api/paper/:id (frontmatter + markdown body). */
@@ -61,12 +65,47 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Whether the bundled demo fixtures may stand in for live data.
+ *
+ * Vite replaces `import.meta.env.DEV` at build time, so a production bundle —
+ * the one `scale serve` ships and the only one a study participant sees — has
+ * this permanently false and the fixtures tree-shake away.
+ */
+const SAMPLE_FALLBACK_ALLOWED = import.meta.env.DEV;
+
+let sampleActive = false;
+
+/**
+ * True once any loader has served demo fixtures. The shell renders a banner on
+ * this: fabricated data must never be mistakable for the user's own repo.
+ */
+export function sampleDataActive(): boolean {
+  return sampleActive;
+}
+
+/**
+ * Announce a failed load. In a production build the error is rethrown by the
+ * caller — showing invented data is worse than showing an error.
+ */
 function note(what: string, err: unknown): void {
   // eslint-disable-next-line no-console
-  console.warn(
-    `[SCALE] live ${what} unavailable, falling back to bundled sample data.`,
-    err,
-  );
+  console.warn(`[SCALE] live ${what} unavailable.`, err);
+}
+
+/**
+ * Guard every fixture fallback: allowed only in dev, and never silent.
+ *
+ * The fixtures arrive through a DYNAMIC import so they are not part of the main
+ * bundle and are never fetched in a production build. Passing the data as an
+ * argument instead would evaluate it eagerly and defeat that — the demo map
+ * would ship to every participant, one edit away from being rendered.
+ */
+async function useSample<T>(what: string, err: unknown, load: () => Promise<T>): Promise<T> {
+  note(what, err);
+  if (!SAMPLE_FALLBACK_ALLOWED) throw err;
+  sampleActive = true;
+  return load();
 }
 
 /** GET /api/map -> MapJson. Falls back to the bundled sample map. */
@@ -74,8 +113,7 @@ export async function loadMap(): Promise<MapJson> {
   try {
     return await getJson<MapJson>('/api/map');
   } catch (err) {
-    note('map', err);
-    return sampleMap;
+    return useSample('map', err, async () => (await import('./sample/map.js')).sampleMap);
   }
 }
 
@@ -84,8 +122,11 @@ export async function loadCoverage(): Promise<UserCoverage> {
   try {
     return await getJson<UserCoverage>('/api/coverage');
   } catch (err) {
-    note('coverage', err);
-    return sampleCoverage;
+    return useSample(
+      'coverage',
+      err,
+      async () => (await import('./sample/coverage.js')).sampleCoverage,
+    );
   }
 }
 
@@ -97,9 +138,10 @@ export async function loadPaper(id: string): Promise<PaperResponse | null> {
   try {
     return await getJson<PaperResponse>(`/api/paper/${encodeURIComponent(id)}`);
   } catch (err) {
-    note(`paper ${id}`, err);
-    const s = samplePapers[id];
-    return s ? { frontmatter: s.frontmatter, body: s.body } : null;
+    return useSample(`paper ${id}`, err, async () => {
+      const s = (await import('./sample/papers.js')).samplePapers[id];
+      return s ? { frontmatter: s.frontmatter, body: s.body } : null;
+    });
   }
 }
 
@@ -111,8 +153,7 @@ export async function loadQuests(): Promise<Quest[]> {
   try {
     return await getJson<Quest[]>('/api/quests');
   } catch (err) {
-    note('quests', err);
-    return sampleQuests;
+    return useSample('quests', err, async () => (await import('./sample/quests.js')).sampleQuests);
   }
 }
 
@@ -265,8 +306,12 @@ export async function createVoluntaryQuest(
     const r = await postJson<{ quest: Quest }>('/api/quests', { componentId });
     return r.quest ?? null;
   } catch (err) {
+    // Same rule as every other fixture path: a production build must fail rather
+    // than hand the learner an invented quiz whose score it cannot record.
     note(`voluntary quest for ${componentId}`, err);
-    const paper = samplePapers[componentId];
+    if (!SAMPLE_FALLBACK_ALLOWED) throw err;
+    sampleActive = true;
+    const paper = (await import('./sample/papers.js')).samplePapers[componentId];
     const concepts = paper?.frontmatter.concepts ?? [];
     const t = OFFLINE_MCQ[language];
     const items = concepts.slice(0, 2).map((c, i) => {

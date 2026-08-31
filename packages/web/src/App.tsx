@@ -6,7 +6,7 @@ import { QuestRunner } from './QuestRunner.js';
 import { Settings } from './Settings.js';
 import { SKIN } from './skin.js';
 import { LangContext, STRINGS } from './i18n.js';
-import { loadMap, loadCoverage, loadQuests, loadSettings } from './data.js';
+import { loadMap, loadCoverage, loadQuests, loadSettings, sampleDataActive } from './data.js';
 import type {
   CoverageState,
   Language,
@@ -26,6 +26,10 @@ const LEGEND_ORDER: CoverageState[] = ['fog', 'explored', 'validated', 'stale'];
  * state engine arrive in later phases.
  */
 export function App(): JSX.Element {
+  // Dev-only: true once any loader fell back to bundled demo fixtures. Rendered
+  // as a banner because a fabricated map is otherwise indistinguishable from the
+  // user's own repo — which made every screenshot of it untrustworthy.
+  const [usingSample, setUsingSample] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [map, setMap] = useState<MapJson | null>(null);
   const [coverage, setCoverage] = useState<UserCoverage | null>(null);
@@ -61,6 +65,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     void Promise.all([loadMap(), loadCoverage(), loadQuests()]).then(([m, c, q]) => {
+      setUsingSample(sampleDataActive());
       if (cancelled) return;
       setMap(m);
       setCoverage(c);
@@ -135,6 +140,13 @@ export function App(): JSX.Element {
   return (
     <LangContext.Provider value={lang}>
       <div className="app">
+        {usingSample ? (
+          <div className="sample-banner" role="status">
+            <strong>Demo data.</strong> The live API is unreachable, so this map is
+            bundled sample content — <em>not</em> your repository. Start{' '}
+            <code>scale serve</code> in the repo you want to see.
+          </div>
+        ) : null}
         <header className="header">
           <div className="brand">
             <span className="brand-mark">◆</span>
