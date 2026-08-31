@@ -29,6 +29,7 @@ import {
   type DimName,
   type LlmProvider,
   type LoadedPaper,
+  paperGrounding,
 } from '@scale/core';
 
 import {
@@ -520,11 +521,9 @@ async function handleKeySet(req: http.IncomingMessage, res: http.ServerResponse)
 /** Component-paper grounding for the socratic system prompt. */
 function paperContext(paper: LoadedPaper | undefined): string {
   if (!paper) return 'No component paper is available; keep the dialogue general but rigorous.';
-  const fm = paper.frontmatter;
-  const concepts = fm.concepts.map((c) => `- ${c.name}`).join('\n') || '- (none)';
-  const rationale =
-    fm.rationale.map((r) => `- ${r.decision}${r.why ? ` — ${r.why}` : ''}`).join('\n') || '- (none)';
-  return `Component: ${fm.title}\n\nConcepts:\n${concepts}\n\nRationale:\n${rationale}`;
+  // Shared with quest generation. This path used to drop `alternatives` — the
+  // exact material the rationale rubric's top band asks the junior to explain.
+  return paperGrounding(paper);
 }
 
 /** Strip ```json fences and parse; throws on failure. */

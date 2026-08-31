@@ -27146,6 +27146,46 @@ function componentSourcesIndex(loaded) {
   }));
 }
 
+// packages/core/dist/grounding.js
+var DEFAULT_MAX_BODY_CHARS = 16e3;
+function withoutRelatedWork(body) {
+  return body.replace(/^##\s*Related Work\b[\s\S]*?(?=^##\s|\Z)/gim, "").trim();
+}
+function paperGrounding(paper, opts = {}) {
+  const { includeBody = true, maxBodyChars = DEFAULT_MAX_BODY_CHARS } = opts;
+  const fm = paper.frontmatter;
+  const concepts = fm.concepts.map((c) => `- ${c.name} (id: ${c.id})`).join("\n") || "- (none)";
+  const rationale = fm.rationale.map((r) => {
+    const bits = [`decision: ${r.decision}`];
+    if (r.why)
+      bits.push(`why: ${r.why}`);
+    if (r.alternatives)
+      bits.push(`alternatives: ${r.alternatives}`);
+    return `- ${bits.join(" | ")}`;
+  }).join("\n") || "- (none)";
+  const parts = [
+    `Component: ${fm.title} (id: ${fm.id})`,
+    `
+Concepts:
+${concepts}`,
+    `
+Rationale:
+${rationale}`
+  ];
+  if (includeBody) {
+    const prose = withoutRelatedWork(paper.body);
+    if (prose) {
+      const clipped = prose.length > maxBodyChars ? `${prose.slice(0, maxBodyChars)}
+
+[paper truncated]` : prose;
+      parts.push(`
+Paper (prose \u2014 how it works and why):
+${clipped}`);
+    }
+  }
+  return parts.join("\n");
+}
+
 // packages/core/dist/layout.js
 var MIN_DIST = 0.045;
 var BOUND_LO = 0.06;
@@ -28237,21 +28277,7 @@ function pickComponents(coverage2, map2, touched, config2, k) {
   return [...scored].sort((a, b) => a.mean - b.mean || b.importance - a.importance).slice(0, k).map((s) => s.id);
 }
 function groundingText(paper) {
-  const fm = paper.frontmatter;
-  const concepts = fm.concepts.map((c) => `- ${c.name} (id: ${c.id})`).join("\n") || "- (none)";
-  const rationale = fm.rationale.map((r) => {
-    const bits = [`decision: ${r.decision}`];
-    if (r.why) bits.push(`why: ${r.why}`);
-    if (r.alternatives) bits.push(`alternatives: ${r.alternatives}`);
-    return `- ${bits.join(" | ")}`;
-  }).join("\n") || "- (none)";
-  return `Component: ${fm.title} (id: ${fm.id})
-
-Concepts:
-${concepts}
-
-Rationale:
-${rationale}`;
+  return paperGrounding(paper);
 }
 function parseJsonLoose(text) {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
@@ -28268,7 +28294,7 @@ async function llmQuizItems(provider, model, paper, language = "en") {
     provider,
     model,
     maxTokens: 1024,
-    system: 'You write multiple-choice comprehension items for a code-onboarding tutor. Ground every item strictly in the provided component paper (its concepts and rationale). Each item tags the comprehension dimension it probes: "structure" (how the component is built), "concepts" (its named ideas), or "rationale" (why it was designed that way). Return ONLY JSON, no prose.' + (language === "ko" ? KO_ITEM_INSTRUCTION : ""),
+    system: 'You write multiple-choice comprehension items for a code-onboarding tutor. Ground every item strictly in the provided component paper \u2014 its concepts, its rationale, and its prose. Each item tags the comprehension dimension it probes: "structure" (how the component is built \u2014 its moving parts, its data and control flow, its invariants), "concepts" (its named ideas), or "rationale" (why it was designed that way, and what the rejected alternatives would have cost). NEVER write a lookup item: nothing whose answer is a name, a file, or a restatement that could be found by searching the paper for a word in the question. An item must require reasoning ABOUT the mechanism \u2014 predict a behavior in a new case, identify what breaks if a decision were reversed, or pick the consequence of an invariant being violated. Distractors must be real misconceptions: the plausible-but-wrong reading of the design, or the alternative the paper explicitly rejected. Return ONLY JSON, no prose.' + (language === "ko" ? KO_ITEM_INSTRUCTION : ""),
     messages: [
       {
         role: "user",
@@ -28276,7 +28302,7 @@ async function llmQuizItems(provider, model, paper, language = "en") {
 
 Write exactly 2 multiple-choice items. Return JSON of the form:
 {"items":[{"stem":"...","options":["A","B","C","D"],"correctIndex":0,"dim":"concepts"}]}
-Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be faithful to the paper; distractors plausible but wrong; prefer one "concepts" item and one "rationale" item.`
+Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be faithful to the paper; distractors plausible but wrong, and similar in length and register so none is a giveaway. Vary the dimension across the two items \u2014 do not write two of the same kind.`
       }
     ]
   });
@@ -28968,16 +28994,7 @@ async function handleKeySet(req, res) {
 }
 function paperContext(paper) {
   if (!paper) return "No component paper is available; keep the dialogue general but rigorous.";
-  const fm = paper.frontmatter;
-  const concepts = fm.concepts.map((c) => `- ${c.name}`).join("\n") || "- (none)";
-  const rationale = fm.rationale.map((r) => `- ${r.decision}${r.why ? ` \u2014 ${r.why}` : ""}`).join("\n") || "- (none)";
-  return `Component: ${fm.title}
-
-Concepts:
-${concepts}
-
-Rationale:
-${rationale}`;
+  return paperGrounding(paper);
 }
 function stripJson(text) {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);

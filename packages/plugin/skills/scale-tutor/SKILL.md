@@ -116,6 +116,13 @@ dimension and a concept the junior's diff actually exercised.
 
 - **Stem:** grounded in a SPECIFIC `concepts` or `rationale` entry from the
   component's paper (and the diff when available) — never generic trivia.
+- **Never a lookup.** If the answer can be found by searching the paper for a
+  word in the question — a name, a file, "which module does X use" — the item
+  scores recall and reads as comprehension. Ask for reasoning ABOUT the
+  mechanism instead: predict a behavior in a case the paper does not state,
+  name what breaks if a decision were reversed, or pick the consequence of an
+  invariant being violated. The paper's Description and Rationale sections are
+  the material for this; its Related Work links are not.
 - **Exactly 4 options (A–D):** 1 correct + 3 plausible distractors that
   represent REAL misconceptions (e.g. the plausible-but-wrong reading of the
   design, the alternative the paper rejected, the naive assumption the code

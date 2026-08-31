@@ -16,6 +16,7 @@ export * from './index-map.js';
 
 // Coverage-memory (.scale/) loader.
 export * from './paper-loader.js';
+export * from './grounding.js';
 
 // Deterministic frozen map layout.
 export * from './layout.js';

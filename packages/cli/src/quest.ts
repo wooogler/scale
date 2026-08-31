@@ -40,6 +40,7 @@ import {
   emptyComponentCoverage,
   meanDims,
   resolveInterventionModel,
+  paperGrounding,
   type LlmProvider,
 } from '@scale/core';
 
@@ -179,19 +180,13 @@ export function pickComponents(
 // Grounding — paper → prompt context
 // ---------------------------------------------------------------------------
 
+/**
+ * Grounding for item generation. Shared with the web Socratic proxy via core, so
+ * the two prompts cannot drift apart again, and it now carries the paper's PROSE
+ * — the mechanism the generator needs to write a `structure` item at all.
+ */
 function groundingText(paper: LoadedPaper): string {
-  const fm = paper.frontmatter;
-  const concepts = fm.concepts.map((c) => `- ${c.name} (id: ${c.id})`).join('\n') || '- (none)';
-  const rationale =
-    fm.rationale
-      .map((r) => {
-        const bits = [`decision: ${r.decision}`];
-        if (r.why) bits.push(`why: ${r.why}`);
-        if (r.alternatives) bits.push(`alternatives: ${r.alternatives}`);
-        return `- ${bits.join(' | ')}`;
-      })
-      .join('\n') || '- (none)';
-  return `Component: ${fm.title} (id: ${fm.id})\n\nConcepts:\n${concepts}\n\nRationale:\n${rationale}`;
+  return paperGrounding(paper);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,10 +228,23 @@ async function llmQuizItems(
     maxTokens: 1024,
     system:
       'You write multiple-choice comprehension items for a code-onboarding tutor. ' +
-      'Ground every item strictly in the provided component paper (its concepts and ' +
-      'rationale). Each item tags the comprehension dimension it probes: "structure" ' +
-      '(how the component is built), "concepts" (its named ideas), or "rationale" ' +
-      '(why it was designed that way). Return ONLY JSON, no prose.' +
+      'Ground every item strictly in the provided component paper — its concepts, ' +
+      'its rationale, and its prose. Each item tags the comprehension dimension it ' +
+      'probes: "structure" (how the component is built — its moving parts, its data ' +
+      'and control flow, its invariants), "concepts" (its named ideas), or ' +
+      '"rationale" (why it was designed that way, and what the rejected ' +
+      'alternatives would have cost). ' +
+      // Anti-trivia. The paper's prose names parts and relationships, and the
+      // cheapest item a model can write from that is a lookup — "which module
+      // does X use" — which scores recall and reads as comprehension. The tutor
+      // rubric grades reasoning, so the items have to demand it.
+      'NEVER write a lookup item: nothing whose answer is a name, a file, or a ' +
+      'restatement that could be found by searching the paper for a word in the ' +
+      'question. An item must require reasoning ABOUT the mechanism — predict a ' +
+      'behavior in a new case, identify what breaks if a decision were reversed, ' +
+      'or pick the consequence of an invariant being violated. Distractors must be ' +
+      'real misconceptions: the plausible-but-wrong reading of the design, or the ' +
+      'alternative the paper explicitly rejected. Return ONLY JSON, no prose.' +
       (language === 'ko' ? KO_ITEM_INSTRUCTION : ''),
     messages: [
       {
@@ -245,9 +253,10 @@ async function llmQuizItems(
           `${groundingText(paper)}\n\n` +
           'Write exactly 2 multiple-choice items. Return JSON of the form:\n' +
           '{"items":[{"stem":"...","options":["A","B","C","D"],"correctIndex":0,"dim":"concepts"}]}\n' +
-          'Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be ' +
-          'faithful to the paper; distractors plausible but wrong; prefer one "concepts" ' +
-          'item and one "rationale" item.',
+          'Rules: exactly 4 options each; correctIndex is 0-3; the correct option must ' +
+          'be faithful to the paper; distractors plausible but wrong, and similar in ' +
+          'length and register so none is a giveaway. Vary the dimension across the ' +
+          'two items — do not write two of the same kind.',
       },
     ],
   });
