@@ -102,7 +102,7 @@ scale config set models.provider anthropic   # INTERVENTION api: anthropic | ope
 Only the **intervention** tier is configured — quiz/Socratic checks, quest generation, and
 the web Socratic proxy, which SCALE calls through the API itself. The **build** model is
 not a setting: `/scale-map` runs inside a Claude Code session, so it uses whatever model
-that session is on. Pick it with **`/model`** (Opus 4.8 or Fable 5) before you build; the
+that session is on. Pick it with **`/model`** (Opus 5 or Fable 5) before you build; the
 skill's confirm gate states which model it is running on and stops if it's neither.
 
 The intervention tier is one token across both providers, so switching provider keeps the
@@ -230,9 +230,10 @@ links to Settings.
 
 ## Cost
 
-- **Build (one-time, Opus/Fable).** ~$11 for a ~6k-LOC repo on Opus; Fable runs ~2× the
-  output (always-on thinking) and costs more. `scale estimate` previews the exact figure
-  per model before you commit.
+- **Build (one-time, Opus 5 / Fable 5).** ~$11 for a ~6k-LOC repo. Both build models
+  think by default, which the calibration run did not, so each is quoted as a low–high
+  band at ~1.5× output; Fable's rates are 2× Opus's on top of that. `scale estimate`
+  previews the exact figure per model before you commit.
 - **Interventions (recurring, Sonnet 5 / Opus 4.8 tier).** ~$0.15–$1 per session for quiz/Socratic
   checks and quest generation.
 

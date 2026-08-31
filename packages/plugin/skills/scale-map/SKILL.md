@@ -162,13 +162,13 @@ in `scale estimate`), so the user must see the cost and pick the build model fir
 
 1. Run `scale estimate` in the target repo. It is pure and fast (fs scan +
    arithmetic — no LLM, no API) and prints a per-build-model table: repo size →
-   estimated components, and estimated **cost + time for each BUILD model (Opus 4.8
+   estimated components, and estimated **cost + time for each BUILD model (Opus 5
    and Fable 5)**.
 2. **Present that table to the user verbatim.**
 3. **State the model YOU are running on.** The build happens in this Claude Code
    session, so the model doing the work is the session's — there is no config key
    that changes it, and no way for you to switch it yourself. Say plainly which
-   model you are. If it is **not Opus 4.8 or Fable 5**, tell the user the build
+   model you are. If it is **not Opus 5 or Fable 5**, tell the user the build
    tier wants one of those and that they must switch with **`/model`** and re-run
    `/scale-map`; do not proceed on a smaller model just because they asked.
 4. **Ask the user to confirm and STOP for their answer:** given the estimate and

@@ -9,7 +9,7 @@ This guide is the accurate, works-today path. Anything not yet functional is
 called out in [What works / not yet](#what-works--not-yet).
 
 > **Model policy (fixed).** Two tiers, and they never mix:
-> - **BUILD** — the Mode B `scale-map` coverage-memory build — runs on **Opus 4.8
+> - **BUILD** — the Mode B `scale-map` coverage-memory build — runs on **Opus 5
 >   or Fable 5 only**.
 > - **INTERVENTION** — quiz/socratic tutor, post-session quest generation, the web
 >   socratic proxy — runs on the **Sonnet 5 / Opus 4.8 tier** (or the matching
@@ -91,16 +91,18 @@ scale estimate            # human table
 scale estimate --json     # machine-readable
 ```
 
-The estimate table lists **only the two build-tier models** (Opus 4.8, Fable 5) —
-the intervention tier never builds. Fable costs more than Opus
-(its always-on thinking emits ~1.5× output). Example (this repo):
+The estimate table lists **only the two build-tier models** (Opus 5, Fable 5) —
+the intervention tier never builds. Both are quoted as a band: the calibration run
+was Opus 4.8 with thinking off, and both build models think by default, so the low
+end is that measurement and the high end is ~1.5× output. Fable's rates are 2×
+Opus's on top of that. Example (this repo):
 
 ```
 repo: 40 files, 6,862 LOC → ~25 components
 
 Build model  est. cost      est. time (single-agent)
 -----------  -------------  ------------------------
-Opus 4.8     $11.33         ~18 min
+Opus 5       $11.33–$13.59  ~18 min
 Fable 5      $22.67–$27.19  ~18 min
 ```
 

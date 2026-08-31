@@ -25,17 +25,23 @@ export interface ModelRate {
 
 /**
  * Published model rates ($/1M tokens), as of the calibration. Kept as data so a
- * re-price is a one-line edit. Fable 5's always-on thinking produces ~1.5× the
- * output of the other models for the same work — see FABLE_THINKING_MULTIPLIER.
+ * re-price is a one-line edit. A model that thinks by default produces ~1.5× the
+ * output of one that does not, for the same work — see
+ * THINKING_OUTPUT_MULTIPLIER and THINKING_BY_DEFAULT.
  */
 export const MODEL_RATES: Record<string, ModelRate> = {
+  opus5: { name: 'Opus 5', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  // Retained at its own rates: no longer a BUILD choice, but still the `opus`
+  // INTERVENTION tier, whose footnote prices itself from this entry.
   opus48: { name: 'Opus 4.8', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   sonnet5: { name: 'Sonnet 5', input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   fable5: { name: 'Fable 5', input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
 };
 
 /**
- * MEASURED CALIBRATION — real commander.js build, single-agent Opus 4.8.
+ * MEASURED CALIBRATION — real commander.js build, single-agent Opus 4.8 with
+ * thinking off (4.8's default). Treat the output figure as a floor for any model
+ * that thinks by default — see THINKING_BY_DEFAULT.
  *
  * This is the ground-truth data point the per-LOC constants below are derived
  * from. Keep it here (not just in comments) so re-calibration as more real builds
@@ -76,18 +82,31 @@ export const PER_LOC = {
   locPerComponent: 276,
 } as const;
 
-/** Fable 5 emits ~1.5× the output tokens of peers from always-on thinking. */
-export const FABLE_THINKING_MULTIPLIER = 1.5;
+/**
+ * A model that thinks by default emits ~1.5× the output tokens of one that does
+ * not, for the same work. {@link MEASURED_BUILD} was recorded on Opus 4.8, which
+ * does NOT think unless asked — so for the models below the measurement is a
+ * FLOOR, and their estimate is reported as a low–high band rather than a point.
+ */
+export const THINKING_OUTPUT_MULTIPLIER = 1.5;
+
+/**
+ * BUILD models whose thinking is on by default: Fable 5's is always on, and
+ * Opus 5 runs adaptive thinking unless explicitly disabled. Opus 4.8 is absent
+ * on purpose — omitting `thinking` there means no thinking, which is the
+ * condition {@link MEASURED_BUILD} was measured under.
+ */
+export const THINKING_BY_DEFAULT: ReadonlySet<string> = new Set(['fable5', 'opus5']);
 
 /** Estimated component count is clamped to the sane map band. */
 export const COMPONENT_CLAMP = { min: 5, max: 80 } as const;
 
 /**
- * The BUILD-tier models shown in the estimate table — Opus 4.8 and Fable 5 ONLY.
+ * The BUILD-tier models shown in the estimate table — Opus 5 and Fable 5 ONLY.
  * The INTERVENTION tier (quiz/socratic) is a separate, recurring cost and is
  * deliberately excluded from the build table; it appears only in the footer note.
  */
-export const ESTIMATE_MODEL_KEYS = ['opus48', 'fable5'] as const;
+export const ESTIMATE_MODEL_KEYS = ['opus5', 'fable5'] as const;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -109,7 +128,7 @@ export function modelCost(
   );
 }
 
-/** Per-model cost line: `low` == `high` except Fable (thinking output range). */
+/** Per-model cost line: `low` == `high` unless the model thinks by default. */
 export interface ModelEstimate {
   key: string;
   name: string;
@@ -129,15 +148,15 @@ export interface BuildEstimate {
   /** Single-agent wall time. */
   seconds: number;
   minutes: number;
-  /** Per-model cost estimates for the BUILD tier (Opus 4.8, Fable 5). */
+  /** Per-model cost estimates for the BUILD tier (Opus 5, Fable 5). */
   models: ModelEstimate[];
 }
 
 /**
  * Estimate the Mode B build for `loc` scanned source lines. Pure: the same LOC
  * always yields the same estimate. Token basis is model-agnostic; per-model cost
- * applies that model's rates. Fable is returned as a low–high range reflecting
- * ~1.5× output from always-on thinking.
+ * applies that model's rates. A model that thinks by default is returned as a
+ * low–high range reflecting ~1.5× output (see THINKING_OUTPUT_MULTIPLIER).
  */
 export function estimateBuild(loc: number): BuildEstimate {
   const l = Math.max(0, loc);
@@ -153,8 +172,8 @@ export function estimateBuild(loc: number): BuildEstimate {
     const rate = MODEL_RATES[key]!;
     const costLow = modelCost(rate, tokens);
     const costHigh =
-      key === 'fable5'
-        ? modelCost(rate, { ...tokens, output: tokens.output * FABLE_THINKING_MULTIPLIER })
+      THINKING_BY_DEFAULT.has(key)
+        ? modelCost(rate, { ...tokens, output: tokens.output * THINKING_OUTPUT_MULTIPLIER })
         : costLow;
     return { key, name: rate.name, costLow, costHigh };
   });

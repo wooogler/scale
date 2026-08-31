@@ -1044,12 +1044,42 @@ const SOURCE_EXTS = new Set([
 /** Directory names never descended into during the scan. */
 const EXCLUDE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'out', '.next', 'coverage', 'vendor',
-  '.scale', 'test', 'tests', '__tests__',
+  '.scale', 'test', 'tests', '__tests__', 'web-dist', 'graphify-out',
 ]);
 
 /** `foo.test.ts` / `bar.spec.js` etc. — excluded so the count is real source. */
 function isTestFile(name: string): boolean {
   return /\.(test|spec)\./i.test(name);
+}
+
+/**
+ * True when a file announces itself machine-generated in its opening lines.
+ *
+ * A build artifact that is COMMITTED escapes every directory rule — this repo's
+ * own `packages/plugin/bin/scale.mjs` is a ~30k-line bundle, several times the
+ * real source, and counting it inflated every build estimate by roughly 6×. The
+ * `@generated` marker is the common convention for saying so, and matching it
+ * generalizes to any target repo that follows it.
+ */
+function isGeneratedFile(full: string): boolean {
+  let fd: number | undefined;
+  try {
+    // Read only the head: the marker is a banner, and these files can be huge.
+    fd = fs.openSync(full, 'r');
+    const buf = Buffer.alloc(256);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    return /@generated|@preserve GENERATED|DO NOT EDIT/i.test(buf.subarray(0, n).toString('utf8'));
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 /**
@@ -1075,6 +1105,7 @@ function scanSourceLoc(root: string): { files: number; loc: number } {
       } else if (e.isFile()) {
         const ext = path.extname(name).toLowerCase();
         if (!SOURCE_EXTS.has(ext) || isTestFile(name)) continue;
+        if (isGeneratedFile(full)) continue;
         try {
           const buf = fs.readFileSync(full);
           let n = 0;
