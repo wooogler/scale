@@ -1,0 +1,74 @@
+name: CI
+
+# Nothing outside a developer's terminal used to run tsc, vitest, or the web
+# build, which is how a broken `npm test` on a fresh clone and an untypechecked
+# packages/web both survived for months. The `payload` job below is the one that
+# earns this file: it is the only automated check that the plugin Claude Code
+# actually executes matches the source in this repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: typecheck + test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # `tsc -b` for core+cli, then packages/web separately: web is noEmit with
+      # Bundler resolution, so it cannot be a project reference in the composite
+      # build and has to be typechecked on its own.
+      - run: npm run typecheck
+
+      # `pretest` compiles first — the CLI tests resolve @scale/core through its
+      # built dist, so without that they fail with a misleading "cannot resolve
+      # entry for package" error rather than "you did not build".
+      - run: npm test
+
+  payload:
+    name: committed plugin payload matches source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      # bin/scale.mjs and web-dist/ are generated but COMMITTED, because the
+      # plugin must stay self-contained. That means editing packages/cli and
+      # forgetting `npm run build:plugin` leaves the hooks running the previous
+      # CLI while every test passes — the failure mode this job exists to catch.
+      # The build also refuses to run when the three plugin manifests disagree on
+      # the version, so a partially-bumped release fails here too.
+      - name: Rebuild the plugin payload
+        run: npm run build:plugin
+
+      - name: Fail if the rebuilt payload differs from what is committed
+        run: |
+          changed=$(git status --porcelain -- packages/plugin/bin packages/plugin/web-dist)
+          if [ -n "$changed" ]; then
+            echo "::error::The committed plugin payload is stale. Run 'npm run build:plugin' and commit the result."
+            echo "$changed"
+            git --no-pager diff --stat -- packages/plugin/bin packages/plugin/web-dist
+            exit 1
+          fi
+          echo "Plugin payload is in sync with source."

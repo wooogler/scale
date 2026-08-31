@@ -53,21 +53,27 @@ what the hooks call via `hooks/lib/scale.mjs`. No separate `npm install -g` step
 ### A. From the marketplace (recommended)
 
 The repo root ships `.claude-plugin/marketplace.json`. Add the marketplace, then
-install the plugin:
+install the plugin — from a terminal:
 
 ```
-/plugin marketplace add /Users/sangwooklee/dev/scale
-/plugin install scale@scale-marketplace
+claude plugin marketplace add /path/to/scale
+claude plugin install scale@scale-marketplace
 ```
 
-(`/plugin marketplace add` also accepts a Git repo URL once this is pushed.)
+The same two steps exist as `/plugin marketplace add` and `/plugin install`
+inside a Claude Code session. `marketplace add` also accepts a Git repo URL once
+this is pushed.
+
+Note there is **no `plugins` key in `.claude/settings.json`** — installing writes
+`enabledPlugins` in `~/.claude/settings.json`, which is Claude Code's business,
+not something to hand-edit.
 
 ### B. Local / dev
 
 Point Claude Code straight at the plugin directory:
 
 ```
-claude --plugin-dir /Users/sangwooklee/dev/scale/packages/plugin
+claude --plugin-dir /path/to/scale/packages/plugin
 ```
 
 Either way Claude Code reads `.claude-plugin/plugin.json`, wires the hooks from
@@ -107,6 +113,46 @@ This compiles `@scale/core`/`@scale/cli` (tsc) and `@scale/web` (vite), bundles
 `packages/cli/src/index.ts` → `bin/scale.mjs` with esbuild
 (`--bundle --platform=node --format=esm --packages=bundle`, every dep inlined),
 keeps `bin/scale` executable, and copies `packages/web/dist` → `web-dist/`.
+
+CI re-runs this and fails if the result differs from what is committed, so a
+rebundle can no longer be forgotten. The build also refuses to run when the
+three version fields disagree — see below.
+
+## Releasing a change to an installed plugin
+
+**Rebuilding the bundle is not enough.** Claude Code caches an installed plugin
+under a path keyed by its version, so `claude plugin update` does nothing while
+the version is unchanged: your edits stay in the repo and the session keeps
+loading the cached copy — old skills, old hooks, old CLI. This bit us once
+already, with an eight-commit gap between the repo and what was actually running.
+
+To ship a change:
+
+1. Bump the version in **all three** manifests (they must match, and
+   `npm run build:plugin` fails loudly if they do not):
+   - `packages/plugin/.claude-plugin/plugin.json`
+   - `packages/plugin/package.json`
+   - `.claude-plugin/marketplace.json` (`metadata.version`)
+2. `npm run build:plugin` — stamps the version into the bundle banner and into
+   `scale --version`.
+3. Commit the regenerated `bin/scale.mjs` and `web-dist/`.
+4. Refresh the install and **restart Claude Code** (the update is not applied to
+   a running session):
+
+   ```
+   claude plugin marketplace update
+   claude plugin update scale@scale-marketplace
+   ```
+
+To check what is actually running, ask the binary rather than the repo:
+
+```
+scale --version     # e.g. 0.1.0  — the installed plugin's release
+                    # 0.0.0-dev   — running from source via tsx, not the bundle
+```
+
+If that number is behind the repo's `plugin.json`, the session is serving a
+stale cache.
 
 ## How the hooks work
 

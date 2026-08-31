@@ -83,12 +83,23 @@ import {
   sessionIdOf,
 } from './hook-input.js';
 
+/**
+ * Plugin release this binary was bundled from. `scripts/build-plugin.mjs`
+ * replaces it at build time; running from source (tsx) leaves it undefined, and
+ * the `-dev` marker is then the honest answer. `scale --version` is the only way
+ * to tell whether Claude Code is serving a stale cached plugin, so it must never
+ * report a hardcoded number that happens to look current.
+ */
+declare const __SCALE_VERSION__: string | undefined;
+const SCALE_VERSION =
+  typeof __SCALE_VERSION__ === 'string' ? __SCALE_VERSION__ : '0.0.0-dev';
+
 const program = new Command();
 
 program
   .name('scale')
   .description('SCALE — coverage-memory state engine and tutor CLI')
-  .version('0.0.0');
+  .version(SCALE_VERSION);
 
 /** Mark a subcommand as an intentional exit-0 placeholder. */
 function stub(phase: string, note: string): void {
