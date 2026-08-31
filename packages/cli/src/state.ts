@@ -233,6 +233,102 @@ export function writeSession(dir: string, session: SessionRecord): void {
   fs.writeFileSync(sessionPath(dir), JSON.stringify(session, null, 2) + '\n');
 }
 
+/**
+ * How long an idle session record stays adoptable.
+ *
+ * The interruption budget is per REPO, not per window: `gate.ts` documents it as
+ * "≤ maxPerSession per session", and opening a second terminal used to rewrite
+ * session.json with a fresh budget, so the guarantee was false — a sibling
+ * window refilled the counter and nulled the cooldown. A second window now joins
+ * the running budget instead of resetting it.
+ *
+ * That needs an end, or the budget would never refill again. "Session" therefore
+ * means a work period in this repo, ended by going quiet, rather than a window
+ * being opened or closed — which is also the quantity the study is actually
+ * about (how often was this person interrupted while working), and it is
+ * measured the same whether they use one terminal or four.
+ */
+const SESSION_ADOPT_WINDOW_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * True when `session` is still the current work period and should be adopted
+ * rather than replaced. Measured from the later of its start and its last
+ * intervention, so an active session never expires under someone's hands.
+ */
+export function isSessionAdoptable(
+  session: SessionRecord,
+  now: number = Date.now(),
+): boolean {
+  const started = Date.parse(session.startedAt);
+  const lastAt = session.lastInterventionAt ? Date.parse(session.lastInterventionAt) : NaN;
+  const marks = [started, lastAt].filter((n) => Number.isFinite(n));
+  if (marks.length === 0) return false; // no usable timestamp — treat as expired
+  return now - Math.max(...marks) < SESSION_ADOPT_WINDOW_MS;
+}
+
+const lockPath = (dir: string): string => path.join(dir, 'session.lock');
+
+/** A lock older than this is presumed abandoned (a crashed process). */
+const LOCK_STALE_MS = 5_000;
+/** Give up acquiring rather than blow the hook's latency budget. */
+const LOCK_WAIT_MS = 400;
+const LOCK_POLL_MS = 15;
+
+/** Sleep synchronously — the gate path is sync end-to-end and must stay simple. */
+function sleepSync(ms: number): void {
+  const shared = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(shared, 0, 0, ms);
+}
+
+/**
+ * Run `fn` holding an exclusive lock on this repo's session record, or return
+ * `null` if the lock could not be taken in time.
+ *
+ * The gate reads the budget, decides, and writes the spent slot back. Two
+ * commits landing together both read the same pre-spend counter and both fire,
+ * so the budget was advisory even within one window. Returning `null` on
+ * contention is deliberate: the caller treats it as "someone else is deciding
+ * right now" and allows the commit. Failing toward NOT interrupting is the
+ * correct bias for a gate whose whole design goal is minimal interruption.
+ */
+export function withSessionLock<T>(dir: string, fn: () => T): T | null {
+  ensureStateDir(dir);
+  const lock = lockPath(dir);
+  const deadline = Date.now() + LOCK_WAIT_MS;
+
+  for (;;) {
+    try {
+      // 'wx' fails if the path exists — an atomic test-and-set on every platform
+      // this runs on, with no dependency.
+      fs.writeFileSync(lock, `${process.pid} ${new Date().toISOString()}\n`, { flag: 'wx' });
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return null;
+      // Reclaim a lock left behind by a process that died mid-decision.
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lock);
+          continue;
+        }
+      } catch {
+        continue; // vanished between statting and now — retry the create
+      }
+      if (Date.now() >= deadline) return null;
+      sleepSync(LOCK_POLL_MS);
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    try {
+      fs.unlinkSync(lock);
+    } catch {
+      /* already gone — nothing to release */
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // pending-edits.json  (PreToolUse → PostToolUse pairing for diff_review)
 // ---------------------------------------------------------------------------

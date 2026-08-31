@@ -75,6 +75,8 @@ import {
   writeSession,
   readPendingEdits,
   writePendingEdits,
+  withSessionLock,
+  isSessionAdoptable,
 } from './state.js';
 import {
   readHookPayload,
@@ -215,7 +217,14 @@ function recentlyAddressedComponents(dir: string, now: Date, ttlMinutes: number)
     if (!compId) continue;
     if (type === 'quiz_result' || type === 'socratic_result') {
       ids.add(compId);
-    } else if (type === 'intervention' && (e.outcome === 'deferred' || e.outcome === 'completed')) {
+    } else if (
+      type === 'intervention' &&
+      // 'attempted' counts: a check the junior got WRONG is still a check that
+      // was delivered, and the gate's job is delivery, not a pass mark (PLAN
+      // §6.1). The failure is recorded and visible in the score; it does not
+      // hold the commit hostage.
+      (e.outcome === 'deferred' || e.outcome === 'completed' || e.outcome === 'attempted')
+    ) {
       ids.add(compId);
     }
   }
@@ -373,16 +382,16 @@ program
     const dir = stateDir(cwd);
     ensureStateDir(dir);
 
-    // The SessionStart payload carries the session id. A `compact` or `resume`
-    // start is the SAME session continuing, and it reports the same id — so
-    // reusing the existing record preserves the interruption budget instead of
-    // silently refilling it mid-session (PLAN §6.1). A genuinely new session
-    // (startup/clear) brings a new id and gets a fresh budget. Run by hand with
-    // no payload, there is no id to match and the behavior is a fresh session,
-    // as before.
+    // The interruption budget belongs to the REPO's current work period, not to
+    // a window. Matching on session id alone still reset it whenever a SECOND
+    // Claude Code window opened here, which silently refilled the counter and
+    // nulled the cooldown — so `gate.ts`'s "≤ maxPerSession per session" was not
+    // true. Any still-active record is therefore adopted, whichever session id
+    // it carries, and a fresh budget starts only once the repo has gone quiet
+    // long enough to be a new work period (see isSessionAdoptable).
     const sessionId = sessionIdOf(await readHookPayload()) || crypto.randomUUID();
     const existing = readSessionSafe(dir);
-    if (!existing || existing.sessionId !== sessionId) {
+    if (!existing || !isSessionAdoptable(existing)) {
       writeSession(dir, defaultSession(sessionId, nowIso()));
     }
 
@@ -783,6 +792,12 @@ gate
     const importance: Record<string, number> = {};
     for (const n of map.nodes) importance[n.id] = n.importance;
 
+    // Budget accounting is a read-decide-write, and it is NOT atomic on its own:
+    // two commits landing together both read the same pre-spend counter and both
+    // fire. Take the repo's session lock for the whole decision. Losing the race
+    // means another gate is deciding right now, so allow — over-interrupting is
+    // the failure this gate exists to prevent.
+    const decided = withSessionLock(dir, () => {
     // Session budget accounting (create a fresh one if SessionStart never ran).
     const session: SessionRecord =
       readSessionSafe(dir) ?? defaultSession(crypto.randomUUID(), nowIso());
@@ -812,33 +827,15 @@ gate
     const decision = gateDecision(gateInput);
 
     if (decision.action === 'deny' && decision.component) {
-      const component = decision.component;
-      // Record that we REQUESTED an in-flow intervention (accounting only — no
-      // dim change). Not 'shown': the gate only asks the agent to run the check,
-      // and whether it ever reached the junior is decided downstream.
-      // Best-effort: a write failure must not turn the deny into noise.
-      try {
-        await appendEvidence(dir, {
-          type: 'intervention',
-          ts: now,
-          user: currentUser(dir),
-          componentId: component,
-          timing: 'inflow',
-          modality: config.condition.modality,
-          outcome: 'requested',
-        });
-      } catch {
-        /* keep going — the deny is what matters to the hook */
-      }
-      // Spend a budget slot: bump the counter, stamp the time, remember the target.
+      // Spend a budget slot INSIDE the lock: bump the counter, stamp the time,
+      // remember the target.
       writeSession(dir, {
         ...session,
         interventionsThisSession: session.interventionsThisSession + 1,
         lastInterventionAt: now,
-        pendingComponent: component,
+        pendingComponent: decision.component,
       });
-      emit(false, component, decision.reason ?? null);
-      return;
+      return { component: decision.component, reason: decision.reason ?? null, now };
     }
 
     // Allow. If this allow resolved the pending component (its retry passed, or it
@@ -846,7 +843,35 @@ gate
     if (session.pendingComponent && recentlyAddressed.includes(session.pendingComponent)) {
       writeSession(dir, { ...session, pendingComponent: null });
     }
-    emit(true, null, null);
+    return null;
+    });
+
+    if (!decided) {
+      // Either the gate allowed, or the lock was contended and another gate is
+      // mid-decision. Both allow.
+      emit(true, null, null);
+      return;
+    }
+
+    // Record that we REQUESTED an in-flow intervention (accounting only — no dim
+    // change). Not 'shown': the gate only asks the agent to run the check, and
+    // whether it ever reached the junior is decided downstream. Appended outside
+    // the lock — it is async, and the budget is already durably spent.
+    // Best-effort: a write failure must not turn the deny into noise.
+    try {
+      await appendEvidence(dir, {
+        type: 'intervention',
+        ts: decided.now,
+        user: currentUser(dir),
+        componentId: decided.component,
+        timing: 'inflow',
+        modality: config.condition.modality,
+        outcome: 'requested',
+      });
+    } catch {
+      /* keep going — the deny is what matters to the hook */
+    }
+    emit(false, decided.component, decided.reason);
   });
 
 // ---------------------------------------------------------------------------
@@ -925,10 +950,18 @@ program
     'where the validation came from: session | voluntary (PLAN §6.3)',
     'session',
   )
+  .option(
+    '--by <who>',
+    "who produced this result: 'user' (the junior answered) or 'agent' (the " +
+      'agent answered on their behalf). Only a user result is comprehension ' +
+      'data; an agent result still satisfies the gate but is excluded from the ' +
+      "junior's scores in analysis",
+    'user',
+  )
   .action(
     async (
       componentId: string,
-      opts: { dim?: string; score?: string; socratic?: string; origin?: string },
+      opts: { dim?: string; score?: string; socratic?: string; origin?: string; by?: string },
     ) => {
       const cwd = process.cwd();
       const dir = stateDir(cwd);
@@ -937,7 +970,13 @@ program
         process.exitCode = 1;
         return;
       }
+      if (opts.by !== 'user' && opts.by !== 'agent') {
+        console.error(`scale: --by must be 'user' or 'agent' (got '${opts.by}').`);
+        process.exitCode = 1;
+        return;
+      }
       const origin = opts.origin;
+      const by = opts.by;
       // Capture the git sha that is HEAD right now — this validation is anchored
       // to it so its `lastValidatedSha` stays fixed across future recomputes
       // (staleness must persist through re-materialization). '' if not a git repo.
@@ -961,6 +1000,7 @@ program
           dims: dims as Partial<Record<DimName, number>>,
           sha,
           origin,
+          by,
         };
       } else {
         if (!opts.dim || opts.score === undefined) {
@@ -980,6 +1020,7 @@ program
           score: Number(opts.score),
           sha,
           origin,
+          by,
         };
       }
 
@@ -992,6 +1033,38 @@ program
         process.exitCode = 1;
         return;
       }
+      // Close the in-flow intervention this result answers. The gate opened it
+      // with outcome 'requested' and nothing ever closed it, so `completed` had
+      // a consumer and no producer and a FAILED check was indistinguishable from
+      // a passed one in the accounting stream. A recorded result still satisfies
+      // the gate whatever it scored — the gate delivers checks, it does not
+      // withhold commits until the junior is right (PLAN §6.1) — so the honest
+      // fix is to name the difference, not to start blocking.
+      const bar = readConfigSafe(dir)?.thresholds.validateDim ?? 0.6;
+      const achieved =
+        entry.type === 'quiz_result'
+          ? entry.score
+          : (() => {
+              const vals = Object.values(entry.dims).filter(
+                (v): v is number => typeof v === 'number',
+              );
+              return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+            })();
+      try {
+        await appendEvidence(dir, {
+          type: 'intervention',
+          ts: entry.ts,
+          user: entry.user,
+          componentId,
+          timing: origin === 'voluntary' ? 'postsession' : 'inflow',
+          modality: entry.type === 'quiz_result' ? 'quiz' : 'socratic',
+          outcome: achieved >= bar ? 'completed' : 'attempted',
+          by,
+        });
+      } catch {
+        /* accounting only — the graded result above is what moves coverage */
+      }
+
       const res = recomputeCoverageFromDisk(cwd);
       const comp = res.coverage.components[componentId];
       if (!comp) {

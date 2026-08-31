@@ -67,6 +67,15 @@ export const QuizResultEvidenceSchema = z.object({
   sha: z.string().optional(),
   /** Origin of the validation (see ValidationOriginSchema). */
   origin: ValidationOriginSchema.optional(),
+  /**
+   * Who authored this record. The tutor protocol says the check belongs to the
+   * JUNIOR, but the agent runs the CLI, so an agent that finds the check
+   * inconvenient can satisfy the gate with a `record` of its own — an easier
+   * bypass than `gate defer`, and one with a more legitimate-looking trail.
+   * Mirrors {@link InterventionEvidenceSchema}'s `by` so agent-authored results
+   * can be excluded from the junior's comprehension data. Absent on older logs.
+   */
+  by: z.enum(['user', 'agent']).optional(),
 });
 
 /** A Socratic session yielded per-dim rubric scores. */
@@ -84,6 +93,15 @@ export const SocraticResultEvidenceSchema = z.object({
   sha: z.string().optional(),
   /** Origin of the validation (see ValidationOriginSchema). */
   origin: ValidationOriginSchema.optional(),
+  /**
+   * Who authored this record. The tutor protocol says the check belongs to the
+   * JUNIOR, but the agent runs the CLI, so an agent that finds the check
+   * inconvenient can satisfy the gate with a `record` of its own — an easier
+   * bypass than `gate defer`, and one with a more legitimate-looking trail.
+   * Mirrors {@link InterventionEvidenceSchema}'s `by` so agent-authored results
+   * can be excluded from the junior's comprehension data. Absent on older logs.
+   */
+  by: z.enum(['user', 'agent']).optional(),
 });
 
 /**
@@ -93,8 +111,16 @@ export const SocraticResultEvidenceSchema = z.object({
  *  - `requested` — the gate fired and asked the agent to run a check. This is
  *    ALL the gate can honestly claim: it does not present anything itself.
  *  - `shown` — the check actually reached the junior.
- *  - `deferred` / `completed` — how it ended. `by` records who deferred, so an
- *    agent skipping on the junior's behalf never pollutes user-choice data.
+ *  - `completed` / `attempted` / `deferred` — how it ended. A recorded check
+ *    passes the gate whatever it scored, because the gate's job is to put the
+ *    check in front of the junior, not to hold their commit hostage to getting
+ *    it right (PLAN §6.1). But a check that was FAILED is not a check that was
+ *    passed, and the two were previously indistinguishable in the accounting
+ *    stream: `attempted` marks a result below the validation bar so an
+ *    interruption audit can separate "delivered and understood" from
+ *    "delivered and not yet understood".
+ *  - `by` records who ended it, so an agent acting on the junior's behalf never
+ *    pollutes user-choice data.
  *
  * `shown` is also accepted from older logs, where the gate wrote it at fire time.
  */
@@ -104,8 +130,8 @@ export const InterventionEvidenceSchema = z.object({
   componentId: z.string(),
   timing: z.enum(['inflow', 'postsession']),
   modality: z.enum(['quiz', 'socratic']),
-  outcome: z.enum(['requested', 'shown', 'deferred', 'completed']),
-  /** Who deferred. Absent on non-deferred outcomes and on pre-`by` logs. */
+  outcome: z.enum(['requested', 'shown', 'deferred', 'completed', 'attempted']),
+  /** Who ended it. Absent on `requested`/`shown` and on pre-`by` logs. */
   by: z.enum(['user', 'agent']).optional(),
 });
 

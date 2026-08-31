@@ -176,21 +176,39 @@ The CLI accepts exactly two forms — use the one matching the modality:
 one dimension):
 
 ```
-scale record <componentId> --dim <structure|concepts|rationale> --score <0..1> [--origin session|voluntary]
+scale record <componentId> --dim <structure|concepts|rationale> --score <0..1> [--origin session|voluntary] [--by user|agent]
 ```
 
 **Socratic — one call for the whole dialogue**, with the per-dim rubric scores
 as JSON:
 
 ```
-scale record <componentId> --socratic '{"structure":0.65,"concepts":0.6,"rationale":0.4}' [--origin session|voluntary]
+scale record <componentId> --socratic '{"structure":0.65,"concepts":0.6,"rationale":0.4}' [--origin session|voluntary] [--by user|agent]
 ```
 
 `--origin` defaults to `session`; pass `--origin voluntary` for /scale-study or
-a map Challenge (PLAN §6.3). There are no other flags on `scale record` — no
-modality, no deferred, no per-exchange list. A **completed** check is recorded
-with `scale record`; a **skip** in the gate path is recorded with `scale gate
-defer <componentId>` (not `scale record`) — see rule 6.
+a map Challenge (PLAN §6.3).
+
+`--by` defaults to `user` and should stay there whenever the junior actually
+answered — that is the only comprehension data the study has. **If you ever
+record a result the junior did not produce** (you answered on their behalf, or
+you are exercising the tool), you MUST pass `--by agent` and say so in your
+reply. A recorded result satisfies the gate whatever it scored, so `record` is
+an easier bypass than `gate defer`; `--by` is what keeps that out of the
+junior's scores. Recording an agent answer as the junior's is the single most
+damaging thing you can do to this dataset.
+
+There are no other flags — no modality, no deferred, no per-exchange list. A
+**completed** check is recorded with `scale record`; a **skip** in the gate path
+is recorded with `scale gate defer <componentId>` (not `scale record`) — see
+rule 6.
+
+**A wrong answer is still a recorded check.** Score it honestly (0.0, or up to
+0.3 for partial reasoning) and record it; the gate accepts it and the retried
+commit passes. Do not inflate a score to "unblock" the junior, and do not
+withhold the record because they got it wrong — the CLI files a low result as an
+`attempted` intervention rather than a `completed` one, so the honest number
+costs them nothing but a wrong number corrupts the study.
 
 The CLI prints the component's new state plus a progress line — weighted
 comprehension mean vs. the 0.60 validation bar (e.g. `explored — comprehension

@@ -26676,7 +26676,16 @@ var QuizResultEvidenceSchema = external_exports.object({
    */
   sha: external_exports.string().optional(),
   /** Origin of the validation (see ValidationOriginSchema). */
-  origin: ValidationOriginSchema.optional()
+  origin: ValidationOriginSchema.optional(),
+  /**
+   * Who authored this record. The tutor protocol says the check belongs to the
+   * JUNIOR, but the agent runs the CLI, so an agent that finds the check
+   * inconvenient can satisfy the gate with a `record` of its own — an easier
+   * bypass than `gate defer`, and one with a more legitimate-looking trail.
+   * Mirrors {@link InterventionEvidenceSchema}'s `by` so agent-authored results
+   * can be excluded from the junior's comprehension data. Absent on older logs.
+   */
+  by: external_exports.enum(["user", "agent"]).optional()
 });
 var SocraticResultEvidenceSchema = external_exports.object({
   ...baseEvidence,
@@ -26691,7 +26700,16 @@ var SocraticResultEvidenceSchema = external_exports.object({
    */
   sha: external_exports.string().optional(),
   /** Origin of the validation (see ValidationOriginSchema). */
-  origin: ValidationOriginSchema.optional()
+  origin: ValidationOriginSchema.optional(),
+  /**
+   * Who authored this record. The tutor protocol says the check belongs to the
+   * JUNIOR, but the agent runs the CLI, so an agent that finds the check
+   * inconvenient can satisfy the gate with a `record` of its own — an easier
+   * bypass than `gate defer`, and one with a more legitimate-looking trail.
+   * Mirrors {@link InterventionEvidenceSchema}'s `by` so agent-authored results
+   * can be excluded from the junior's comprehension data. Absent on older logs.
+   */
+  by: external_exports.enum(["user", "agent"]).optional()
 });
 var InterventionEvidenceSchema = external_exports.object({
   ...baseEvidence,
@@ -26699,8 +26717,8 @@ var InterventionEvidenceSchema = external_exports.object({
   componentId: external_exports.string(),
   timing: external_exports.enum(["inflow", "postsession"]),
   modality: external_exports.enum(["quiz", "socratic"]),
-  outcome: external_exports.enum(["requested", "shown", "deferred", "completed"]),
-  /** Who deferred. Absent on non-deferred outcomes and on pre-`by` logs. */
+  outcome: external_exports.enum(["requested", "shown", "deferred", "completed", "attempted"]),
+  /** Who ended it. Absent on `requested`/`shown` and on pre-`by` logs. */
   by: external_exports.enum(["user", "agent"]).optional()
 });
 var EvidenceEntrySchema = external_exports.discriminatedUnion("type", [
@@ -27777,6 +27795,54 @@ function readSessionSafe(dir) {
 function writeSession(dir, session) {
   ensureStateDir(dir);
   fs2.writeFileSync(sessionPath(dir), JSON.stringify(session, null, 2) + "\n");
+}
+var SESSION_ADOPT_WINDOW_MS = 4 * 60 * 60 * 1e3;
+function isSessionAdoptable(session, now = Date.now()) {
+  const started = Date.parse(session.startedAt);
+  const lastAt = session.lastInterventionAt ? Date.parse(session.lastInterventionAt) : NaN;
+  const marks = [started, lastAt].filter((n) => Number.isFinite(n));
+  if (marks.length === 0) return false;
+  return now - Math.max(...marks) < SESSION_ADOPT_WINDOW_MS;
+}
+var lockPath = (dir) => path2.join(dir, "session.lock");
+var LOCK_STALE_MS = 5e3;
+var LOCK_WAIT_MS = 400;
+var LOCK_POLL_MS = 15;
+function sleepSync(ms) {
+  const shared = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(shared, 0, 0, ms);
+}
+function withSessionLock(dir, fn) {
+  ensureStateDir(dir);
+  const lock = lockPath(dir);
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (; ; ) {
+    try {
+      fs2.writeFileSync(lock, `${process.pid} ${(/* @__PURE__ */ new Date()).toISOString()}
+`, { flag: "wx" });
+      break;
+    } catch (err) {
+      if (err.code !== "EEXIST") return null;
+      try {
+        if (Date.now() - fs2.statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          fs2.unlinkSync(lock);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() >= deadline) return null;
+      sleepSync(LOCK_POLL_MS);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      fs2.unlinkSync(lock);
+    } catch {
+    }
+  }
 }
 var PENDING_EDIT_TTL_MS = 10 * 60 * 1e3;
 var PENDING_EDIT_MAX = 64;
@@ -29212,7 +29278,11 @@ function recentlyAddressedComponents(dir, now, ttlMinutes) {
     if (!compId) continue;
     if (type === "quiz_result" || type === "socratic_result") {
       ids.add(compId);
-    } else if (type === "intervention" && (e.outcome === "deferred" || e.outcome === "completed")) {
+    } else if (type === "intervention" && // 'attempted' counts: a check the junior got WRONG is still a check that
+    // was delivered, and the gate's job is delivery, not a pass mark (PLAN
+    // §6.1). The failure is recorded and visible in the score; it does not
+    // hold the commit hostage.
+    (e.outcome === "deferred" || e.outcome === "completed" || e.outcome === "attempted")) {
       ids.add(compId);
     }
   }
@@ -29315,7 +29385,7 @@ program2.command("context").description("Print the SessionStart coverage summary
   ensureStateDir(dir);
   const sessionId = sessionIdOf(await readHookPayload()) || crypto3.randomUUID();
   const existing = readSessionSafe(dir);
-  if (!existing || existing.sessionId !== sessionId) {
+  if (!existing || !isSessionAdoptable(existing)) {
     writeSession(dir, defaultSession(sessionId, nowIso()));
   }
   let res;
@@ -29563,55 +29633,60 @@ gate.command("commit").description(
   const { coverage: coverage2, map: map2 } = recomputeCoverageFromDisk(cwd);
   const importance = {};
   for (const n of map2.nodes) importance[n.id] = n.importance;
-  const session = readSessionSafe(dir) ?? defaultSession(crypto3.randomUUID(), nowIso());
-  const now = nowIso();
-  const recentlyAddressed = recentlyAddressedComponents(
-    dir,
-    new Date(now),
-    MARKER_TTL_MINUTES
-  );
-  const gateInput = {
-    touched: [...touched],
-    coverage: coverage2,
-    config: config2,
-    session: {
-      interventionsThisSession: session.interventionsThisSession,
-      lastInterventionAt: session.lastInterventionAt,
-      pendingComponent: session.pendingComponent
-    },
-    changedLines,
-    recentlyAddressed,
-    now,
-    importance
-  };
-  const decision = gateDecision(gateInput);
-  if (decision.action === "deny" && decision.component) {
-    const component = decision.component;
-    try {
-      await appendEvidence(dir, {
-        type: "intervention",
-        ts: now,
-        user: currentUser(dir),
-        componentId: component,
-        timing: "inflow",
-        modality: config2.condition.modality,
-        outcome: "requested"
+  const decided = withSessionLock(dir, () => {
+    const session = readSessionSafe(dir) ?? defaultSession(crypto3.randomUUID(), nowIso());
+    const now = nowIso();
+    const recentlyAddressed = recentlyAddressedComponents(
+      dir,
+      new Date(now),
+      MARKER_TTL_MINUTES
+    );
+    const gateInput = {
+      touched: [...touched],
+      coverage: coverage2,
+      config: config2,
+      session: {
+        interventionsThisSession: session.interventionsThisSession,
+        lastInterventionAt: session.lastInterventionAt,
+        pendingComponent: session.pendingComponent
+      },
+      changedLines,
+      recentlyAddressed,
+      now,
+      importance
+    };
+    const decision = gateDecision(gateInput);
+    if (decision.action === "deny" && decision.component) {
+      writeSession(dir, {
+        ...session,
+        interventionsThisSession: session.interventionsThisSession + 1,
+        lastInterventionAt: now,
+        pendingComponent: decision.component
       });
-    } catch {
+      return { component: decision.component, reason: decision.reason ?? null, now };
     }
-    writeSession(dir, {
-      ...session,
-      interventionsThisSession: session.interventionsThisSession + 1,
-      lastInterventionAt: now,
-      pendingComponent: component
-    });
-    emit(false, component, decision.reason ?? null);
+    if (session.pendingComponent && recentlyAddressed.includes(session.pendingComponent)) {
+      writeSession(dir, { ...session, pendingComponent: null });
+    }
+    return null;
+  });
+  if (!decided) {
+    emit(true, null, null);
     return;
   }
-  if (session.pendingComponent && recentlyAddressed.includes(session.pendingComponent)) {
-    writeSession(dir, { ...session, pendingComponent: null });
+  try {
+    await appendEvidence(dir, {
+      type: "intervention",
+      ts: decided.now,
+      user: currentUser(dir),
+      componentId: decided.component,
+      timing: "inflow",
+      modality: config2.condition.modality,
+      outcome: "requested"
+    });
+  } catch {
   }
-  emit(true, null, null);
+  emit(false, decided.component, decided.reason);
 });
 gate.command("defer").description(
   "Skip the pre-commit check for a component (defer = drop, PLAN \xA76.1). Writes the intervention(outcome:deferred) marker the gate recognizes so the retried commit passes; nothing is queued \u2014 the territory just stays unconquered. Pure file append, no LLM."
@@ -29651,6 +29726,10 @@ program2.command("record").description("Record a quiz/Socratic validation outcom
   "--origin <origin>",
   "where the validation came from: session | voluntary (PLAN \xA76.3)",
   "session"
+).option(
+  "--by <who>",
+  "who produced this result: 'user' (the junior answered) or 'agent' (the agent answered on their behalf). Only a user result is comprehension data; an agent result still satisfies the gate but is excluded from the junior's scores in analysis",
+  "user"
 ).action(
   async (componentId, opts) => {
     const cwd = process.cwd();
@@ -29660,7 +29739,13 @@ program2.command("record").description("Record a quiz/Socratic validation outcom
       process.exitCode = 1;
       return;
     }
+    if (opts.by !== "user" && opts.by !== "agent") {
+      console.error(`scale: --by must be 'user' or 'agent' (got '${opts.by}').`);
+      process.exitCode = 1;
+      return;
+    }
     const origin = opts.origin;
+    const by = opts.by;
     const sha = headSha(cwd);
     let entry;
     if (opts.socratic !== void 0) {
@@ -29679,7 +29764,8 @@ program2.command("record").description("Record a quiz/Socratic validation outcom
         componentId,
         dims,
         sha,
-        origin
+        origin,
+        by
       };
     } else {
       if (!opts.dim || opts.score === void 0) {
@@ -29697,7 +29783,8 @@ program2.command("record").description("Record a quiz/Socratic validation outcom
         dim: opts.dim,
         score: Number(opts.score),
         sha,
-        origin
+        origin,
+        by
       };
     }
     try {
@@ -29706,6 +29793,26 @@ program2.command("record").description("Record a quiz/Socratic validation outcom
       console.error(`scale: invalid outcome \u2014 ${err.message.split("\n")[0]}`);
       process.exitCode = 1;
       return;
+    }
+    const bar = readConfigSafe(dir)?.thresholds.validateDim ?? 0.6;
+    const achieved = entry.type === "quiz_result" ? entry.score : (() => {
+      const vals = Object.values(entry.dims).filter(
+        (v) => typeof v === "number"
+      );
+      return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    })();
+    try {
+      await appendEvidence(dir, {
+        type: "intervention",
+        ts: entry.ts,
+        user: entry.user,
+        componentId,
+        timing: origin === "voluntary" ? "postsession" : "inflow",
+        modality: entry.type === "quiz_result" ? "quiz" : "socratic",
+        outcome: achieved >= bar ? "completed" : "attempted",
+        by
+      });
+    } catch {
     }
     const res = recomputeCoverageFromDisk(cwd);
     const comp = res.coverage.components[componentId];
