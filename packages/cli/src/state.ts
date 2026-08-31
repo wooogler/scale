@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import {
@@ -263,7 +264,10 @@ export function isSessionAdoptable(
   const lastAt = session.lastInterventionAt ? Date.parse(session.lastInterventionAt) : NaN;
   const marks = [started, lastAt].filter((n) => Number.isFinite(n));
   if (marks.length === 0) return false; // no usable timestamp — treat as expired
-  return now - Math.max(...marks) < SESSION_ADOPT_WINDOW_MS;
+  // Math.abs so a record stamped in the FUTURE (clock skew, a restored backup)
+  // expires like any other instead of being adoptable forever, which would
+  // freeze the budget in whatever state it was last written.
+  return Math.abs(now - Math.max(...marks)) < SESSION_ADOPT_WINDOW_MS;
 }
 
 const lockPath = (dir: string): string => path.join(dir, 'session.lock');
@@ -281,6 +285,32 @@ function sleepSync(ms: number): void {
 }
 
 /**
+ * Try to remove a lock judged abandoned, returning true only if THIS caller is
+ * the one that removed it.
+ *
+ * Removing it must itself be atomic. Stat-then-unlink is not: two processes both
+ * judge the same lock stale, both unlink, and the second one deletes the first
+ * one's freshly created LIVE lock, so both end up inside — the exact race the
+ * lock exists to prevent (reproduced at 8-way concurrency). Renaming to a unique
+ * name can succeed for only one caller; everyone else gets ENOENT because the
+ * source is already gone, and they fall back to waiting normally.
+ */
+function reclaimStaleLock(lock: string): boolean {
+  const dead = `${lock}.dead.${process.pid}.${Date.now().toString(36)}`;
+  try {
+    fs.renameSync(lock, dead);
+  } catch {
+    return false; // someone else claimed the removal, or we cannot write here
+  }
+  try {
+    fs.unlinkSync(dead);
+  } catch {
+    /* the rename already freed the lock name — this is only tidying */
+  }
+  return true;
+}
+
+/**
  * Run `fn` holding an exclusive lock on this repo's session record, or return
  * `null` if the lock could not be taken in time.
  *
@@ -290,41 +320,59 @@ function sleepSync(ms: number): void {
  * contention is deliberate: the caller treats it as "someone else is deciding
  * right now" and allows the commit. Failing toward NOT interrupting is the
  * correct bias for a gate whose whole design goal is minimal interruption.
+ *
+ * Every path through the loop either makes progress or sleeps, and the deadline
+ * is checked on every iteration — an earlier version checked it only on the
+ * sleep path, so a stale lock that could not be unlinked (read-only state dir,
+ * immutable file) spun at 100% CPU forever instead of giving up at 400 ms.
  */
 export function withSessionLock<T>(dir: string, fn: () => T): T | null {
   ensureStateDir(dir);
   const lock = lockPath(dir);
+  // Identifies THIS acquisition, so release can refuse to delete a lock that
+  // was reclaimed out from under a stalled holder.
+  const token = `${process.pid}:${crypto.randomUUID()}`;
   const deadline = Date.now() + LOCK_WAIT_MS;
+  let acquired = false;
 
-  for (;;) {
+  while (Date.now() < deadline) {
     try {
       // 'wx' fails if the path exists — an atomic test-and-set on every platform
       // this runs on, with no dependency.
-      fs.writeFileSync(lock, `${process.pid} ${new Date().toISOString()}\n`, { flag: 'wx' });
+      fs.writeFileSync(lock, `${token}\n`, { flag: 'wx' });
+      acquired = true;
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return null;
-      // Reclaim a lock left behind by a process that died mid-decision.
-      try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
-          fs.unlinkSync(lock);
-          continue;
-        }
-      } catch {
-        continue; // vanished between statting and now — retry the create
-      }
-      if (Date.now() >= deadline) return null;
-      sleepSync(LOCK_POLL_MS);
     }
+
+    let ageMs: number;
+    try {
+      // Math.abs so a lock stamped in the FUTURE (clock skew, a restored
+      // backup) is still reclaimable instead of disabling the gate forever.
+      ageMs = Math.abs(Date.now() - fs.statSync(lock).mtimeMs);
+    } catch {
+      continue; // vanished between the create and the stat — retry immediately
+    }
+
+    // A successful reclaim means the name is free right now, so retry at once;
+    // anything else waits. Never loop without progress or a sleep.
+    if (ageMs > LOCK_STALE_MS && reclaimStaleLock(lock)) continue;
+    sleepSync(LOCK_POLL_MS);
   }
+
+  if (!acquired) return null;
 
   try {
     return fn();
   } finally {
+    // Release only a lock we still hold. A holder that stalled past the stale
+    // window loses it to a reclaimer; unlinking unconditionally would then
+    // delete the SUCCESSOR's live lock on the way out.
     try {
-      fs.unlinkSync(lock);
+      if (fs.readFileSync(lock, 'utf8').trim() === token) fs.unlinkSync(lock);
     } catch {
-      /* already gone — nothing to release */
+      /* gone, or no longer ours — nothing to release */
     }
   }
 }

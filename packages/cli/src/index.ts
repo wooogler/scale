@@ -111,6 +111,15 @@ function stub(phase: string, note: string): void {
 
 const nowIso = (): string => new Date().toISOString();
 
+/**
+ * Score at or above which a single check counts as `completed` rather than
+ * `attempted`. This is the tutor rubric's band boundary (0.0-0.3 cannot state
+ * it / 0.4-0.6 shaky / 0.7-1.0 explains it), NOT `thresholds.validateDim` —
+ * that bar measures a component's cumulative comprehension across many checks
+ * and is not comparable to one item's score.
+ */
+const ITEM_PASS_SCORE = 0.5;
+
 function currentUser(dir: string): string {
   return readConfigSafe(dir)?.user ?? process.env.USER ?? 'unknown';
 }
@@ -390,10 +399,15 @@ program
     // it carries, and a fresh budget starts only once the repo has gone quiet
     // long enough to be a new work period (see isSessionAdoptable).
     const sessionId = sessionIdOf(await readHookPayload()) || crypto.randomUUID();
-    const existing = readSessionSafe(dir);
-    if (!existing || !isSessionAdoptable(existing)) {
-      writeSession(dir, defaultSession(sessionId, nowIso()));
-    }
+    // Under the lock: two windows starting together would otherwise both read
+    // "no adoptable record" and both write a fresh budget, and a gate reading
+    // between the truncate and the write would see a torn file.
+    withSessionLock(dir, () => {
+      const existing = readSessionSafe(dir);
+      if (!existing || !isSessionAdoptable(existing)) {
+        writeSession(dir, defaultSession(sessionId, nowIso()));
+      }
+    });
 
     let res: RecomputeResult;
     try {
@@ -798,9 +812,15 @@ gate
     // means another gate is deciding right now, so allow — over-interrupting is
     // the failure this gate exists to prevent.
     const decided = withSessionLock(dir, () => {
-    // Session budget accounting (create a fresh one if SessionStart never ran).
+    // Budget accounting. An expired record must not be reused: `context` is the
+    // only other place that evaluates the window, and it does not run in every
+    // configuration, so a months-old record with a spent budget would otherwise
+    // suppress the gate here forever.
+    const stored = readSessionSafe(dir);
     const session: SessionRecord =
-      readSessionSafe(dir) ?? defaultSession(crypto.randomUUID(), nowIso());
+      stored && isSessionAdoptable(stored)
+        ? stored
+        : defaultSession(crypto.randomUUID(), nowIso());
 
     const now = nowIso();
     const recentlyAddressed = recentlyAddressedComponents(
@@ -924,10 +944,12 @@ gate
 
     // Clear the pending marker if this is what the last deny was waiting on, so the
     // budget accounting matches the retry-passes path.
-    const session = readSessionSafe(dir);
-    if (session && session.pendingComponent === componentId) {
-      writeSession(dir, { ...session, pendingComponent: null });
-    }
+    withSessionLock(dir, () => {
+      const session = readSessionSafe(dir);
+      if (session && session.pendingComponent === componentId) {
+        writeSession(dir, { ...session, pendingComponent: null });
+      }
+    });
 
     console.log(
       `scale: skipped '${componentId}' (by ${opts.by}) — territory stays unconquered; ` +
@@ -1040,7 +1062,6 @@ program
       // the gate whatever it scored — the gate delivers checks, it does not
       // withhold commits until the junior is right (PLAN §6.1) — so the honest
       // fix is to name the difference, not to start blocking.
-      const bar = readConfigSafe(dir)?.thresholds.validateDim ?? 0.6;
       const achieved =
         entry.type === 'quiz_result'
           ? entry.score
@@ -1050,15 +1071,27 @@ program
               );
               return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
             })();
+      // NOT `thresholds.validateDim`. That bar is cumulative — it asks whether a
+      // component has been understood across repeated checks — and one item's
+      // score is not comparable to it. This is the tutor rubric's own boundary:
+      // 0.0-0.3 is "cannot state it", 0.4-0.6 "shaky", 0.7-1.0 "explains it", so
+      // anything above the bottom band demonstrated something.
+      const outcome = achieved >= ITEM_PASS_SCORE ? 'completed' : 'attempted';
+      // `timing` is the STUDY'S MANIPULATED VARIABLE, so it must report the
+      // condition this user is assigned to — never be re-derived from where the
+      // check came from. Deriving it from `--origin` mislabeled in both
+      // directions: a post-session quest completion was filed as `inflow`, and a
+      // voluntary /scale-study check in an in-flow condition as `postsession`.
+      const conditionTiming = readConfigSafe(dir)?.condition.timing ?? 'inflow';
       try {
         await appendEvidence(dir, {
           type: 'intervention',
           ts: entry.ts,
           user: entry.user,
           componentId,
-          timing: origin === 'voluntary' ? 'postsession' : 'inflow',
+          timing: conditionTiming,
           modality: entry.type === 'quiz_result' ? 'quiz' : 'socratic',
-          outcome: achieved >= bar ? 'completed' : 'attempted',
+          outcome,
           by,
         });
       } catch {
@@ -1345,7 +1378,14 @@ quest
   .argument('<questId>', 'quest to complete')
   .option('--results <json>', "quiz results: JSON array of {dim,score}, e.g. '[{\"dim\":\"concepts\",\"score\":1}]'")
   .option('--socratic <json>', "socratic rubric: JSON object of dim→score, e.g. '{\"structure\":0.8}'")
-  .action(async (questId: string, opts: { results?: string; socratic?: string }) => {
+  .option(
+    '--by <who>',
+    "who produced these answers: 'user' (the junior) or 'agent'. Same contract " +
+      'as `scale record --by`: an agent answering on the junior\'s behalf must ' +
+      'say so, or it lands in the study as the junior\'s comprehension',
+    'user',
+  )
+  .action(async (questId: string, opts: { results?: string; socratic?: string; by?: string }) => {
     const cwd = process.cwd();
     const dir = stateDir(cwd);
 
@@ -1357,6 +1397,12 @@ quest
       process.exitCode = 1;
       return;
     }
+    if (opts.by !== 'user' && opts.by !== 'agent') {
+      console.error(`scale: --by must be 'user' or 'agent' (got '${opts.by}').`);
+      process.exitCode = 1;
+      return;
+    }
+    const by = opts.by;
 
     // Both paths go through the SAME shared functions the web endpoint uses, so
     // a quest completes identically on the CLI and in the browser.
@@ -1370,7 +1416,7 @@ quest
         process.exitCode = 1;
         return;
       }
-      completion = await completeSocraticQuest(cwd, questId, dims);
+      completion = await completeSocraticQuest(cwd, questId, dims, by);
     } else {
       let results: unknown;
       try {
@@ -1385,7 +1431,7 @@ quest
         process.exitCode = 1;
         return;
       }
-      completion = await completeQuizQuest(cwd, questId, results);
+      completion = await completeQuizQuest(cwd, questId, results, by);
     }
 
     if (!completion) {

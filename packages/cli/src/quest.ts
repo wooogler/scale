@@ -748,6 +748,8 @@ export async function completeQuizQuest(
   cwd: string,
   questId: string,
   results: unknown,
+  /** Who produced these answers — see the `by` field on the evidence schemas. */
+  by: 'user' | 'agent' = 'user',
 ): Promise<QuestCompletion | null> {
   const dir = stateDir(cwd);
   const quests = readQuestsSafe(dir);
@@ -775,6 +777,7 @@ export async function completeQuizQuest(
         score,
         sha,
         origin: 'session',
+        by,
       });
       recorded++;
     } catch {
@@ -797,6 +800,8 @@ export async function completeSocraticQuest(
   cwd: string,
   questId: string,
   dims: unknown,
+  /** Who produced these answers — see the `by` field on the evidence schemas. */
+  by: 'user' | 'agent' = 'user',
 ): Promise<QuestCompletion | null> {
   const dir = stateDir(cwd);
   const quests = readQuestsSafe(dir);
@@ -822,6 +827,7 @@ export async function completeSocraticQuest(
         dims: graded,
         sha: shortHeadSha(cwd),
         origin: 'session',
+        by,
       });
       recorded = Object.keys(graded).length;
     } catch {

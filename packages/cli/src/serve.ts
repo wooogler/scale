@@ -393,7 +393,8 @@ async function handleQuestComplete(
 ): Promise<void> {
   const body = parseBody(await readBody(req));
   const results = Array.isArray(body.results) ? body.results : [];
-  const result = await completeQuizQuest(cwd, questId, results);
+  // The web quest runner is the junior clicking through the items themselves.
+  const result = await completeQuizQuest(cwd, questId, results, 'user');
   if (!result) {
     sendJson(res, 404, { error: 'unknown quest', id: questId });
     return;

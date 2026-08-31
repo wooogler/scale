@@ -10396,13 +10396,13 @@ var uuid4;
 var init_uuid = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs"() {
     uuid4 = function() {
-      const { crypto: crypto4 } = globalThis;
-      if (crypto4?.randomUUID) {
-        uuid4 = crypto4.randomUUID.bind(crypto4);
-        return crypto4.randomUUID();
+      const { crypto: crypto5 } = globalThis;
+      if (crypto5?.randomUUID) {
+        uuid4 = crypto5.randomUUID.bind(crypto5);
+        return crypto5.randomUUID();
       }
       const u8 = new Uint8Array(1);
-      const randomByte = crypto4 ? () => crypto4.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
+      const randomByte = crypto5 ? () => crypto5.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
       return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (+c ^ randomByte() & 15 >> +c / 4).toString(16));
     };
   }
@@ -16116,7 +16116,7 @@ import * as fs6 from "node:fs/promises";
 import * as fssync2 from "node:fs";
 import * as path7 from "node:path";
 import * as cp from "node:child_process";
-import * as crypto from "node:crypto";
+import * as crypto2 from "node:crypto";
 import * as readline from "node:readline";
 function resolveMaxBytes(configured) {
   return configured === void 0 ? DEFAULT_MAX_FILE_BYTES : configured;
@@ -16612,7 +16612,7 @@ var init_node = __esm({
         }
         __classPrivateFieldSet(this, _BashSession_buf, "", "f");
         __classPrivateFieldSet(this, _BashSession_truncated, false, "f");
-        const sentinel2 = `__ANT_CMD_${crypto.randomUUID()}_DONE__`;
+        const sentinel2 = `__ANT_CMD_${crypto2.randomUUID()}_DONE__`;
         const sentinelSplit = `${sentinel2.slice(0, 8)}''${sentinel2.slice(8)}`;
         const wrapped = `{ ${command}
 } </dev/null 2>&1; printf '\\n${sentinelSplit}%d\\n' $?
@@ -22495,7 +22495,7 @@ var init_sdk = __esm({
 import path10 from "node:path";
 import fs10 from "node:fs";
 import readline2 from "node:readline";
-import crypto3 from "node:crypto";
+import crypto4 from "node:crypto";
 import { execFileSync as execFileSync5 } from "node:child_process";
 
 // node_modules/commander/esm.mjs
@@ -27687,6 +27687,7 @@ import os from "node:os";
 import path2 from "node:path";
 import fs2 from "node:fs";
 import { promises as fsp } from "node:fs";
+import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 function slugify(input) {
   return input.toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/\.git$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
@@ -27802,7 +27803,7 @@ function isSessionAdoptable(session, now = Date.now()) {
   const lastAt = session.lastInterventionAt ? Date.parse(session.lastInterventionAt) : NaN;
   const marks = [started, lastAt].filter((n) => Number.isFinite(n));
   if (marks.length === 0) return false;
-  return now - Math.max(...marks) < SESSION_ADOPT_WINDOW_MS;
+  return Math.abs(now - Math.max(...marks)) < SESSION_ADOPT_WINDOW_MS;
 }
 var lockPath = (dir) => path2.join(dir, "session.lock");
 var LOCK_STALE_MS = 5e3;
@@ -27812,34 +27813,49 @@ function sleepSync(ms) {
   const shared = new Int32Array(new SharedArrayBuffer(4));
   Atomics.wait(shared, 0, 0, ms);
 }
+function reclaimStaleLock(lock) {
+  const dead = `${lock}.dead.${process.pid}.${Date.now().toString(36)}`;
+  try {
+    fs2.renameSync(lock, dead);
+  } catch {
+    return false;
+  }
+  try {
+    fs2.unlinkSync(dead);
+  } catch {
+  }
+  return true;
+}
 function withSessionLock(dir, fn) {
   ensureStateDir(dir);
   const lock = lockPath(dir);
+  const token = `${process.pid}:${crypto.randomUUID()}`;
   const deadline = Date.now() + LOCK_WAIT_MS;
-  for (; ; ) {
+  let acquired = false;
+  while (Date.now() < deadline) {
     try {
-      fs2.writeFileSync(lock, `${process.pid} ${(/* @__PURE__ */ new Date()).toISOString()}
+      fs2.writeFileSync(lock, `${token}
 `, { flag: "wx" });
+      acquired = true;
       break;
     } catch (err) {
       if (err.code !== "EEXIST") return null;
-      try {
-        if (Date.now() - fs2.statSync(lock).mtimeMs > LOCK_STALE_MS) {
-          fs2.unlinkSync(lock);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      if (Date.now() >= deadline) return null;
-      sleepSync(LOCK_POLL_MS);
     }
+    let ageMs;
+    try {
+      ageMs = Math.abs(Date.now() - fs2.statSync(lock).mtimeMs);
+    } catch {
+      continue;
+    }
+    if (ageMs > LOCK_STALE_MS && reclaimStaleLock(lock)) continue;
+    sleepSync(LOCK_POLL_MS);
   }
+  if (!acquired) return null;
   try {
     return fn();
   } finally {
     try {
-      fs2.unlinkSync(lock);
+      if (fs2.readFileSync(lock, "utf8").trim() === token) fs2.unlinkSync(lock);
     } catch {
     }
   }
@@ -28006,7 +28022,7 @@ function coverageCounts(coverage2, map2) {
 
 // packages/cli/src/quest.ts
 import fs8 from "node:fs";
-import crypto2 from "node:crypto";
+import crypto3 from "node:crypto";
 import { execFileSync as execFileSync3 } from "node:child_process";
 
 // packages/cli/src/llm.ts
@@ -28426,7 +28442,7 @@ function deterministicSocraticItems(paper, language = "en") {
 }
 function makeQuest(componentId, modality, items, origin = "session") {
   return QuestSchema.parse({
-    id: crypto2.randomUUID(),
+    id: crypto3.randomUUID(),
     componentId,
     modality,
     items,
@@ -28524,7 +28540,7 @@ var DIM_NAMES = ["structure", "concepts", "rationale"];
 function completionUser(dir) {
   return readConfigSafe(dir)?.user ?? process.env.USER ?? "user";
 }
-async function completeQuizQuest(cwd, questId, results) {
+async function completeQuizQuest(cwd, questId, results, by = "user") {
   const dir = stateDir(cwd);
   const quests = readQuestsSafe(dir);
   const quest2 = quests.find((q) => q.id === questId);
@@ -28548,7 +28564,8 @@ async function completeQuizQuest(cwd, questId, results) {
         dim,
         score,
         sha,
-        origin: "session"
+        origin: "session",
+        by
       });
       recorded++;
     } catch {
@@ -28556,7 +28573,7 @@ async function completeQuizQuest(cwd, questId, results) {
   }
   return finishCompletion(cwd, dir, quests, questId, quest2.componentId, recorded);
 }
-async function completeSocraticQuest(cwd, questId, dims) {
+async function completeSocraticQuest(cwd, questId, dims, by = "user") {
   const dir = stateDir(cwd);
   const quests = readQuestsSafe(dir);
   const quest2 = quests.find((q) => q.id === questId);
@@ -28578,7 +28595,8 @@ async function completeSocraticQuest(cwd, questId, dims) {
         componentId: quest2.componentId,
         dims: graded,
         sha: shortHeadSha2(cwd),
-        origin: "session"
+        origin: "session",
+        by
       });
       recorded = Object.keys(graded).length;
     } catch {
@@ -28856,7 +28874,7 @@ async function handle(req, res, cwd) {
 async function handleQuestComplete(req, res, cwd, questId) {
   const body = parseBody(await readBody(req));
   const results = Array.isArray(body.results) ? body.results : [];
-  const result = await completeQuizQuest(cwd, questId, results);
+  const result = await completeQuizQuest(cwd, questId, results, "user");
   if (!result) {
     sendJson(res, 404, { error: "unknown quest", id: questId });
     return;
@@ -29202,6 +29220,7 @@ var SCALE_VERSION = true ? "0.1.0" : "0.0.0-dev";
 var program2 = new Command();
 program2.name("scale").description("SCALE \u2014 coverage-memory state engine and tutor CLI").version(SCALE_VERSION);
 var nowIso = () => (/* @__PURE__ */ new Date()).toISOString();
+var ITEM_PASS_SCORE = 0.5;
 function currentUser(dir) {
   return readConfigSafe(dir)?.user ?? process.env.USER ?? "unknown";
 }
@@ -29383,11 +29402,13 @@ program2.command("context").description("Print the SessionStart coverage summary
   const cwd = process.cwd();
   const dir = stateDir(cwd);
   ensureStateDir(dir);
-  const sessionId = sessionIdOf(await readHookPayload()) || crypto3.randomUUID();
-  const existing = readSessionSafe(dir);
-  if (!existing || !isSessionAdoptable(existing)) {
-    writeSession(dir, defaultSession(sessionId, nowIso()));
-  }
+  const sessionId = sessionIdOf(await readHookPayload()) || crypto4.randomUUID();
+  withSessionLock(dir, () => {
+    const existing = readSessionSafe(dir);
+    if (!existing || !isSessionAdoptable(existing)) {
+      writeSession(dir, defaultSession(sessionId, nowIso()));
+    }
+  });
   let res;
   try {
     res = recomputeCoverageFromDisk(cwd);
@@ -29634,7 +29655,8 @@ gate.command("commit").description(
   const importance = {};
   for (const n of map2.nodes) importance[n.id] = n.importance;
   const decided = withSessionLock(dir, () => {
-    const session = readSessionSafe(dir) ?? defaultSession(crypto3.randomUUID(), nowIso());
+    const stored = readSessionSafe(dir);
+    const session = stored && isSessionAdoptable(stored) ? stored : defaultSession(crypto4.randomUUID(), nowIso());
     const now = nowIso();
     const recentlyAddressed = recentlyAddressedComponents(
       dir,
@@ -29714,10 +29736,12 @@ gate.command("defer").description(
     outcome: "deferred",
     by: opts.by
   });
-  const session = readSessionSafe(dir);
-  if (session && session.pendingComponent === componentId) {
-    writeSession(dir, { ...session, pendingComponent: null });
-  }
+  withSessionLock(dir, () => {
+    const session = readSessionSafe(dir);
+    if (session && session.pendingComponent === componentId) {
+      writeSession(dir, { ...session, pendingComponent: null });
+    }
+  });
   console.log(
     `scale: skipped '${componentId}' (by ${opts.by}) \u2014 territory stays unconquered; commit will proceed.`
   );
@@ -29794,22 +29818,23 @@ program2.command("record").description("Record a quiz/Socratic validation outcom
       process.exitCode = 1;
       return;
     }
-    const bar = readConfigSafe(dir)?.thresholds.validateDim ?? 0.6;
     const achieved = entry.type === "quiz_result" ? entry.score : (() => {
       const vals = Object.values(entry.dims).filter(
         (v) => typeof v === "number"
       );
       return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
     })();
+    const outcome = achieved >= ITEM_PASS_SCORE ? "completed" : "attempted";
+    const conditionTiming = readConfigSafe(dir)?.condition.timing ?? "inflow";
     try {
       await appendEvidence(dir, {
         type: "intervention",
         ts: entry.ts,
         user: entry.user,
         componentId,
-        timing: origin === "voluntary" ? "postsession" : "inflow",
+        timing: conditionTiming,
         modality: entry.type === "quiz_result" ? "quiz" : "socratic",
-        outcome: achieved >= bar ? "completed" : "attempted",
+        outcome,
         by
       });
     } catch {
@@ -30033,7 +30058,11 @@ quest.command("list").description("List pending quests from quests.json").action
     );
   }
 });
-quest.command("complete").description("Record a quest outcome, mark it completed, and update coverage").argument("<questId>", "quest to complete").option("--results <json>", `quiz results: JSON array of {dim,score}, e.g. '[{"dim":"concepts","score":1}]'`).option("--socratic <json>", `socratic rubric: JSON object of dim\u2192score, e.g. '{"structure":0.8}'`).action(async (questId, opts) => {
+quest.command("complete").description("Record a quest outcome, mark it completed, and update coverage").argument("<questId>", "quest to complete").option("--results <json>", `quiz results: JSON array of {dim,score}, e.g. '[{"dim":"concepts","score":1}]'`).option("--socratic <json>", `socratic rubric: JSON object of dim\u2192score, e.g. '{"structure":0.8}'`).option(
+  "--by <who>",
+  "who produced these answers: 'user' (the junior) or 'agent'. Same contract as `scale record --by`: an agent answering on the junior's behalf must say so, or it lands in the study as the junior's comprehension",
+  "user"
+).action(async (questId, opts) => {
   const cwd = process.cwd();
   const dir = stateDir(cwd);
   if (opts.results === void 0 && opts.socratic === void 0) {
@@ -30043,6 +30072,12 @@ quest.command("complete").description("Record a quest outcome, mark it completed
     process.exitCode = 1;
     return;
   }
+  if (opts.by !== "user" && opts.by !== "agent") {
+    console.error(`scale: --by must be 'user' or 'agent' (got '${opts.by}').`);
+    process.exitCode = 1;
+    return;
+  }
+  const by = opts.by;
   let completion;
   if (opts.socratic !== void 0) {
     let dims;
@@ -30053,7 +30088,7 @@ quest.command("complete").description("Record a quest outcome, mark it completed
       process.exitCode = 1;
       return;
     }
-    completion = await completeSocraticQuest(cwd, questId, dims);
+    completion = await completeSocraticQuest(cwd, questId, dims, by);
   } else {
     let results;
     try {
@@ -30068,7 +30103,7 @@ quest.command("complete").description("Record a quest outcome, mark it completed
       process.exitCode = 1;
       return;
     }
-    completion = await completeQuizQuest(cwd, questId, results);
+    completion = await completeQuizQuest(cwd, questId, results, by);
   }
   if (!completion) {
     console.error(`scale: unknown quest "${questId}".`);
