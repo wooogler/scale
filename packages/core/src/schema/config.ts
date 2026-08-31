@@ -41,6 +41,19 @@ export const BudgetsSchema = z.object({
   maxPerSession: z.number().int().min(0).default(2),
   cooldownMinutes: z.number().min(0).default(15),
   minChangedLines: z.number().int().min(0).default(20),
+  /**
+   * Backstop for deciding a budget period has ended, in minutes of no activity.
+   *
+   * The period normally ends when the last Claude Code window attached to the
+   * repo closes (SessionEnd decrements an open-window count). This only recovers
+   * the case where that signal is lost — a crash, a killed terminal — which
+   * would otherwise pin the count above zero and suppress the gate forever.
+   *
+   * It is therefore deliberately much longer than a working day: it must never
+   * be the thing that ends a session, or a long quiet stretch of work would
+   * silently refill the budget. 12 hours.
+   */
+  sessionIdleResetMinutes: z.number().min(0).default(720),
 });
 export type Budgets = z.infer<typeof BudgetsSchema>;
 

@@ -15,8 +15,15 @@
 //   - in-flow conditions      → no-op (no quests are ever generated; PLAN §6.2).
 // The parent (this script) does not wait for or observe the child.
 
-import { readStdin, runScaleDetached } from "./lib/scale.mjs";
+import { readStdin, runScaleSync, runScaleDetached } from "./lib/scale.mjs";
 
 const raw = await readStdin();
+
+// Release this window's hold on the interruption budget FIRST, synchronously:
+// it is a tiny locked read/write, and the budget period must end when the last
+// window closes rather than being guessed from a clock. Detaching it would race
+// the next SessionStart. Fails open like every other hook.
+runScaleSync(["session", "end"], raw);
+
 runScaleDetached(["quest", "generate"], raw);
 process.exit(0);

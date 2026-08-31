@@ -19,28 +19,40 @@ const HOUR = 60 * MINUTE;
 
 describe('isSessionAdoptable', () => {
   const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+  // The shipped default: 12h, long enough that it never ends a working day —
+  // it exists only to recover a SessionEnd lost to a crash.
+  const BACKSTOP = 12 * HOUR;
 
   it('adopts a session that just started — a second window joins it', () => {
-    expect(isSessionAdoptable(defaultSession('win-b', at(5 * MINUTE)))).toBe(true);
+    expect(isSessionAdoptable(defaultSession('win-b', at(5 * MINUTE)), BACKSTOP)).toBe(true);
   });
 
-  it('expires a session that has been quiet past the window', () => {
-    expect(isSessionAdoptable(defaultSession('old', at(5 * HOUR)))).toBe(false);
+  it('keeps a long continuous work period — the backstop must not end it', () => {
+    // The case the old hardcoded 4h window got wrong: five hours of unbroken
+    // work refilled the budget mid-session.
+    expect(isSessionAdoptable(defaultSession('all-day', at(5 * HOUR)), BACKSTOP)).toBe(true);
+  });
+
+  it('expires once the backstop has passed — a lost SessionEnd is recovered', () => {
+    expect(isSessionAdoptable(defaultSession('crashed', at(13 * HOUR)), BACKSTOP)).toBe(false);
   });
 
   it('measures from the last intervention, not the start', () => {
-    // Started long ago but interrupted a minute ago: still the same work period,
-    // so the budget must not refill under the junior's hands.
     const session = {
-      ...defaultSession('long-running', at(5 * HOUR)),
+      ...defaultSession('long-running', at(20 * HOUR)),
       interventionsThisSession: 2,
       lastInterventionAt: at(1 * MINUTE),
     };
-    expect(isSessionAdoptable(session)).toBe(true);
+    expect(isSessionAdoptable(session, BACKSTOP)).toBe(true);
+  });
+
+  it('treats a future-dated record as expired, not adoptable forever', () => {
+    const future = new Date(Date.now() + 30 * HOUR).toISOString();
+    expect(isSessionAdoptable(defaultSession('skewed', future), BACKSTOP)).toBe(false);
   });
 
   it('treats an unparseable record as expired rather than adopting it', () => {
-    expect(isSessionAdoptable({ ...defaultSession('x', 'not-a-date') })).toBe(false);
+    expect(isSessionAdoptable(defaultSession('x', 'not-a-date'), BACKSTOP)).toBe(false);
   });
 });
 

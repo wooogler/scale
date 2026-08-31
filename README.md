@@ -207,6 +207,7 @@ row at the top, then the rest — same file, same validation, no terminal needed
 | `condition.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
 | `inflow.triggers` | `pre-commit` | Which in-flow moments the gate fires on. The schema also accepts `post-task`, but **nothing implements it** — there is no Stop hook, so enabling it alone yields a silently zero-intervention session. |
 | `budgets.*` | non-negative numbers | Interruption ceiling: per commit, per session, cooldown, minimum changed lines. `0` means "off". |
+| `budgets.sessionIdleResetMinutes` | non-negative number | Backstop for ending a budget period (default 720 = 12h). A period normally ends when the **last Claude Code window** attached to the repo closes, so a second terminal shares the budget instead of refilling it; this only recovers a SessionEnd lost to a crash, and is deliberately longer than a working day so it never ends a session by itself. |
 | `models.provider` | `anthropic` \| `openai` | Which API serves **interventions**. |
 | `models.intervention` | `sonnet` \| `opus` | Intervention tier; resolves per provider (see table above). |
 | `models.openaiModel` | any model id | Optional override pinning an explicit GPT model. |

@@ -15945,10 +15945,10 @@ async function setupSkills(ctx) {
     return async () => {
     };
   const log2 = loggerFor(client);
-  const session = await client.beta.sessions.retrieve(sessionId);
+  const session2 = await client.beta.sessions.retrieve(sessionId);
   const skillsRoot = path6.resolve(ctx.workdir, "skills");
   const created = [];
-  for (const skill of session.agent.skills) {
+  for (const skill of session2.agent.skills) {
     try {
       const versionId = await resolveSkillVersion(client, skill.skill_id, skill.version);
       const version = await client.beta.skills.versions.retrieve(versionId, { skill_id: skill.skill_id });
@@ -16144,7 +16144,7 @@ function scrubbedShellEnv() {
   return env;
 }
 function betaBashTool(ctx) {
-  let session;
+  let session2;
   let tail = Promise.resolve();
   return betaTool({
     name: "bash",
@@ -16167,17 +16167,17 @@ function betaBashTool(ctx) {
       }
       try {
         if (restart) {
-          session?.close();
-          session = void 0;
+          session2?.close();
+          session2 = void 0;
         }
         if (!command) {
           if (restart)
             return "bash session restarted";
           throw new ToolError("bash: command is required");
         }
-        session ?? (session = new BashSession(ctx.workdir, ctx.env));
+        session2 ?? (session2 = new BashSession(ctx.workdir, ctx.env));
         try {
-          const { output, exitCode } = await session.exec(command, {
+          const { output, exitCode } = await session2.exec(command, {
             timeoutMs: timeout_ms ?? BASH_DEFAULT_TIMEOUT_MS,
             signal: context?.signal
           });
@@ -16187,8 +16187,8 @@ function betaBashTool(ctx) {
         } catch (e) {
           if (e instanceof ToolError)
             throw e;
-          session.close();
-          session = void 0;
+          session2.close();
+          session2 = void 0;
           throw new ToolError(`bash: ${e instanceof Error ? e.message : String(e)}`);
         }
       } finally {
@@ -16196,8 +16196,8 @@ function betaBashTool(ctx) {
       }
     },
     close: () => {
-      session?.close();
-      session = void 0;
+      session2?.close();
+      session2 = void 0;
     }
   });
 }
@@ -26764,7 +26764,20 @@ var BudgetsSchema = external_exports.object({
   maxPerCommit: external_exports.number().int().min(0).default(1),
   maxPerSession: external_exports.number().int().min(0).default(2),
   cooldownMinutes: external_exports.number().min(0).default(15),
-  minChangedLines: external_exports.number().int().min(0).default(20)
+  minChangedLines: external_exports.number().int().min(0).default(20),
+  /**
+   * Backstop for deciding a budget period has ended, in minutes of no activity.
+   *
+   * The period normally ends when the last Claude Code window attached to the
+   * repo closes (SessionEnd decrements an open-window count). This only recovers
+   * the case where that signal is lost — a crash, a killed terminal — which
+   * would otherwise pin the count above zero and suppress the gate forever.
+   *
+   * It is therefore deliberately much longer than a working day: it must never
+   * be the thing that ends a session, or a long quiet stretch of work would
+   * silently refill the budget. 12 hours.
+   */
+  sessionIdleResetMinutes: external_exports.number().min(0).default(720)
 });
 var InterventionModelSchema = external_exports.preprocess((v) => v === "haiku" ? "sonnet" : v, external_exports.enum(["sonnet", "opus"]));
 var LlmProviderSchema = external_exports.enum(["anthropic", "openai"]);
@@ -27583,7 +27596,7 @@ Do NOT skip this on their behalf. If \u2014 and only if \u2014 they say to skip,
   return reason + ` The junior's interaction language is KOREAN: deliver the check itself entirely in Korean, keeping code identifiers and technical terms in English.`;
 }
 function gateDecision(input) {
-  const { config: config2, session } = input;
+  const { config: config2, session: session2 } = input;
   if (config2.condition.timing !== "inflow") {
     return { action: "allow", reason: "post-session condition \u2014 gate is a no-op" };
   }
@@ -27601,10 +27614,10 @@ function gateDecision(input) {
   if (input.changedLines < config2.budgets.minChangedLines) {
     return { action: "allow", reason: "trivial diff below minChangedLines" };
   }
-  if (session.interventionsThisSession >= config2.budgets.maxPerSession) {
+  if (session2.interventionsThisSession >= config2.budgets.maxPerSession) {
     return { action: "allow", reason: "session intervention budget spent" };
   }
-  if (session.lastInterventionAt !== null && minutesBetween(input.now, session.lastInterventionAt) < config2.budgets.cooldownMinutes) {
+  if (session2.lastInterventionAt !== null && minutesBetween(input.now, session2.lastInterventionAt) < config2.budgets.cooldownMinutes) {
     return { action: "allow", reason: "within cooldown window" };
   }
   const target = topCandidate(cands, input.importance);
@@ -27775,7 +27788,8 @@ function defaultSession(sessionId, startedAt) {
     startedAt,
     interventionsThisSession: 0,
     lastInterventionAt: null,
-    pendingComponent: null
+    pendingComponent: null,
+    openWindows: 0
   };
 }
 var sessionPath = (dir) => path2.join(dir, "session.json");
@@ -27787,23 +27801,25 @@ function readSessionSafe(dir) {
       startedAt: typeof raw.startedAt === "string" ? raw.startedAt : "",
       interventionsThisSession: typeof raw.interventionsThisSession === "number" ? raw.interventionsThisSession : 0,
       lastInterventionAt: typeof raw.lastInterventionAt === "string" ? raw.lastInterventionAt : null,
-      pendingComponent: typeof raw.pendingComponent === "string" ? raw.pendingComponent : null
+      pendingComponent: typeof raw.pendingComponent === "string" ? raw.pendingComponent : null,
+      // Clamped at 0: a lost SessionEnd must not drive this negative, and a
+      // record written before this field existed reads as "unknown" → 0.
+      openWindows: typeof raw.openWindows === "number" && Number.isFinite(raw.openWindows) ? Math.max(0, Math.trunc(raw.openWindows)) : 0
     };
   } catch {
     return null;
   }
 }
-function writeSession(dir, session) {
+function writeSession(dir, session2) {
   ensureStateDir(dir);
-  fs2.writeFileSync(sessionPath(dir), JSON.stringify(session, null, 2) + "\n");
+  fs2.writeFileSync(sessionPath(dir), JSON.stringify(session2, null, 2) + "\n");
 }
-var SESSION_ADOPT_WINDOW_MS = 4 * 60 * 60 * 1e3;
-function isSessionAdoptable(session, now = Date.now()) {
-  const started = Date.parse(session.startedAt);
-  const lastAt = session.lastInterventionAt ? Date.parse(session.lastInterventionAt) : NaN;
+function isSessionAdoptable(session2, backstopMs, now = Date.now()) {
+  const started = Date.parse(session2.startedAt);
+  const lastAt = session2.lastInterventionAt ? Date.parse(session2.lastInterventionAt) : NaN;
   const marks = [started, lastAt].filter((n) => Number.isFinite(n));
   if (marks.length === 0) return false;
-  return Math.abs(now - Math.max(...marks)) < SESSION_ADOPT_WINDOW_MS;
+  return Math.abs(now - Math.max(...marks)) < backstopMs;
 }
 var lockPath = (dir) => path2.join(dir, "session.lock");
 var LOCK_STALE_MS = 5e3;
@@ -28464,8 +28480,8 @@ async function generateQuests(cwd, opts = {}) {
     return { via: "skip", model, count: 0, path: questsPath, components: [] };
   }
   const { coverage: coverage2, map: map2 } = recomputeCoverageFromDisk(cwd);
-  const session = readSessionSafe(dir);
-  const touched = touchedComponentsSince(dir, session?.startedAt ?? "");
+  const session2 = readSessionSafe(dir);
+  const touched = touchedComponentsSince(dir, session2?.startedAt ?? "");
   const k = opts.topK ?? DEFAULT_TOP_K;
   const picked = pickComponents(coverage2, map2, touched, config2, k);
   const modality = config2.condition.modality;
@@ -29403,11 +29419,12 @@ program2.command("context").description("Print the SessionStart coverage summary
   const dir = stateDir(cwd);
   ensureStateDir(dir);
   const sessionId = sessionIdOf(await readHookPayload()) || crypto4.randomUUID();
+  const backstopMs = (readConfigSafe(dir)?.budgets.sessionIdleResetMinutes ?? 720) * 6e4;
   withSessionLock(dir, () => {
     const existing = readSessionSafe(dir);
-    if (!existing || !isSessionAdoptable(existing)) {
-      writeSession(dir, defaultSession(sessionId, nowIso()));
-    }
+    const continuing = existing && isSessionAdoptable(existing, backstopMs) && existing.openWindows > 0;
+    const next = continuing ? { ...existing, openWindows: existing.openWindows + 1 } : { ...defaultSession(sessionId, nowIso()), openWindows: 1 };
+    writeSession(dir, next);
   });
   let res;
   try {
@@ -29417,6 +29434,25 @@ program2.command("context").description("Print the SessionStart coverage summary
     return;
   }
   console.log(contextSummary(res, readConfigSafe(dir)?.language ?? "en"));
+});
+var session = program2.command("session").description("Budget-period accounting for the interruption gate (PLAN \xA76.1)");
+session.command("end").description(
+  "Release this window's hold on the current budget period (SessionEnd hook). When the last window closes the period ends, so the NEXT SessionStart starts a fresh interruption budget."
+).action(async () => {
+  const cwd = process.cwd();
+  const dir = stateDir(cwd);
+  if (!readSessionSafe(dir)) return;
+  const remaining = withSessionLock(dir, () => {
+    const existing = readSessionSafe(dir);
+    if (!existing) return null;
+    const openWindows = Math.max(0, existing.openWindows - 1);
+    writeSession(dir, { ...existing, openWindows });
+    return openWindows;
+  });
+  if (remaining === null) return;
+  console.log(
+    remaining === 0 ? "scale: budget period ended (last window closed)." : `scale: window released (${remaining} still open).`
+  );
 });
 function buildStatus(cwd, res, dir) {
   const { coverage: coverage2, map: map2 } = res;
@@ -29656,7 +29692,7 @@ gate.command("commit").description(
   for (const n of map2.nodes) importance[n.id] = n.importance;
   const decided = withSessionLock(dir, () => {
     const stored = readSessionSafe(dir);
-    const session = stored && isSessionAdoptable(stored) ? stored : defaultSession(crypto4.randomUUID(), nowIso());
+    const session2 = stored && isSessionAdoptable(stored, config2.budgets.sessionIdleResetMinutes * 6e4) ? stored : defaultSession(crypto4.randomUUID(), nowIso());
     const now = nowIso();
     const recentlyAddressed = recentlyAddressedComponents(
       dir,
@@ -29668,9 +29704,9 @@ gate.command("commit").description(
       coverage: coverage2,
       config: config2,
       session: {
-        interventionsThisSession: session.interventionsThisSession,
-        lastInterventionAt: session.lastInterventionAt,
-        pendingComponent: session.pendingComponent
+        interventionsThisSession: session2.interventionsThisSession,
+        lastInterventionAt: session2.lastInterventionAt,
+        pendingComponent: session2.pendingComponent
       },
       changedLines,
       recentlyAddressed,
@@ -29680,15 +29716,15 @@ gate.command("commit").description(
     const decision = gateDecision(gateInput);
     if (decision.action === "deny" && decision.component) {
       writeSession(dir, {
-        ...session,
-        interventionsThisSession: session.interventionsThisSession + 1,
+        ...session2,
+        interventionsThisSession: session2.interventionsThisSession + 1,
         lastInterventionAt: now,
         pendingComponent: decision.component
       });
       return { component: decision.component, reason: decision.reason ?? null, now };
     }
-    if (session.pendingComponent && recentlyAddressed.includes(session.pendingComponent)) {
-      writeSession(dir, { ...session, pendingComponent: null });
+    if (session2.pendingComponent && recentlyAddressed.includes(session2.pendingComponent)) {
+      writeSession(dir, { ...session2, pendingComponent: null });
     }
     return null;
   });
@@ -29737,9 +29773,9 @@ gate.command("defer").description(
     by: opts.by
   });
   withSessionLock(dir, () => {
-    const session = readSessionSafe(dir);
-    if (session && session.pendingComponent === componentId) {
-      writeSession(dir, { ...session, pendingComponent: null });
+    const session2 = readSessionSafe(dir);
+    if (session2 && session2.pendingComponent === componentId) {
+      writeSession(dir, { ...session2, pendingComponent: null });
     }
   });
   console.log(

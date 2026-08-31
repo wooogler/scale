@@ -191,6 +191,14 @@ export interface SessionRecord {
   lastInterventionAt: string | null;
   /** Component the last deny asked about; cleared once its retry passes. */
   pendingComponent: string | null;
+  /**
+   * Claude Code windows currently attached to this repo. SessionStart increments
+   * it, SessionEnd decrements it, and the budget period ends when it reaches
+   * zero — which is what makes "per session" mean a period of work rather than
+   * a window, so opening a second terminal shares the budget instead of
+   * refilling it.
+   */
+  openWindows: number;
 }
 
 /** A brand-new session record (fresh budget). */
@@ -201,6 +209,7 @@ export function defaultSession(sessionId: string, startedAt: string): SessionRec
     interventionsThisSession: 0,
     lastInterventionAt: null,
     pendingComponent: null,
+    openWindows: 0,
   };
 }
 
@@ -222,6 +231,12 @@ export function readSessionSafe(dir: string): SessionRecord | null {
         typeof raw.lastInterventionAt === 'string' ? raw.lastInterventionAt : null,
       pendingComponent:
         typeof raw.pendingComponent === 'string' ? raw.pendingComponent : null,
+      // Clamped at 0: a lost SessionEnd must not drive this negative, and a
+      // record written before this field existed reads as "unknown" → 0.
+      openWindows:
+        typeof raw.openWindows === 'number' && Number.isFinite(raw.openWindows)
+          ? Math.max(0, Math.trunc(raw.openWindows))
+          : 0,
     };
   } catch {
     return null;
@@ -235,29 +250,21 @@ export function writeSession(dir: string, session: SessionRecord): void {
 }
 
 /**
- * How long an idle session record stays adoptable.
+ * True when `session` is still the CURRENT budget period and must not be
+ * replaced by a fresh one.
  *
- * The interruption budget is per REPO, not per window: `gate.ts` documents it as
- * "≤ maxPerSession per session", and opening a second terminal used to rewrite
- * session.json with a fresh budget, so the guarantee was false — a sibling
- * window refilled the counter and nulled the cooldown. A second window now joins
- * the running budget instead of resetting it.
- *
- * That needs an end, or the budget would never refill again. "Session" therefore
- * means a work period in this repo, ended by going quiet, rather than a window
- * being opened or closed — which is also the quantity the study is actually
- * about (how often was this person interrupted while working), and it is
- * measured the same whether they use one terminal or four.
- */
-const SESSION_ADOPT_WINDOW_MS = 4 * 60 * 60 * 1000;
-
-/**
- * True when `session` is still the current work period and should be adopted
- * rather than replaced. Measured from the later of its start and its last
- * intervention, so an active session never expires under someone's hands.
+ * The period is ended by SessionEnd bringing `openWindows` to zero — see
+ * `budgets.sessionIdleResetMinutes` for why the idle check exists at all. This
+ * predicate deliberately does NOT consult `openWindows`: a zero count means the
+ * next SessionStart may begin a new period, not that an already-spent budget
+ * should be forgotten by everything else. The gate in particular must keep
+ * honoring a recent record even in a session where SessionStart never ran (the
+ * plugin was enabled mid-session), or it would mint a fresh budget on every
+ * commit and fire without limit.
  */
 export function isSessionAdoptable(
   session: SessionRecord,
+  backstopMs: number,
   now: number = Date.now(),
 ): boolean {
   const started = Date.parse(session.startedAt);
@@ -267,7 +274,7 @@ export function isSessionAdoptable(
   // Math.abs so a record stamped in the FUTURE (clock skew, a restored backup)
   // expires like any other instead of being adoptable forever, which would
   // freeze the budget in whatever state it was last written.
-  return Math.abs(now - Math.max(...marks)) < SESSION_ADOPT_WINDOW_MS;
+  return Math.abs(now - Math.max(...marks)) < backstopMs;
 }
 
 const lockPath = (dir: string): string => path.join(dir, 'session.lock');

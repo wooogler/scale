@@ -399,14 +399,22 @@ program
     // it carries, and a fresh budget starts only once the repo has gone quiet
     // long enough to be a new work period (see isSessionAdoptable).
     const sessionId = sessionIdOf(await readHookPayload()) || crypto.randomUUID();
+    const backstopMs = (readConfigSafe(dir)?.budgets.sessionIdleResetMinutes ?? 720) * 60_000;
     // Under the lock: two windows starting together would otherwise both read
     // "no adoptable record" and both write a fresh budget, and a gate reading
     // between the truncate and the write would see a torn file.
     withSessionLock(dir, () => {
       const existing = readSessionSafe(dir);
-      if (!existing || !isSessionAdoptable(existing)) {
-        writeSession(dir, defaultSession(sessionId, nowIso()));
-      }
+      // A new budget period begins only when the previous one is actually over:
+      // either every window that was attached to it has closed (openWindows back
+      // to zero), or the idle backstop fired because a SessionEnd was lost. A
+      // window opening alongside others JOINS the running period — that is what
+      // makes `maxPerSession` count a stretch of work rather than a terminal.
+      const continuing = existing && isSessionAdoptable(existing, backstopMs) && existing.openWindows > 0;
+      const next = continuing
+        ? { ...existing, openWindows: existing.openWindows + 1 }
+        : { ...defaultSession(sessionId, nowIso()), openWindows: 1 };
+      writeSession(dir, next);
     });
 
     let res: RecomputeResult;
@@ -418,6 +426,46 @@ program
     }
     // Per-user interaction language (config is optional pre-`init` → 'en').
     console.log(contextSummary(res, readConfigSafe(dir)?.language ?? 'en'));
+  });
+
+// ---------------------------------------------------------------------------
+// session end  (REAL) — SessionEnd hook: release this window's hold on the
+// budget period. Pure file read/write under the session lock, no LLM.
+// ---------------------------------------------------------------------------
+const session = program
+  .command('session')
+  .description('Budget-period accounting for the interruption gate (PLAN §6.1)');
+
+session
+  .command('end')
+  .description(
+    'Release this window\'s hold on the current budget period (SessionEnd hook). ' +
+      'When the last window closes the period ends, so the NEXT SessionStart ' +
+      'starts a fresh interruption budget.',
+  )
+  .action(async () => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    // Nothing to release if state was never set up — stay silent and exit 0 so
+    // the hook is a clean no-op.
+    if (!readSessionSafe(dir)) return;
+
+    const remaining = withSessionLock(dir, () => {
+      const existing = readSessionSafe(dir);
+      if (!existing) return null;
+      const openWindows = Math.max(0, existing.openWindows - 1);
+      writeSession(dir, { ...existing, openWindows });
+      return openWindows;
+    });
+    // Lock contention here is harmless: the idle backstop still ends the period,
+    // and under-counting a close only means the budget persists a little longer,
+    // which errs toward fewer interruptions.
+    if (remaining === null) return;
+    console.log(
+      remaining === 0
+        ? 'scale: budget period ended (last window closed).'
+        : `scale: window released (${remaining} still open).`,
+    );
   });
 
 // ---------------------------------------------------------------------------
@@ -818,7 +866,7 @@ gate
     // suppress the gate here forever.
     const stored = readSessionSafe(dir);
     const session: SessionRecord =
-      stored && isSessionAdoptable(stored)
+      stored && isSessionAdoptable(stored, config.budgets.sessionIdleResetMinutes * 60_000)
         ? stored
         : defaultSession(crypto.randomUUID(), nowIso());
 
