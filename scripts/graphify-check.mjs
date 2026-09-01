@@ -56,7 +56,21 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const TOOLCHAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * The repository being audited. Defaults to this one; `--root <dir>` audits any
+ * other checkout with a `.scale/`, so link precision can be measured on a second
+ * codebase rather than generalised from one.
+ */
+function rootArg() {
+  const eq = process.argv.find((a) => a.startsWith('--root='));
+  if (eq) return resolve(eq.slice('--root='.length));
+  const i = process.argv.indexOf('--root');
+  const v = i >= 0 ? process.argv[i + 1] : null;
+  return v && !v.startsWith('--') ? resolve(v) : TOOLCHAIN;
+}
+const ROOT = rootArg();
 
 // ---------------------------------------------------------------------------
 // Audit surface — the constants below decide what "orphan" even means, so they
@@ -176,6 +190,15 @@ function parseArgv(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') options.json = true;
+    else if (a === '--root') {
+      // Consumed by rootArg() before the report runs; accepted here so the
+      // strict unknown-argument guard does not reject it.
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) fail('--root needs a path');
+      i++;
+    } else if (a.startsWith('--root=')) {
+      if (a.slice('--root='.length) === '') fail('--root needs a path');
+    }
     else if (a === '--graph') {
       // Guard against `--graph --json` swallowing the next flag as a filename.
       const next = argv[i + 1];
@@ -196,8 +219,11 @@ function parseArgv(argv) {
 function printHelp() {
   console.log(
     [
-      'Usage: node scripts/graphify-check.mjs [--graph <path>] [--json]',
+      'Usage: node scripts/graphify-check.mjs [--root <dir>] [--graph <path>] [--json]',
       '',
+      '  --root <dir>    repository to audit (default: this one). Any checkout',
+      '                  with a .scale/ works — a second repo is what turns one',
+      '                  precision number into a measurement.',
       '  --graph <path>  graphify graph.json to enable link precision/recall +',
       '                  cohesion. Defaults to graphify-out/graph.json if present.',
       '  --json          emit the report as JSON on stdout (nothing else).',

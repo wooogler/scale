@@ -31,7 +31,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const TOOLCHAIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * The repository being analysed. Defaults to this one; `--root <dir>` points the
+ * distiller at any other checkout that has a `.scale/` (PLAN-GRAPHIFY §9.5 —
+ * a second repo is what turns one precision number into a measurement).
+ */
+function rootArg() {
+  const i = process.argv.indexOf('--root');
+  const v = i >= 0 ? process.argv[i + 1] : null;
+  return v && !v.startsWith('--') ? path.resolve(v) : TOOLCHAIN;
+}
+const ROOT = rootArg();
 const SELF = 'distill-graph';
 
 class DistillError extends Error {}
@@ -67,7 +79,7 @@ function toRepoRelative(sourceFile) {
 // ---------------------------------------------------------------------------
 
 function loadCore() {
-  const entry = path.join(ROOT, 'packages', 'core', 'dist', 'index.js');
+  const entry = path.join(TOOLCHAIN, 'packages', 'core', 'dist', 'index.js');
   if (!fs.existsSync(entry)) {
     die(
       'cannot import @scale/core (packages/core/dist is missing).',
