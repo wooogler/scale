@@ -332,3 +332,27 @@ diff를 통째로 없애고 있었고, drift 블록이 조용히 안 나왔다. 
 `full`이 기본인 근거: paper 본문(같은 코드를 서술한 산문)은 **이미** 매 체크마다
 모델로 간다. 증분은 소스 줄 자체이고, 변경을 못 보는 회복 체크는 이 단계가 고치려던
 바로 그 약한 도구다. 그래도 결정은 팀이 하도록 남겼다.
+
+### 13.6 적대적 리뷰가 잡은 것 (3 lens × 검증)
+
+S2b를 커밋한 뒤 공격 리뷰를 돌렸다. **읽어서가 아니라 실제로 재현해서** 나온 것들:
+
+| 심각도 | 문제 | 상태 |
+|---|---|---|
+| HIGH | skeleton이 fence 밖 (commit subject·author) | `5367ac4`에서 이미 수정 |
+| HIGH | **`parseHunks`가 파일 경계에서 hunk를 안 닫는다** — 다음 파일의 `--- a/`·`+++ b/`가 이전 hunk 본문에 붙고 `-`/`+`로 시작하니 **churn으로 계수**. churn이 유일한 랭킹 키라 다중 파일 component가 과대계수 위에서 정렬됐다 | 수정 |
+| MED | 예산이 cap이 아니라 floor — 첫 hunk는 무조건 통째로. 4,000줄 재번호 하나가 **188,000자(예산의 31배)**를 먹고 정작 중요한 2줄을 밀어냈다 | hunk별 clip |
+| MED | `cause:'self'`인데 동료 커밋이 목록에 있으면 "the junior themselves"가 **거짓말** | authors에서 유도 |
+| MED | "showing the N **largest**"가 거짓 — greedy fill이라 큰 걸 건너뛴 뒤 작은 게 들어간다 | 문구 정정 + "일부는 보여준 것보다 크다" 명시 |
+| MED | hunk에 파일 경로가 없어 다중 파일 component에서 위치 불명 | `── src/a.ts` 표기 |
+| MED | 바이너리 파일이 `+0 −0` = "안 바뀜"으로 읽힌다 | `(binary — no line counts)` |
+| MED | `neutralizeFence`가 정확히 한 철자만 잡는다 (NBSP·대소문자·이중 공백 통과) | 대소문자 무시 + 임의 공백 |
+| LOW | `sinceSha`가 검증 없이 git argv로 — 선행 `-`는 옵션으로 파싱 | `/^[0-9a-f]{4,40}$/` 가드 |
+| LOW | `declarationName`이 `const a7 = 7` 같은 아무 줄이나 "region"으로 | 선언 키워드 요구 |
+| LOW | socratic이 **매 턴** drift를 다시 만든다 (턴당 git 3회 + ~9k자) | `DialogueState`에 캐시 |
+
+측정: 원본 diff 50k인 component에서 fence 영역이 **~7.4k로 상한**.
+
+**남은 것 (미수정, 의도)**: paper 본문도 저장소 콘텐츠라 같은 논리로는 fence 대상이다.
+동료가 PR로 `.scale/`을 고칠 수 있다. diff와 달리 senior가 큐레이트해 커밋하는
+산출물이라 신뢰 등급이 다르지만, **비대칭인 건 사실이다.** S4에서 다룬다.

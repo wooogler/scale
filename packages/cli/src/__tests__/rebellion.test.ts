@@ -437,3 +437,72 @@ describe('drift.shareDiff — what may leave the machine', () => {
     expect(driftContext(repo, drifted(), ['src/widget.ts'], 'foreign', 'off')).toBeNull();
   });
 });
+
+describe('parseHunks — multi-file diffs (the ranking depends on this)', () => {
+  function twoFileComponent(): string {
+    const dir = path.join(repo, '.scale', 'prov', 'multi');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'README.md'),
+      [
+        '---',
+        'id: multi',
+        'title: multi',
+        'sources:',
+        '  - src/a.ts',
+        '  - src/b.ts',
+        'concepts:',
+        '  - id: k',
+        '    name: K',
+        'rationale:',
+        '  - decision: d',
+        '    provenance: inferred',
+        '---',
+        '',
+        '# multi',
+        '',
+      ].join('\n'),
+    );
+    fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'src', 'a.ts'), 'export const a = 1;\n');
+    fs.writeFileSync(path.join(repo, 'src', 'b.ts'), 'export const b = 1;\n');
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    const base = git(['rev-parse', '--short', 'HEAD']);
+    fs.writeFileSync(path.join(repo, 'src', 'a.ts'), 'export const a = 2;\n');
+    fs.writeFileSync(path.join(repo, 'src', 'b.ts'), 'export const b = 2;\n');
+    git(['add', '-A']);
+    git(['commit', '-qm', 'change both']);
+    return base;
+  }
+
+  it('closes a hunk at the next file header instead of swallowing it', () => {
+    // The bug this pins: without a `diff --git` boundary the FOLLOWING file's
+    // `--- a/…` and `+++ b/…` lines landed in the previous hunk's body, and both
+    // start with `-`/`+`, so they were counted as churn. Churn is the sole
+    // ranking key for the excerpt budget, so a multi-file component was ranked
+    // on an over-count and could drop the hunk the check actually needed.
+    const ctx = driftContext(repo, twoFileComponent(), ['src/a.ts', 'src/b.ts'], 'foreign');
+    expect(ctx).not.toBeNull();
+    expect(ctx!.hunks).toHaveLength(2);
+    for (const h of ctx!.hunks) {
+      // Each hunk is one line out, one line in — nothing borrowed from its neighbour.
+      expect(h.churn).toBe(2);
+      expect(h.body).not.toContain('diff --git');
+      expect(h.body).not.toContain('+++ b/');
+      expect(h.body).not.toContain('--- a/');
+    }
+  });
+
+  it('attributes each hunk to its file', () => {
+    const ctx = driftContext(repo, twoFileComponent(), ['src/a.ts', 'src/b.ts'], 'foreign');
+    expect(ctx!.hunks.map((h) => h.path)).toEqual(['src/a.ts', 'src/b.ts']);
+  });
+
+  it('refuses an anchor that is not a sha', () => {
+    // It reaches a git argv position, where a leading `-` reads as an option.
+    twoFileComponent();
+    expect(driftContext(repo, '--output=/tmp/pwn', ['src/a.ts'], 'foreign')).toBeNull();
+    expect(driftContext(repo, 'HEAD', ['src/a.ts'], 'foreign')).toBeNull();
+  });
+});

@@ -61,6 +61,8 @@ function git(cwd: string, args: string[], flags: string[] = []): string | null {
 
 /** `@@ -a,b +c,d @@ <enclosing declaration>` — the tail is git's own context. */
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: (.*))?$/;
+/** `diff --git a/<path> b/<path>` — the start of the next file's section. */
+const FILE_HEADER = /^diff --git a\/(.*) b\/(.*)$/;
 
 /**
  * Tidy git's hunk-context string into something worth naming as a "region".
@@ -74,8 +76,15 @@ const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: (.*))?$/;
 function declarationName(raw: string): string {
   const s = raw.trim();
   if (!s || /^import\b/.test(s) || /^\/\//.test(s)) return '';
+  // Git's heuristic picks the nearest preceding line that merely LOOKS like a
+  // declaration, which for markdown, CSS or a run of assignments is any old
+  // line — and "regions touched: const a7 = 7" invites a `structure` item built
+  // on nothing. Require an actual declaring keyword.
+  if (!/^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:function|class|interface|type|enum|const|let|var|public|private|protected|static|def|fn|func|struct|impl|trait|module|namespace)\b/.test(s)) {
+    return '';
+  }
   // Cut at the opening brace/paren so `function f(a: X, b: Y): Z {` reads `function f`.
-  const head = s.split(/[({]/)[0]?.trim() ?? s;
+  const head = s.split(/[({=]/)[0]?.trim() ?? s;
   const name = head || s;
   return name.length > 60 ? `${name.slice(0, 57)}…` : name;
 }
@@ -88,15 +97,33 @@ function declarationName(raw: string): string {
 function parseHunks(diff: string): { hunks: DriftHunk[]; regions: string[] } {
   const hunks: DriftHunk[] = [];
   const regions: string[] = [];
+  let path = '';
   let current: { header: string; body: string[]; churn: number } | null = null;
 
   const flush = (): void => {
     if (!current) return;
-    hunks.push({ header: current.header, body: current.body.join('\n'), churn: current.churn });
+    hunks.push({
+      header: current.header,
+      body: current.body.join('\n'),
+      churn: current.churn,
+      ...(path ? { path } : {}),
+    });
     current = null;
   };
 
   for (const line of diff.split('\n')) {
+    // A hunk ENDS at the next file's header. Without this the following file's
+    // `diff --git`, `index`, `--- a/…` and `+++ b/…` lines were appended to the
+    // previous hunk's body — and the last two begin with `-`/`+`, so they were
+    // counted as churn. Churn is the sole ranking key for the budget, so a
+    // multi-file component was ranked on a systematic over-count and could drop
+    // the very hunk the recovery check needed.
+    const fileMatch = FILE_HEADER.exec(line);
+    if (fileMatch) {
+      flush();
+      path = fileMatch[2] ?? fileMatch[1] ?? '';
+      continue;
+    }
     const m = HUNK_HEADER.exec(line);
     if (m) {
       flush();
@@ -105,7 +132,7 @@ function parseHunks(diff: string): { hunks: DriftHunk[]; regions: string[] } {
       if (region && !regions.includes(region)) regions.push(region);
       continue;
     }
-    if (!current) continue; // file headers between hunks
+    if (!current) continue; // index/---/+++ lines between a file header and its first hunk
     current.body.push(line);
     if (line.startsWith('+') || line.startsWith('-')) current.churn++;
   }
@@ -131,6 +158,11 @@ export function driftContext(
 ): DriftContext | null {
   if (share === 'off') return null;
   if (!sinceSha || sources.length === 0) return null;
+  // The anchor reaches a git argv position, where a leading `-` would be read as
+  // an option rather than a revision. It always comes from our own coverage
+  // record, but that record is a JSON file on disk, so the shape is checked here
+  // rather than assumed.
+  if (!/^[0-9a-f]{4,40}$/i.test(sinceSha)) return null;
   const range = `${sinceSha}..HEAD`;
 
   // %x1f is a unit separator — a subject can contain anything else.
@@ -150,12 +182,17 @@ export function driftContext(
     .filter(Boolean)
     .map((l) => {
       const [a = '', d = '', ...rest] = l.split('\t');
+      // `-\t-` means git called the file binary and reports no counts. Rendering
+      // that as `+0 −0` says "unchanged", which is the opposite of the truth for
+      // a wholesale binary replacement.
+      const binary = a === '-' || d === '-';
       const added = Number(a);
       const deleted = Number(d);
       return {
         path: rest.join('\t'),
         added: Number.isFinite(added) ? added : 0,
         deleted: Number.isFinite(deleted) ? deleted : 0,
+        ...(binary ? { binary: true } : {}),
       };
     })
     .filter((f) => f.path);

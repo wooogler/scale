@@ -93,6 +93,8 @@ export interface DriftHunk {
   body: string;
   /** Added + deleted lines — the ranking key when the budget bites. */
   churn: number;
+  /** The file this hunk belongs to, so a multi-file excerpt can be located. */
+  path?: string;
 }
 
 /**
@@ -105,7 +107,7 @@ export interface DriftContext {
   sinceSha: string;
   cause: 'foreign' | 'self';
   commits: { sha: string; author: string; subject: string }[];
-  files: { path: string; added: number; deleted: number }[];
+  files: { path: string; added: number; deleted: number; binary?: boolean }[];
   /** Distinct enclosing declarations the hunks touched, in first-seen order. */
   regions: string[];
   hunks: DriftHunk[];
@@ -267,7 +269,11 @@ function neutralizeFence(body: string): string {
   // reads, to something skimming top-to-bottom, like the end of the untrusted
   // region — and everything after it like trusted instructions. Breaking the
   // phrase costs one underscore in a comment and removes the whole manoeuvre.
-  return body.replace(/CHANGED CODE/g, 'CHANGED_CODE');
+  // Case-insensitive, and tolerant of any whitespace between the words —
+  // `changed code`, `CHANGED  CODE`, and a non-breaking space all render as a
+  // pixel-identical marker. The per-request id is the real defence; this layer
+  // only earns the name if it stops more than one exact spelling.
+  return body.replace(/changed[\s\u00a0\u2000-\u200b]+code/giu, 'CHANGED_CODE');
 }
 
 /**
@@ -290,10 +296,18 @@ function sanitizeField(raw: string, max = 120): string {
 }
 
 function driftBlock(drift: DriftContext, maxDiffChars: number): string {
+  // Derived from the commits, never from `cause`. `cause: 'self'` only means
+  // the SELF ratio is what tripped — the same range can still contain a
+  // teammate's commits, and asserting "the junior themselves" over a list that
+  // names someone else made the one authorship claim in the block false exactly
+  // where it matters: part of that diff IS code they have never read.
+  const authors = [...new Set(drift.commits.map((c) => c.author).filter(Boolean))];
   const who =
-    drift.cause === 'self'
-      ? 'the junior themselves (their own later work)'
-      : [...new Set(drift.commits.map((c) => c.author))].join(', ') || 'someone else';
+    authors.length > 0
+      ? authors.join(', ')
+      : drift.cause === 'self'
+        ? 'the junior themselves'
+        : 'someone else';
 
   const id = drift.fenceId ?? contentId(drift.hunks.map((h) => h.body));
 
@@ -332,23 +346,41 @@ function driftBlock(drift: DriftContext, maxDiffChars: number): string {
   if (drift.files.length > 0) {
     lines.push('  files:');
     for (const f of drift.files) {
-      lines.push(`    ${sanitizeField(f.path, 200)}  +${f.added} −${f.deleted}`);
+      const counts = f.binary ? '(binary — no line counts)' : `+${f.added} −${f.deleted}`;
+      lines.push(`    ${sanitizeField(f.path, 200)}  ${counts}`);
     }
   }
   if (drift.regions.length > 0) {
     lines.push(`  regions touched: ${drift.regions.map((r) => sanitizeField(r, 60)).join(', ')}`);
   }
 
+  // No single hunk may eat the whole budget. Without this the "always keep at
+  // least one" guarantee became "one hunk, at any price": a 4,000-line
+  // mechanical renumbering is one hunk, and admitting it whole spent 188,000
+  // characters — 31× the budget — while evicting the two-line change that
+  // actually mattered. Clipping keeps the guarantee and the cap.
+  const perHunk = Math.max(400, Math.floor(maxDiffChars / 2));
+  const clip = (h: DriftHunk): DriftHunk => {
+    if (h.body.length <= perHunk) return h;
+    const cut = h.body.slice(0, perHunk);
+    const omitted = h.body.slice(perHunk).split('\n').length;
+    return { ...h, body: `${cut}\n  … [hunk clipped, ${omitted} more line(s)]` };
+  };
+
   // Rank by churn, keep the original order among what survives so the excerpt
   // still reads top-to-bottom through the file.
   const ranked = drift.hunks
-    .map((h, i) => ({ h, i }))
+    .map((h, i) => ({ h: clip(h), i }))
     .sort((a, b) => b.h.churn - a.h.churn || a.i - b.i);
   const kept: { h: DriftHunk; i: number }[] = [];
   let used = 0;
+  let skippedLarger = false;
   for (const entry of ranked) {
     const cost = entry.h.header.length + entry.h.body.length + 2;
-    if (kept.length > 0 && used + cost > maxDiffChars) continue;
+    if (kept.length > 0 && used + cost > maxDiffChars) {
+      skippedLarger = true;
+      continue;
+    }
     kept.push(entry);
     used += cost;
   }
@@ -356,15 +388,25 @@ function driftBlock(drift: DriftContext, maxDiffChars: number): string {
 
   if (kept.length > 0) {
     lines.push('');
+    let lastPath = '';
     for (const { h } of kept) {
+      // A component can anchor several files; without the path the generator is
+      // asked what breaks in code it cannot locate.
+      if (h.path && h.path !== lastPath) {
+        lines.push(`  ── ${sanitizeField(h.path, 200)}`);
+        lastPath = h.path;
+      }
       lines.push(neutralizeFence(h.header), neutralizeFence(h.body));
     }
     if (kept.length < drift.hunks.length) {
       // Never a silent truncation: an omitted hunk is a thing the junior is not
-      // being asked about, and the generator should know it exists.
+      // being asked about, and the generator should know it exists. It is a
+      // greedy fill, not a prefix of the ranking, so "the N largest" was false —
+      // a small hunk can be admitted after a larger one was skipped.
       lines.push(
-        `  (showing the ${kept.length} largest of ${drift.hunks.length} hunks; ` +
-          `${drift.hunks.length - kept.length} omitted for length)`,
+        `  (showing ${kept.length} of ${drift.hunks.length} hunks; ` +
+          `${drift.hunks.length - kept.length} omitted for length` +
+          `${skippedLarger ? ', some of them larger than what is shown' : ''})`,
       );
     }
   }

@@ -83,6 +83,15 @@ interface DialogueState {
   history: DialogueTurn[];
   userTurns: number;
   touchedAt: number;
+  /**
+   * The grounding, built once per dialogue instead of once per turn.
+   *
+   * It was three git calls and up to ~9k characters on EVERY exchange, for a
+   * mid-dialogue prompt whose whole instruction is "ask one probing follow-up".
+   * Caching it also pins the fence id for the life of the dialogue, so the
+   * marker cannot change under the model between turns.
+   */
+  grounding?: string;
 }
 const socraticDialogues = new Map<string, DialogueState>();
 
@@ -670,6 +679,16 @@ function driftForComponent(cwd: string, componentId: string): DriftContext | nul
   }
 }
 
+/** The dialogue's grounding, computed once and reused for every later turn. */
+function groundingFor(
+  state: DialogueState,
+  paper: LoadedPaper | undefined,
+  cwd?: string,
+): string {
+  state.grounding ??= paperContext(paper, cwd);
+  return state.grounding;
+}
+
 /** Strip ```json fences and parse; throws on failure. */
 function stripJson(text: string): unknown {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
@@ -735,7 +754,7 @@ async function socraticReply(
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
   language: Language = 'en',
-  cwd?: string,
+  grounding = '',
 ): Promise<string> {
   const text = await chatText({
     provider,
@@ -748,7 +767,7 @@ async function socraticReply(
       'reasoning out of the learner. Keep each turn to 1-3 sentences; be brief and ' +
       'supportive.' +
       (language === 'ko' ? SOCRATIC_KO_DIALOGUE : '') +
-      `\n\n${paperContext(paper, cwd)}`,
+      `\n\n${grounding}`,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
   return (
@@ -765,7 +784,7 @@ async function socraticFinal(
   paper: LoadedPaper | undefined,
   history: DialogueTurn[],
   language: Language = 'en',
-  cwd?: string,
+  grounding = '',
 ): Promise<{ reply: string; grades: Record<DimName, number> | null }> {
   const text = await chatText({
     provider,
@@ -779,7 +798,7 @@ async function socraticFinal(
       'Return ONLY JSON: {"reply":"...","grades":{"structure":0.0,"concepts":0.0,' +
       '"rationale":0.0}}.' +
       (language === 'ko' ? SOCRATIC_KO_FINAL : '') +
-      `\n\n${paperContext(paper, cwd)}`,
+      `\n\n${grounding}`,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
   const grades = parseGrades(text);
@@ -868,7 +887,7 @@ async function handleSocraticMessage(
         paper,
         state.history,
         config.language,
-        cwd,
+        groundingFor(state, paper, cwd),
       );
       state.history.push({ role: 'assistant', content: reply });
       socraticDialogues.set(questId, state);
@@ -882,7 +901,7 @@ async function handleSocraticMessage(
       paper,
       state.history,
       config.language,
-      cwd,
+      groundingFor(state, paper, cwd),
     );
     const sha = shortHeadSha(cwd);
     const now = new Date().toISOString();

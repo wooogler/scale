@@ -27411,14 +27411,15 @@ ${clipped}`);
   return parts.join("\n");
 }
 function neutralizeFence(body) {
-  return body.replace(/CHANGED CODE/g, "CHANGED_CODE");
+  return body.replace(/changed[\s\u00a0\u2000-\u200b]+code/giu, "CHANGED_CODE");
 }
 function sanitizeField(raw, max = 120) {
   const flat = neutralizeFence(raw).replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}\u2026` : flat;
 }
 function driftBlock(drift, maxDiffChars) {
-  const who = drift.cause === "self" ? "the junior themselves (their own later work)" : [...new Set(drift.commits.map((c) => c.author))].join(", ") || "someone else";
+  const authors = [...new Set(drift.commits.map((c) => c.author).filter(Boolean))];
+  const who = authors.length > 0 ? authors.join(", ") : drift.cause === "self" ? "the junior themselves" : "someone else";
   const id = drift.fenceId ?? contentId(drift.hunks.map((h) => h.body));
   const lines = [
     `
@@ -27452,30 +27453,48 @@ CHANGED SINCE THE JUNIOR VALIDATED THIS (they have not read these changes):`,
   if (drift.files.length > 0) {
     lines.push("  files:");
     for (const f of drift.files) {
-      lines.push(`    ${sanitizeField(f.path, 200)}  +${f.added} \u2212${f.deleted}`);
+      const counts = f.binary ? "(binary \u2014 no line counts)" : `+${f.added} \u2212${f.deleted}`;
+      lines.push(`    ${sanitizeField(f.path, 200)}  ${counts}`);
     }
   }
   if (drift.regions.length > 0) {
     lines.push(`  regions touched: ${drift.regions.map((r) => sanitizeField(r, 60)).join(", ")}`);
   }
-  const ranked = drift.hunks.map((h, i) => ({ h, i })).sort((a, b) => b.h.churn - a.h.churn || a.i - b.i);
+  const perHunk = Math.max(400, Math.floor(maxDiffChars / 2));
+  const clip = (h) => {
+    if (h.body.length <= perHunk)
+      return h;
+    const cut = h.body.slice(0, perHunk);
+    const omitted = h.body.slice(perHunk).split("\n").length;
+    return { ...h, body: `${cut}
+  \u2026 [hunk clipped, ${omitted} more line(s)]` };
+  };
+  const ranked = drift.hunks.map((h, i) => ({ h: clip(h), i })).sort((a, b) => b.h.churn - a.h.churn || a.i - b.i);
   const kept = [];
   let used = 0;
+  let skippedLarger = false;
   for (const entry of ranked) {
     const cost = entry.h.header.length + entry.h.body.length + 2;
-    if (kept.length > 0 && used + cost > maxDiffChars)
+    if (kept.length > 0 && used + cost > maxDiffChars) {
+      skippedLarger = true;
       continue;
+    }
     kept.push(entry);
     used += cost;
   }
   kept.sort((a, b) => a.i - b.i);
   if (kept.length > 0) {
     lines.push("");
+    let lastPath = "";
     for (const { h } of kept) {
+      if (h.path && h.path !== lastPath) {
+        lines.push(`  \u2500\u2500 ${sanitizeField(h.path, 200)}`);
+        lastPath = h.path;
+      }
       lines.push(neutralizeFence(h.header), neutralizeFence(h.body));
     }
     if (kept.length < drift.hunks.length) {
-      lines.push(`  (showing the ${kept.length} largest of ${drift.hunks.length} hunks; ${drift.hunks.length - kept.length} omitted for length)`);
+      lines.push(`  (showing ${kept.length} of ${drift.hunks.length} hunks; ${drift.hunks.length - kept.length} omitted for length${skippedLarger ? ", some of them larger than what is shown" : ""})`);
     }
   }
   lines.push(`  --- END CHANGED CODE #${id} ---`);
@@ -28696,23 +28715,39 @@ function git(cwd, args, flags = []) {
   }
 }
 var HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: (.*))?$/;
+var FILE_HEADER = /^diff --git a\/(.*) b\/(.*)$/;
 function declarationName(raw) {
   const s = raw.trim();
   if (!s || /^import\b/.test(s) || /^\/\//.test(s)) return "";
-  const head = s.split(/[({]/)[0]?.trim() ?? s;
+  if (!/^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:function|class|interface|type|enum|const|let|var|public|private|protected|static|def|fn|func|struct|impl|trait|module|namespace)\b/.test(s)) {
+    return "";
+  }
+  const head = s.split(/[({=]/)[0]?.trim() ?? s;
   const name = head || s;
   return name.length > 60 ? `${name.slice(0, 57)}\u2026` : name;
 }
 function parseHunks(diff) {
   const hunks = [];
   const regions = [];
+  let path12 = "";
   let current = null;
   const flush = () => {
     if (!current) return;
-    hunks.push({ header: current.header, body: current.body.join("\n"), churn: current.churn });
+    hunks.push({
+      header: current.header,
+      body: current.body.join("\n"),
+      churn: current.churn,
+      ...path12 ? { path: path12 } : {}
+    });
     current = null;
   };
   for (const line of diff.split("\n")) {
+    const fileMatch = FILE_HEADER.exec(line);
+    if (fileMatch) {
+      flush();
+      path12 = fileMatch[2] ?? fileMatch[1] ?? "";
+      continue;
+    }
     const m = HUNK_HEADER.exec(line);
     if (m) {
       flush();
@@ -28731,6 +28766,7 @@ function parseHunks(diff) {
 function driftContext(cwd, sinceSha, sources, cause, share = "full") {
   if (share === "off") return null;
   if (!sinceSha || sources.length === 0) return null;
+  if (!/^[0-9a-f]{4,40}$/i.test(sinceSha)) return null;
   const range = `${sinceSha}..HEAD`;
   const logOut = git(cwd, ["log", `--format=%h%x1f%aE%x1f%s`, range, "--", ...sources], PINNED_FLAGS);
   if (logOut === null) return null;
@@ -28741,12 +28777,14 @@ function driftContext(cwd, sinceSha, sources, cause, share = "full") {
   const numOut = git(cwd, ["diff", "--numstat", range, "--", ...sources], PINNED_FLAGS) ?? "";
   const files = numOut.split("\n").filter(Boolean).map((l) => {
     const [a = "", d = "", ...rest] = l.split("	");
+    const binary = a === "-" || d === "-";
     const added = Number(a);
     const deleted = Number(d);
     return {
       path: rest.join("	"),
       added: Number.isFinite(added) ? added : 0,
-      deleted: Number.isFinite(deleted) ? deleted : 0
+      deleted: Number.isFinite(deleted) ? deleted : 0,
+      ...binary ? { binary: true } : {}
     };
   }).filter((f) => f.path);
   const diff = git(cwd, ["diff", "-U1", range, "--", ...sources], PINNED_FLAGS);
@@ -29858,6 +29896,10 @@ function driftForComponent(cwd, componentId) {
     return null;
   }
 }
+function groundingFor(state, paper, cwd) {
+  state.grounding ??= paperContext(paper, cwd);
+  return state.grounding;
+}
 function stripJson(text) {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
   return JSON.parse((fenced?.[1] ?? text).trim());
@@ -29886,26 +29928,26 @@ function parseGrades(text) {
 }
 var SOCRATIC_KO_DIALOGUE = " Conduct the dialogue in Korean. Keep code identifiers, file paths, and established technical terms in English.";
 var SOCRATIC_KO_FINAL = SOCRATIC_KO_DIALOGUE + " In the closing JSON, keys and numeric grades stay exactly as specified; write the 'reply' text in Korean.";
-async function socraticReply(provider, model, paper, history, language = "en", cwd) {
+async function socraticReply(provider, model, paper, history, language = "en", grounding = "") {
   const text = await chatText({
     provider,
     model,
     maxTokens: 400,
     system: "You are a Socratic tutor helping a junior engineer build genuine comprehension of a codebase component. Ask ONE probing follow-up question at a time, grounded in the component paper below. Do NOT reveal answers or lecture \u2014 draw the reasoning out of the learner. Keep each turn to 1-3 sentences; be brief and supportive." + (language === "ko" ? SOCRATIC_KO_DIALOGUE : "") + `
 
-${paperContext(paper, cwd)}`,
+${grounding}`,
     messages: history.map((t) => ({ role: t.role, content: t.content }))
   });
   return text || (language === "ko" ? "\uADF8 \uBD80\uBD84\uC774 \uC5B4\uB5BB\uAC8C \uB3D9\uC791\uD558\uB294\uC9C0, \uC65C \uADF8\uB7F0\uC9C0 \uC870\uAE08 \uB354 \uC124\uBA85\uD574 \uC8FC\uC2DC\uACA0\uC5B4\uC694?" : "Can you say more about how that part works, and why?");
 }
-async function socraticFinal(provider, model, paper, history, language = "en", cwd) {
+async function socraticFinal(provider, model, paper, history, language = "en", grounding = "") {
   const text = await chatText({
     provider,
     model,
     maxTokens: 500,
     system: `You are concluding a Socratic comprehension dialogue about a codebase component. Give brief supportive closing feedback (1-2 sentences), then grade the learner's demonstrated comprehension on each dimension in [0,1]: "structure" (how it is built), "concepts" (its named ideas), "rationale" (why it is designed that way). Return ONLY JSON: {"reply":"...","grades":{"structure":0.0,"concepts":0.0,"rationale":0.0}}.` + (language === "ko" ? SOCRATIC_KO_FINAL : "") + `
 
-${paperContext(paper, cwd)}`,
+${grounding}`,
     messages: history.map((t) => ({ role: t.role, content: t.content }))
   });
   const grades = parseGrades(text);
@@ -29964,7 +30006,7 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
         paper,
         state.history,
         config2.language,
-        cwd
+        groundingFor(state, paper, cwd)
       );
       state.history.push({ role: "assistant", content: reply2 });
       socraticDialogues.set(questId, state);
@@ -29977,7 +30019,7 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
       paper,
       state.history,
       config2.language,
-      cwd
+      groundingFor(state, paper, cwd)
     );
     const sha = shortHeadSha3(cwd);
     const now = (/* @__PURE__ */ new Date()).toISOString();
