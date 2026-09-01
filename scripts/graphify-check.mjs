@@ -91,6 +91,15 @@ const ROOT = rootArg();
  * The derived surface is strictly better; this keeps the script useful in a
  * tarball export rather than failing.
  */
+/**
+ * Components per attributed source file above which the pair-level link metrics
+ * stop meaning anything (PLAN-GRAPHIFY §10.4). At 1.0 each file has one owner
+ * and attribution is exact; this repo sits at 0.55, Koa at 5.1. The bar is set
+ * just above 1 so a map with a few multi-component files still scores, while
+ * one built at sub-file granularity is refused rather than mis-measured.
+ */
+const GRANULARITY_MAX_COMPONENTS_PER_FILE = 1.5;
+
 const FALLBACK_SCAN_ROOTS = [
   'packages/cli/src',
   'packages/core/src',
@@ -834,6 +843,7 @@ async function run(options) {
 
     // --- node → component attribution (exact match only, as above) -------------
     const nodeOwners = new Map(); // node id -> owning component ids
+    const nodeFileOf = new Map(); // node id -> its repo-relative source file
     const nodeFiles = new Map(); // component -> Set of files it owns that carry a node
     let nodesNoSourceFile = 0; // LLM-tier + external stubs: source_file "" or absent
     const unattributedFiles = new Set(); // real paths no component claims
@@ -868,6 +878,7 @@ async function run(options) {
         continue;
       }
       nodeOwners.set(n.id, owners);
+      nodeFileOf.set(n.id, key);
       for (const c of owners) {
         if (!nodeFiles.has(c)) nodeFiles.set(c, new Set());
         nodeFiles.get(c).add(key);
@@ -952,6 +963,37 @@ async function run(options) {
       }
     }
 
+    // --- granularity: does file-level attribution mean anything here? --------
+    //
+    // Every node is attributed by its FILE, so a component pair is only
+    // resolvable when components are file-granular or coarser. When N
+    // components share one file, a single cross-file AST link becomes
+    // (N-shared) x (M-shared) candidate pairs, and the recall denominator
+    // inflates by that factor. Measured on Koa: 9 real cross-file links became
+    // 295 pairs, and the resulting 13.9% recall described the arithmetic, not
+    // the map (PLAN-GRAPHIFY §10.2).
+    //
+    // So the ratio is computed, and above the threshold the pair metrics are
+    // withheld rather than printed as fact. What replaces them is the question
+    // file-level attribution CAN answer: of the real file->file dependencies,
+    // how many does the map link across at all.
+    const attributedFiles = new Set();
+    for (const ids of nodeOwners.values()) void ids;
+    for (const [, files] of nodeFiles) for (const f of files) attributedFiles.add(f);
+    const componentsPerFile =
+      attributedFiles.size > 0 ? componentIds.length / attributedFiles.size : 0;
+    const granularityOk = componentsPerFile <= GRANULARITY_MAX_COMPONENTS_PER_FILE;
+
+    // File-pair fidelity — granularity-independent, because it never has to
+    // decide WHICH same-file component owns a symbol.
+    const astFilePairs = new Set();
+    for (const link of rawLinks) {
+      if (!link || link.source === link.target) continue;
+      const fa = nodeFileOf.get(link.source);
+      const fb = nodeFileOf.get(link.target);
+      if (!fa || !fb || fa === fb) continue;
+      astFilePairs.add(fa < fb ? `${fa}|${fb}` : `${fb}|${fa}`);
+    }
     // Attribution collapsing wholesale is a configuration error (wrong cwd, wrong
     // path format, wrong repo), not a finding about the map. Say so loudly and
     // refuse to score, rather than reporting "0% of the map's links have code
@@ -993,6 +1035,27 @@ async function run(options) {
     // no code path behind it (PLAN-GRAPHIFY §1.2 flags 24.3% edge density as suspect).
     let precisionHits = 0;
     for (const k of referencePairs) if (crossPairs.has(k)) precisionHits++;
+
+    let filePairsLinked = 0;
+    for (const key of astFilePairs) {
+      const [fa, fb] = key.split('|');
+      const A = ownersOf(fa);
+      const B = ownersOf(fb);
+      const linked = A.some((x) => B.some((y) => x !== y && referencePairs.has(pairKey(x, y))));
+      if (linked) filePairsLinked++;
+    }
+    let edgesGrounded = 0;
+    for (const key of referencePairs) {
+      const [x, y] = key.split('|');
+      const fx = nodeFiles.get(x) ?? new Set();
+      const fy = nodeFiles.get(y) ?? new Set();
+      const shares = [...fx].some((f) => fy.has(f));
+      const spans = [...fx].some((f) =>
+        [...fy].some((g2) => f !== g2 && astFilePairs.has(f < g2 ? `${f}|${g2}` : `${g2}|${f}`)),
+      );
+      if (shares || spans) edgesGrounded++;
+    }
+
 
     // Some reference pairs cannot be corroborated by ANY code-only extraction, so
     // they cap precision before a single edge is read. A pair (a,b) is corroborable
@@ -1058,7 +1121,7 @@ async function run(options) {
       )
       .slice(0, 5);
 
-    const scorable = !attributionCollapsed;
+    const scorable = !attributionCollapsed && granularityOk;
     graph = {
       path: relToRepo(graphPath),
       sha256: graphSha,
@@ -1084,6 +1147,20 @@ async function run(options) {
         byConfidence: Object.fromEntries([...byConfidence].sort((a, b) => byString(a[0], b[0]))),
       },
       attributionCollapsed,
+      granularity: {
+        componentsPerFile,
+        attributedFiles: attributedFiles.size,
+        threshold: GRANULARITY_MAX_COMPONENTS_PER_FILE,
+        pairMetricsScorable: granularityOk,
+      },
+      filePairs: {
+        total: astFilePairs.size,
+        linked: filePairsLinked,
+        recall: astFilePairs.size === 0 ? null : filePairsLinked / astFilePairs.size,
+        mappedPairs: referencePairs.size,
+        grounded: edgesGrounded,
+        precision: referencePairs.size === 0 ? null : edgesGrounded / referencePairs.size,
+      },
       componentsWithNodes: componentsWithNodes.size,
       componentsTotal: componentIds.length,
       referenceEdgeSource,
@@ -1407,6 +1484,23 @@ async function run(options) {
       }
       say('');
     }
+    if (!graph.granularity.pairMetricsScorable) {
+      say('  !! PAIR METRICS WITHHELD — components are finer than file granularity.');
+      say(
+        `     ${graph.componentsTotal} components over ${graph.granularity.attributedFiles} ` +
+          `attributed source file(s) = ${graph.granularity.componentsPerFile.toFixed(1)} per file ` +
+          `(scorable at <= ${graph.granularity.threshold}).`,
+      );
+      say('     Every AST node is attributed by its FILE, so when N components share one');
+      say('     file a single cross-file link becomes N x M candidate pairs and the recall');
+      say('     denominator inflates by that factor. Printing 4 and 5 here would describe');
+      say('     the arithmetic, not the map (PLAN-GRAPHIFY §10.2). Metric 6 goes with');
+      say('     them: a same-file link counts as intra for EVERY owner of that file, so');
+      say('     cohesion approaches 100% by construction. Metric 4b is the question');
+      say('     file-level attribution can actually answer.');
+      say('     A symbol-level anchor set (PLAN.md P1.3) is what would restore 4 and 5.');
+      say('');
+    }
     say(
       `  4. LINK RECALL        ${pct(graph.linkRecall.value)}  ` +
         `(${graph.linkRecall.matched} of ${graph.linkRecall.astPairs} AST-connected pairs are linked in the map)`,
@@ -1436,6 +1530,19 @@ async function run(options) {
           `precision ${pct(graph.extracted.precision)} over ${graph.extracted.astPairs} pairs`,
       );
     }
+    say('');
+    say(
+      `  4b. FILE-PAIR RECALL  ${pct(graph.filePairs.recall)}  ` +
+        `(${graph.filePairs.linked} of ${graph.filePairs.total} file->file dependencies have ` +
+        `at least one map edge spanning them)`,
+    );
+    say(
+      `  5b. FILE-PAIR PREC.   ${pct(graph.filePairs.precision)}  ` +
+        `(${graph.filePairs.grounded} of ${graph.filePairs.mappedPairs} mapped pairs share a file ` +
+        `or span a real file dependency)`,
+    );
+    say('      4b/5b never have to decide WHICH same-file component owns a symbol, so');
+    say('      they hold at any granularity — but they are correspondingly coarser.');
     say('');
     say(
       `  6. COHESION           ${pct(graph.cohesion.overall)} overall ` +
