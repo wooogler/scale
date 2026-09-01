@@ -169,7 +169,10 @@ Then work normally in Claude Code:
   collaborator's change past `drift.foreignRatio` re-locks the territory (SessionStart
   names them, once a day); your own change uses a far higher bar, since the gate already
   cleared you before you wrote it. One passing check recovers it, and the deny says you
-  *did* demonstrate it. The map skins the two causes apart: a teammate's change leaves the
+  *did* demonstrate it, and the check is grounded in the collaborator's actual diff — a
+  skeleton (commits, files, declarations touched) plus a churn-ranked excerpt, all inside
+  an explicit untrusted-data fence, with `drift.shareDiff` deciding how much of it reaches
+  the API at all. The map skins the two causes apart: a teammate's change leaves the
   territory **Fallen** (함락) with their name on it, your own rewrite leaves it **Rebuilt**
   (재건). Neither is a failure.
 - **Check progress:** `scale status` (coverage, how much territory is unlocked, what
@@ -232,6 +235,7 @@ row at the top, then the rest — same file, same validation, no terminal needed
 | `drift.selfRatio` | 0–1 | The same for **your own** churn (default 0.8). Much higher: the gate cleared you before you wrote it, so this only catches a wholesale rewrite of something you unlocked with one check. |
 | `drift.trigger` | `ratio` \| `any-foreign-commit` | `any-foreign-commit` re-locks on a single foreign commit. Measured here, one commit touches ~7.9 of 37 components and the busiest are touched by ~60% of commits, so on a real team it re-locks the same territory daily. Available, not the default. |
 | `drift.digest` | `daily` \| `session` \| `off` | How often SessionStart names newly re-locked territory. |
+| `drift.shareDiff` | `full` \| `metadata` \| `off` | **How much of a teammate's change reaches the intervention API** when grounding a recovery check. `full` sends commit metadata plus a clipped diff excerpt; `metadata` sends who/which files/which declarations and **no source lines**; `off` grounds recovery in the paper alone. Team-policy settable — a lead can decide this once for everyone. |
 | `identity.emails` | list | Extra git addresses that are also **you** (a work address, a GitHub `users.noreply`), on top of `git config user.email`. Personal only — a team policy can never set who you are. Prefer a committed `.mailmap`, which SCALE already honors. |
 | `unlock.passBar` | 0–1 | Mean score a single check needs to count as passed (default 0.6). |
 | `unlock.checksRequired` | ≥ 1 | Passed checks needed before a territory unlocks (default 1). |
@@ -315,11 +319,6 @@ completion path, both unlock) → web map viewer + JSON API.
 
 **Not yet** (see PLAN-GATE §4 for the staged plan)
 
-- **Diff-grounded recovery (S2b)** — drift re-locks and the deny text tells the
-  tutor to ask about what changed, but the collaborator's actual diff is not yet in the
-  grounding. Measured, a drift-scale diff runs 8.5k–78k characters, so it needs a
-  skeleton-plus-excerpt design (and a trust boundary — it is someone else's text landing
-  in a prompt), which ships with S3's server-side grading.
 - **Async completion surfaces (S3)** — deny-time teaching works, but pending unlocks are
   not yet surfaced in the viewer, quiz grading still happens client-side (the answer key
   reaches the browser — must move server-side before checks guard anything), and there is

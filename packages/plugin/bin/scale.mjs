@@ -26811,7 +26811,29 @@ var DriftConfigSchema = external_exports.object({
    */
   selfRatio: external_exports.number().min(0).max(1).default(0.8),
   /** How often SessionStart mentions drifted territory. `off` never mentions them. */
-  digest: external_exports.enum(["daily", "session", "off"]).default("daily")
+  digest: external_exports.enum(["daily", "session", "off"]).default("daily"),
+  /**
+   * How much of a drifted component's change may be sent to the intervention
+   * MODEL when grounding the recovery check (PLAN-GATE §13.5).
+   *
+   * This is the one setting that decides whether private source code leaves
+   * the machine, so it is stated rather than assumed, and a team lead can set
+   * it for everyone in `.scale/policy.json`:
+   *
+   *  - `full`     — commit metadata AND an excerpt of the diff. The recovery
+   *                 check can ask what the change actually did.
+   *  - `metadata` — commit subjects, authors, file counts and the names of the
+   *                 declarations touched; NO source lines. The check can still
+   *                 ask "what changed in `retryFor`, and what would break?".
+   *  - `off`      — no drift block; recovery is grounded in the paper alone,
+   *                 exactly as it was before this existed.
+   *
+   * `full` is the default because the paper body — prose describing this same
+   * code — already goes to the model on every check, so the incremental
+   * exposure is the source lines themselves, and a recovery check that cannot
+   * see the change is the weaker instrument this whole stage exists to fix.
+   */
+  shareDiff: external_exports.enum(["full", "metadata", "off"]).default("full")
 }).default({});
 var IdentityConfigSchema = external_exports.object({
   emails: external_exports.array(external_exports.string()).default([])
@@ -28706,7 +28728,8 @@ function parseHunks(diff) {
   flush();
   return { hunks, regions };
 }
-function driftContext(cwd, sinceSha, sources, cause) {
+function driftContext(cwd, sinceSha, sources, cause, share = "full") {
+  if (share === "off") return null;
   if (!sinceSha || sources.length === 0) return null;
   const range = `${sinceSha}..HEAD`;
   const logOut = git(cwd, ["log", `--format=%h%x1f%aE%x1f%s`, range, "--", ...sources], PINNED_FLAGS);
@@ -28730,7 +28753,17 @@ function driftContext(cwd, sinceSha, sources, cause) {
   if (!diff) return null;
   const { hunks, regions } = parseHunks(diff);
   if (hunks.length === 0) return null;
-  return { sinceSha, cause, commits, files, regions, hunks, fenceId: crypto2.randomUUID().slice(0, 8) };
+  return {
+    sinceSha,
+    cause,
+    commits,
+    files,
+    regions,
+    // `metadata` keeps the shape of the change — who, which files, which
+    // declarations — and sends no source lines at all.
+    hunks: share === "metadata" ? [] : hunks,
+    fenceId: crypto2.randomUUID().slice(0, 8)
+  };
 }
 
 // packages/cli/src/quest.ts
@@ -28946,11 +28979,11 @@ function pickComponents(coverage2, map2, touched, config2, k) {
 function groundingText(paper, neighbours, drift) {
   return paperGrounding(paper, { neighbours, ...drift ? { drift } : {} });
 }
-function driftFor(cwd, coverage2, loaded, componentId) {
+function driftFor(cwd, coverage2, loaded, componentId, share) {
   const comp = coverage2.components[componentId];
   if (!comp || comp.state !== "stale" || !comp.driftCause) return null;
   const sources = componentSourcesIndex(loaded).find((s) => s.id === componentId)?.sources ?? [];
-  return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause);
+  return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause, share);
 }
 function parseJsonLoose(text) {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
@@ -29204,7 +29237,7 @@ async function generateQuests(cwd, opts = {}) {
   for (const componentId of picked) {
     const paper = paperById(loaded, componentId);
     if (!paper) continue;
-    const drift = driftFor(cwd, coverage2, loaded, componentId);
+    const drift = driftFor(cwd, coverage2, loaded, componentId, config2.drift.shareDiff);
     let items = null;
     if (!llmDisabled) {
       try {
@@ -29261,7 +29294,13 @@ async function generateVoluntaryQuest(cwd, componentId) {
   const neighbours = readMapJsonSafe(cwd) ? neighbourIndex(readMapJsonSafe(cwd)).get(componentId) : void 0;
   const drift = (() => {
     try {
-      return driftFor(cwd, readCoverageSafe(dir) ?? { user: config2.user, updatedAt: "", components: {} }, loaded, componentId);
+      return driftFor(
+        cwd,
+        readCoverageSafe(dir) ?? { user: config2.user, updatedAt: "", components: {} },
+        loaded,
+        componentId,
+        config2.drift.shareDiff
+      );
     } catch {
       return null;
     }
@@ -29813,7 +29852,8 @@ function driftForComponent(cwd, componentId) {
     const comp = readCoverageSafe(stateDir(cwd))?.components[componentId];
     if (!comp || comp.state !== "stale" || !comp.driftCause) return null;
     const sources = componentSourcesIndex(loadScaleDir(cwd)).find((s) => s.id === componentId)?.sources ?? [];
-    return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause);
+    const share = loadEffectiveConfig(cwd, stateDir(cwd)).config.drift.shareDiff;
+    return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause, share);
   } catch {
     return null;
   }

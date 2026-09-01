@@ -223,11 +223,12 @@ function driftFor(
   coverage: UserCoverage,
   loaded: LoadedScale,
   componentId: string,
+  share: 'full' | 'metadata' | 'off',
 ): DriftContext | null {
   const comp = coverage.components[componentId];
   if (!comp || comp.state !== 'stale' || !comp.driftCause) return null;
   const sources = componentSourcesIndex(loaded).find((s) => s.id === componentId)?.sources ?? [];
-  return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause);
+  return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause, share);
 }
 
 // ---------------------------------------------------------------------------
@@ -692,7 +693,7 @@ export async function generateQuests(
     if (!paper) continue;
     // A `stale` component is a RECOVERY check: ground it in what changed since
     // the junior validated it, not in the paper alone.
-    const drift = driftFor(cwd, coverage, loaded, componentId);
+    const drift = driftFor(cwd, coverage, loaded, componentId, config.drift.shareDiff);
 
     let items: QuestItem[] | null = null;
     if (!llmDisabled) {
@@ -789,7 +790,13 @@ export async function generateVoluntaryQuest(
   // Read from the coverage snapshot; this path deliberately avoids a recompute.
   const drift = (() => {
     try {
-      return driftFor(cwd, readCoverageSafe(dir) ?? { user: config.user, updatedAt: '', components: {} }, loaded, componentId);
+      return driftFor(
+        cwd,
+        readCoverageSafe(dir) ?? { user: config.user, updatedAt: '', components: {} },
+        loaded,
+        componentId,
+        config.drift.shareDiff,
+      );
     } catch {
       return null;
     }

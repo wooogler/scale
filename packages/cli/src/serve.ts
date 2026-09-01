@@ -663,7 +663,8 @@ function driftForComponent(cwd: string, componentId: string): DriftContext | nul
     if (!comp || comp.state !== 'stale' || !comp.driftCause) return null;
     const sources =
       componentSourcesIndex(loadScaleDir(cwd)).find((s) => s.id === componentId)?.sources ?? [];
-    return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause);
+    const share = loadEffectiveConfig(cwd, stateDir(cwd)).config.drift.shareDiff;
+    return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause, share);
   } catch {
     return null;
   }

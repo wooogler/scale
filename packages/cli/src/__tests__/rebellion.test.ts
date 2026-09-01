@@ -404,3 +404,36 @@ describe('driftContext — gathering the change from real git', () => {
     expect(driftContext(repo, head, ['src/widget.ts'], 'foreign')).toBeNull();
   });
 });
+
+describe('drift.shareDiff — what may leave the machine', () => {
+  function drifted(): string {
+    seedComponent('widget', 20);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    const base = git(['rev-parse', '--short', 'HEAD']);
+    writeSource('widget', 20, 'SECRET_BUSINESS_LOGIC');
+    git(['add', '-A']);
+    git(['commit', '-qm', 'change it']);
+    return base;
+  }
+
+  it('full ships the source lines', () => {
+    const ctx = driftContext(repo, drifted(), ['src/widget.ts'], 'foreign', 'full');
+    expect(ctx!.hunks.length).toBeGreaterThan(0);
+    expect(ctx!.hunks.map((h) => h.body).join()).toContain('SECRET_BUSINESS_LOGIC');
+  });
+
+  it('metadata keeps the shape of the change and NO source', () => {
+    const ctx = driftContext(repo, drifted(), ['src/widget.ts'], 'foreign', 'metadata');
+    expect(ctx).not.toBeNull();
+    expect(ctx!.hunks).toHaveLength(0);
+    expect(JSON.stringify(ctx)).not.toContain('SECRET_BUSINESS_LOGIC');
+    // …but who and where survive, so a recovery check is still possible.
+    expect(ctx!.commits[0]?.subject).toBe('change it');
+    expect(ctx!.files[0]?.path).toBe('src/widget.ts');
+  });
+
+  it('off sends nothing at all', () => {
+    expect(driftContext(repo, drifted(), ['src/widget.ts'], 'foreign', 'off')).toBeNull();
+  });
+});

@@ -226,7 +226,12 @@ you validated it at, **split by who authored the commits**:
   own work would mostly measure how much you typed. The high bar still catches
   the real case: unlocking with one check and then rewriting the thing wholesale.
 
-One passing check recovers it. `scale status` shows which territories are
+One passing check recovers it, and that check is grounded in **what actually
+changed** — the commits, the files, the declarations touched, and a clipped
+excerpt of the diff. That excerpt is someone else's code entering a prompt, so
+it travels inside an explicit untrusted-data fence, and `drift.shareDiff`
+decides how much of it reaches the API: `full` (metadata + diff), `metadata`
+(no source lines), or `off`. `scale status` shows which territories are
 re-locked, and your git identity plus how much of recent history it matches — a
 mismatched `user.email` is the one failure that would otherwise be invisible.
 
@@ -324,10 +329,6 @@ like an in-chat check.
 
 **Not yet** (staged in PLAN-GATE §4)
 
-- **Diff-grounded recovery (S2b)** — drift re-locks and the deny text points the
-  tutor at what changed, but the collaborator's diff itself is not yet in the grounding
-  (a drift-scale diff measures 8.5k–78k chars, so it needs a skeleton-plus-excerpt
-  design and a trust boundary). Ships with S3.
 - **Async surfaces (S3)** — pending unlocks in the viewer, server-side quiz
   grading (the answer key currently reaches the browser — it must move before
   checks guard anything), LAN token for mobile.

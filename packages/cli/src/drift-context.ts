@@ -126,7 +126,10 @@ export function driftContext(
   sinceSha: string | null,
   sources: string[],
   cause: 'foreign' | 'self',
+  /** How much may reach the model — see `drift.shareDiff`. */
+  share: 'full' | 'metadata' | 'off' = 'full',
 ): DriftContext | null {
+  if (share === 'off') return null;
   if (!sinceSha || sources.length === 0) return null;
   const range = `${sinceSha}..HEAD`;
 
@@ -166,5 +169,15 @@ export function driftContext(
 
   // A fresh id per request, so the fence markers cannot be predicted by
   // someone writing the code earlier — see DriftContext.fenceId.
-  return { sinceSha, cause, commits, files, regions, hunks, fenceId: crypto.randomUUID().slice(0, 8) };
+  return {
+    sinceSha,
+    cause,
+    commits,
+    files,
+    regions,
+    // `metadata` keeps the shape of the change — who, which files, which
+    // declarations — and sends no source lines at all.
+    hunks: share === 'metadata' ? [] : hunks,
+    fenceId: crypto.randomUUID().slice(0, 8),
+  };
 }

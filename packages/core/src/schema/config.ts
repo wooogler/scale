@@ -93,6 +93,28 @@ export const DriftConfigSchema = z
     selfRatio: z.number().min(0).max(1).default(0.8),
     /** How often SessionStart mentions drifted territory. `off` never mentions them. */
     digest: z.enum(['daily', 'session', 'off']).default('daily'),
+    /**
+     * How much of a drifted component's change may be sent to the intervention
+     * MODEL when grounding the recovery check (PLAN-GATE §13.5).
+     *
+     * This is the one setting that decides whether private source code leaves
+     * the machine, so it is stated rather than assumed, and a team lead can set
+     * it for everyone in `.scale/policy.json`:
+     *
+     *  - `full`     — commit metadata AND an excerpt of the diff. The recovery
+     *                 check can ask what the change actually did.
+     *  - `metadata` — commit subjects, authors, file counts and the names of the
+     *                 declarations touched; NO source lines. The check can still
+     *                 ask "what changed in `retryFor`, and what would break?".
+     *  - `off`      — no drift block; recovery is grounded in the paper alone,
+     *                 exactly as it was before this existed.
+     *
+     * `full` is the default because the paper body — prose describing this same
+     * code — already goes to the model on every check, so the incremental
+     * exposure is the source lines themselves, and a recovery check that cannot
+     * see the change is the weaker instrument this whole stage exists to fix.
+     */
+    shareDiff: z.enum(['full', 'metadata', 'off']).default('full'),
   })
   .default({});
 export type DriftConfig = z.infer<typeof DriftConfigSchema>;
