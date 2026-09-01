@@ -208,8 +208,7 @@ Then work normally in Claude Code:
 | `scale map layout` | Compute/extend the frozen spatial layout → `.scale/map.json`. | ⚡ |
 | `scale map index` | Build the file→component reverse index → `.scale/index.json`. | ⚡ |
 | `scale map drift` | Flag components whose sources changed since the build SHA (minimal stub). | ⚡ |
-| `scale serve [-p 4318] [--host <addr>] [--token <t>]` | Serve the local web map viewer + JSON API → settings provenance + reset → local study telemetry (overrides,
-denies, skips, redirects, out-of-band edits, unlocks, re-locks, session tallies). | ⚡/🧠 |
+| `scale serve [-p 4318] [--host <addr>] [--token <t>]` | Serve the local web map viewer + JSON API. | ⚡/🧠 |
 | `scale config unset <key>` | Drop one personal override so the team default applies again. | ⚡ |
 | `scale telemetry summary [--json]` | Counts and learning-vs-avoidance ratios from the local study log. | ⚡ |
 | `scale reset [-y]` | Delete the `~/.scale/<repo-id>/` state dir (demo/pilot reset). | ⚡ |
@@ -360,7 +359,8 @@ overrides) → quiz + Socratic checks in chat that durably **unlock** territory 
 status` → post-session `scale quest generate`/`list`/`complete` (CLI and web share one
 completion path, both unlock) → pending-unlock surfacing (SessionStart count, 🔒 in the
 viewer, `/api/locks`) → server-side quiz grading → LAN bearer token for a phone → web map
-viewer + JSON API.
+viewer + JSON API → settings provenance + reset → local study telemetry (overrides,
+denies, skips, redirects, out-of-band edits, unlocks, re-locks, session tallies).
 
 **Not yet** (see PLAN-GATE §4 for the staged plan)
 
