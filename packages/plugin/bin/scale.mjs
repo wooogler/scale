@@ -27287,7 +27287,7 @@ function componentSourcesIndex(loaded) {
 // packages/core/dist/grounding.js
 var DEFAULT_MAX_BODY_CHARS = 16e3;
 function withoutRelatedWork(body) {
-  return body.replace(/^##\s*Related Work\b[\s\S]*?(?=^##\s|\Z)/gim, "").trim();
+  return body.replace(/^##\s*Related Work\b(?:[\s\S]*?(?=^##\s)|[\s\S]*)/gim, "").trim();
 }
 function neighbourIndex(map2) {
   const index = /* @__PURE__ */ new Map();
@@ -28223,7 +28223,18 @@ function readLocksSafe(dir) {
 }
 function writeLocks(dir, locks) {
   ensureStateDir(dir);
-  fs2.writeFileSync(paths.locks(dir), JSON.stringify(locks, null, 2) + "\n");
+  const target = paths.locks(dir);
+  const tmp = `${target}.tmp.${process.pid}.${Date.now().toString(36)}`;
+  try {
+    fs2.writeFileSync(tmp, JSON.stringify(locks, null, 2) + "\n");
+    fs2.renameSync(tmp, target);
+  } catch (err) {
+    try {
+      fs2.unlinkSync(tmp);
+    } catch {
+    }
+    throw err;
+  }
 }
 function noteCheckOutcome(cwd, dir, componentId, meanScore, by, headSha2, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const { config: config2 } = loadEffectiveConfig(cwd, dir);
@@ -28424,7 +28435,7 @@ function gitChurnByAuthor(cwd, sinceSha, sources, mine) {
       { cwd, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" }
     );
   } catch {
-    return empty;
+    return { ...empty, unmeasurableForeign: true };
   }
   let foreign = 0;
   let self = 0;
@@ -29654,9 +29665,23 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
           componentId: quest2.componentId,
           dims: grades,
           sha,
-          origin: "session"
+          origin: "session",
+          // A human held this dialogue in the browser; the model only graded it.
+          by: "user"
         });
       } catch {
+      }
+      const scores = Object.values(grades).filter((v) => typeof v === "number");
+      if (scores.length > 0) {
+        noteCheckOutcome(
+          cwd,
+          dir,
+          quest2.componentId,
+          scores.reduce((a, b) => a + b, 0) / scores.length,
+          "user",
+          sha,
+          now
+        );
       }
     } else {
       console.warn(

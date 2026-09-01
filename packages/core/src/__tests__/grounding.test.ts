@@ -119,3 +119,49 @@ describe('paperGrounding with neighbours', () => {
     expect(out).toEqual(paperGrounding(p));
   });
 });
+
+describe('withoutRelatedWork — the section must never reach a prompt', () => {
+  const paper = (body: string): LoadedPaper => ({
+    id: 'c',
+    province: 'p',
+    parentId: null,
+    path: 'p/c/README.md',
+    frontmatter: {
+      id: 'c',
+      title: 'C',
+      sources: [],
+      concepts: [{ id: 'k', name: 'K' }],
+      rationale: [{ decision: 'd', provenance: 'inferred' }],
+    },
+    body,
+  });
+
+  it('strips it when another section follows', () => {
+    const g = paperGrounding(paper('## Description\nbody\n\n## Related Work\n- [a](../a)\n\n## Notes\nkeep\n'));
+    expect(g).not.toContain('Related Work');
+    expect(g).toContain('keep');
+  });
+
+  it('strips it when it is the LAST section', () => {
+    // The old pattern ended its lookahead with `\Z`, which JavaScript does not
+    // have — it is an identity escape, so this case matched nothing and the
+    // whole neighbour-name list went into the prompt untouched.
+    const g = paperGrounding(paper('## Description\nbody\n\n## Related Work\n- [a](../a)\n- [b](../b)\n'));
+    expect(g).not.toContain('Related Work');
+    expect(g).not.toContain('../a');
+    expect(g).toContain('body');
+  });
+
+  it('is not cut short by a literal Z inside the section', () => {
+    // Same root cause, opposite symptom: `\Z` read as "or a literal Z", so the
+    // strip stopped at the first one — and `Zod` is everywhere in this codebase.
+    const g = paperGrounding(paper('## Description\nbody\n\n## Related Work\n- [Zod schema](../zod)\n- [b](../b)\n'));
+    expect(g).not.toContain('Zod');
+    expect(g).not.toContain('../b');
+  });
+
+  it('leaves prose that merely mentions the phrase alone', () => {
+    const g = paperGrounding(paper('## Description\nEdges come from each paper\'s Related Work section.\n'));
+    expect(g).toContain("Related Work section");
+  });
+});

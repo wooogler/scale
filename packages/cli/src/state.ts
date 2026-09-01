@@ -638,9 +638,31 @@ export function readLocksSafe(dir: string): LocksRecord {
   return out;
 }
 
+/**
+ * Write the ledger ATOMICALLY (temp file + rename).
+ *
+ * This file is earned permission, and a bare `writeFileSync` truncates before
+ * it writes: a crash or a concurrent read mid-write leaves either a corrupt
+ * file or a torn read, and `readLocksSafe` turns both into `emptyLocks()` —
+ * silently revoking every unlock the user has ever earned. Rename is atomic on
+ * every platform this runs on, so a reader sees either the old file or the new
+ * one and never a half of each.
+ */
 export function writeLocks(dir: string, locks: LocksRecord): void {
   ensureStateDir(dir);
-  fs.writeFileSync(paths.locks(dir), JSON.stringify(locks, null, 2) + '\n');
+  const target = paths.locks(dir);
+  const tmp = `${target}.tmp.${process.pid}.${Date.now().toString(36)}`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(locks, null, 2) + '\n');
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* nothing to clean up */
+    }
+    throw err;
+  }
 }
 
 /**

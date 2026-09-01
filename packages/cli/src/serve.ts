@@ -45,6 +45,7 @@ import {
   readUserConfigRaw,
   readPolicyRaw,
   loadEffectiveConfig,
+  noteCheckOutcome,
   ensureStateDir,
   appendEvidence,
 } from './state.js';
@@ -861,9 +862,28 @@ async function handleSocraticMessage(
           dims: grades,
           sha,
           origin: 'session',
+          // A human held this dialogue in the browser; the model only graded it.
+          by: 'user',
         });
       } catch {
         /* recording is best-effort — still conclude the dialogue */
+      }
+      // …and register it against the unlock ledger. This path builds its own
+      // evidence rather than going through `completeSocraticQuest`, so it was
+      // the one check surface that moved coverage without ever unlocking the
+      // territory — which is exactly the surface an ASYNC user recovers a
+      // rebellion on, so passing there left them still locked out.
+      const scores = Object.values(grades).filter((v): v is number => typeof v === 'number');
+      if (scores.length > 0) {
+        noteCheckOutcome(
+          cwd,
+          dir,
+          quest.componentId,
+          scores.reduce((a, b) => a + b, 0) / scores.length,
+          'user',
+          sha,
+          now,
+        );
       }
     } else {
       console.warn(

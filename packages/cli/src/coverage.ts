@@ -250,7 +250,13 @@ function gitChurnByAuthor(
       { cwd, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' },
     );
   } catch {
-    return empty;
+    // The anchor did not resolve. A rebase, a squash, or a force-push erases the
+    // sha the user validated against, and every later walk then fails the same
+    // way — so scoring this 0 would not be "no churn this once", it would turn
+    // rebellion off permanently and silently for that component. The history
+    // they demonstrated against genuinely no longer exists, so report it as an
+    // unmeasurable change and let the trigger ask for a re-check.
+    return { ...empty, unmeasurableForeign: true };
   }
 
   let foreign = 0;

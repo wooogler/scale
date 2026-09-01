@@ -29,7 +29,16 @@ export const DEFAULT_MAX_BODY_CHARS = 16_000;
  * to" lookup items, which test recall rather than understanding.
  */
 function withoutRelatedWork(body: string): string {
-  return body.replace(/^##\s*Related Work\b[\s\S]*?(?=^##\s|\Z)/gim, '').trim();
+  // Either lazily up to the next `##` heading, or — when none follows — all the
+  // way to the end. The end-of-input alternative has to be spelled as its own
+  // branch: the previous form used `\Z`, which JavaScript does not have. It is
+  // an identity escape there, so the lookahead read as "next heading, or a
+  // literal Z", and a section ending in no heading was left in place entirely
+  // while a stray `Z` (`Zod`, in this codebase, constantly) cut the strip short
+  // mid-section. Measured on the real papers: 4 of 37 groundings were still
+  // carrying their Related Work links — precisely the neighbour-name list this
+  // function exists to keep out of item generation.
+  return body.replace(/^##\s*Related Work\b(?:[\s\S]*?(?=^##\s)|[\s\S]*)/gim, '').trim();
 }
 
 
