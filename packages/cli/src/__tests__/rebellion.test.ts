@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process';
 
 import { stateDir, paths } from '../state.js';
 import { recomputeCoverageFromDisk } from '../coverage.js';
+import { driftContext } from '../drift-context.js';
 
 let home: string;
 let repo: string;
@@ -335,5 +336,71 @@ describe('rebellion — the churn pre-filter must never skip a real change', () 
     const res = recomputeCoverageFromDisk(repo);
     expect(res.churn['widget']?.foreign ?? 0).toBeGreaterThan(0);
     expect(res.coverage.components['widget']!.state).toBe('stale');
+  });
+});
+
+describe('driftContext — gathering the change from real git', () => {
+  it('collects commits, files, regions and hunks for a drifted component', () => {
+    seedComponent('widget', 40);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    const base = git(['rev-parse', '--short', 'HEAD']);
+
+    fs.writeFileSync(
+      path.join(repo, 'src', 'widget.ts'),
+      'export function alpha(): number {\n  return 1;\n}\n',
+    );
+    git(['add', '-A']);
+    git(['commit', '-qm', 'rewrite as a function'], {
+      GIT_AUTHOR_EMAIL: 'ada@example.com',
+      GIT_AUTHOR_NAME: 'Ada',
+      GIT_COMMITTER_EMAIL: 'ada@example.com',
+      GIT_COMMITTER_NAME: 'Ada',
+    });
+
+    const ctx = driftContext(repo, base, ['src/widget.ts'], 'foreign');
+    expect(ctx).not.toBeNull();
+    expect(ctx!.commits).toHaveLength(1);
+    expect(ctx!.commits[0]?.author).toBe('ada@example.com');
+    expect(ctx!.commits[0]?.subject).toBe('rewrite as a function');
+    expect(ctx!.files[0]?.path).toBe('src/widget.ts');
+    expect(ctx!.hunks.length).toBeGreaterThan(0);
+    expect(ctx!.hunks[0]?.churn).toBeGreaterThan(0);
+  });
+
+  it('survives a user gitconfig that would otherwise hijack the diff', () => {
+    // `-c diff.external=` does NOT disable an external diff — git tries to RUN
+    // the empty string and dies ("cannot run : No such file or directory"),
+    // which silently produced no drift block at all. `--no-ext-diff` is the
+    // supported way, and this pins that a hostile/broken setting cannot win.
+    seedComponent('widget', 20);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    const base = git(['rev-parse', '--short', 'HEAD']);
+    writeSource('widget', 20, 'changed');
+    git(['add', '-A']);
+    git(['commit', '-qm', 'change']);
+
+    git(['config', 'diff.external', '/nonexistent/definitely-not-a-program']);
+    const ctx = driftContext(repo, base, ['src/widget.ts'], 'self');
+    expect(ctx).not.toBeNull();
+    expect(ctx!.hunks.length).toBeGreaterThan(0);
+  });
+
+  it('returns null rather than throwing on an unresolvable anchor', () => {
+    seedComponent('widget', 10);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    expect(driftContext(repo, 'deadbeef', ['src/widget.ts'], 'foreign')).toBeNull();
+    expect(driftContext(repo, null, ['src/widget.ts'], 'foreign')).toBeNull();
+    expect(driftContext(repo, 'HEAD', [], 'foreign')).toBeNull();
+  });
+
+  it('returns null when nothing changed — no empty block', () => {
+    seedComponent('widget', 10);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    const head = git(['rev-parse', '--short', 'HEAD']);
+    expect(driftContext(repo, head, ['src/widget.ts'], 'foreign')).toBeNull();
   });
 });

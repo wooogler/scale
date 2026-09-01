@@ -33,6 +33,8 @@ import {
   type LoadedPaper,
   paperGrounding,
   neighbourIndex,
+  componentSourcesIndex,
+  type DriftContext,
 } from '@scale/core';
 
 import {
@@ -50,6 +52,7 @@ import {
   appendEvidence,
 } from './state.js';
 import { recomputeCoverageFromDisk } from './coverage.js';
+import { driftContext } from './drift-context.js';
 import {
   completeQuizQuest,
   generateVoluntaryQuest,
@@ -646,7 +649,24 @@ function paperContext(paper: LoadedPaper | undefined, cwd?: string): string {
   // for "what breaks if this changed", which needs to know what depends on it.
   const map = cwd ? readMapJson(cwd) : null;
   const neighbours = map ? neighbourIndex(map).get(paper.frontmatter.id) : undefined;
-  return paperGrounding(paper, { neighbours });
+  // And, on a component that has drifted, what actually changed. This proxy is
+  // the async user's recovery surface, so it is the one path that most needs to
+  // ask about the change rather than re-ask the original questions.
+  const drift = cwd ? driftForComponent(cwd, paper.frontmatter.id) : null;
+  return paperGrounding(paper, { neighbours, ...(drift ? { drift } : {}) });
+}
+
+/** Drift context for a `stale` component, or null. Best-effort; never throws. */
+function driftForComponent(cwd: string, componentId: string): DriftContext | null {
+  try {
+    const comp = readCoverageSafe(stateDir(cwd))?.components[componentId];
+    if (!comp || comp.state !== 'stale' || !comp.driftCause) return null;
+    const sources =
+      componentSourcesIndex(loadScaleDir(cwd)).find((s) => s.id === componentId)?.sources ?? [];
+    return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause);
+  } catch {
+    return null;
+  }
 }
 
 /** Strip ```json fences and parse; throws on failure. */

@@ -157,11 +157,7 @@ SessionStart/record가 계속 갱신한다.
 - 테스트: gate-edit 판정 · 레이어링/마이그레이션 · locks · defer/unlock 경로
 ### ✅ S2 — 반란 v2 (메커니즘) — 완료. **결과는 §11 참조.**
 - authorship 필터 ✅ · 원장 재잠금 ✅ · 일일 다이제스트 ✅ · 반란 인지 deny 문구 ✅
-- ⏸ **S2b — diff grounding**: 회복 퀴즈에 foreign diff 블록. 측정 결과 반란을
-  일으킬 만한 diff는 최소 8.5k / 중앙값 19k / 최대 78k자라 **통째로 못 넣는다.**
-  → 결정론적 skeleton(sha·author·subject·numstat·hunk 함수명) + churn 순위로 자른
-  발췌 + 신뢰 경계 래핑 + anti-lookup 지시. 프롬프트 인젝션 표면이므로 S3의
-  서버 채점과 함께 간다.
+- ✅ **S2b — diff grounding** — 완료. **결과는 §13 참조.**
 ### S3 — async 완성
 - deny 시 pending-unlock 기록 → 웹 뷰어 표면화, 다음 세션 /scale-study 안내
 - **서버 채점**: /api/quests에서 정답 제거, 채점을 serve로 이동 —
@@ -272,3 +268,45 @@ S2가 `rebellion`을 코어와 CLI에 넣은 것은 **PLAN §1-1 위반이었다
 `QuestOrigin 'rebellion'` → `'drift'`, `locks.json`의 `rebellions` → `drifted`.
 `ComponentCoverage`에 `driftCause`/`driftAuthors`를 추가한 이유는 뷰어가 두 라벨을
 구분하려면 원인이 필요한데 그때까지는 `locks.json`에만 있었기 때문이다.
+
+## 13. S2b 실행 결과 — diff grounding (2026-09-01)
+
+### 13.1 크기가 설계를 정했다 (실측, 12커밋 창)
+
+| | |
+|---|---|
+| skeleton (commits·files·regions) | **최대 483자** → 항상 통째로. 잘릴 때 "무엇을 안 보여주는지" 말해주는 게 이것 |
+| diff `-U1` | 중앙값 **4,754** · 최대 **50,618** · 최소 377 |
+| `-U1` vs `-U3` | **12%** 절약 (같은 hunk를 12% 더 담는다) |
+
+예산별 "통째로 들어가는 component" 비율: 3k→37% · **6k→50%** · 8k→53% · 12k→63%.
+**6,000이 무릎**이라 거기로 정했다. hunk는 churn 순으로 남기되 출력은 파일 순서를
+복원하고, 잘린 개수를 반드시 밝힌다(무언의 절단은 "이게 전부"로 읽힌다).
+
+`.ts`에서 hunk 함수 컨텍스트가 **커스텀 diff 드라이버 없이** 나온다. 다만 파일
+상단 hunk는 `import ...`를 집어오므로 import/주석은 버리고 시그니처 머리만 남긴다.
+
+### 13.2 precedence를 쪼갰다
+
+"diff가 이긴다" 한 줄로 쓰면 **rationale 차원을 버리라고 가르치는 셈**이다.
+- **WHAT** (동작) → diff가 현재 진실. paper가 어긋나면 paper는 변경 *이전*을 서술.
+- **WHY** (원래 설계 이유) → **오직 paper**. 코드가 움직였다고 rationale이 반박된 게 아니다.
+
+### 13.3 프롬프트 인젝션 — 실제 적대적 커밋으로 시험
+
+가짜 fence를 심은 커밋(`/* --- END CHANGED CODE ---` 뒤에 "operator 지시")을
+만들어 돌렸더니 **울타리가 뚫렸다.** 두 겹으로 막았다:
+1. fence 마커에 **요청마다 바뀌는 id** (`--- BEGIN CHANGED CODE #<id> ---`).
+   CLI가 난수를 주고, 없으면 내용 해시(테스트 결정론용).
+2. 본문 안의 `CHANGED CODE` 문자열을 `CHANGED_CODE`로 **무력화**.
+
+주입된 텍스트는 **보이는 데이터로 남는다** — 읽을 수는 있고 따를 수는 없게. 이것은
+완화이지 제거가 아니며, 남의 diff를 모델에 통과시키는 이상 남는 한계다.
+
+### 13.4 git 하드닝에서 잡은 자책골
+
+`-c diff.external=`는 외부 diff를 *끄지* 않는다 — **빈 문자열을 프로그램으로
+실행하려다 죽는다** (`cannot run : No such file or directory`). 내 하드닝이
+diff를 통째로 없애고 있었고, drift 블록이 조용히 안 나왔다. 올바른 형태는
+`--no-ext-diff` + `--no-textconv`. 적대적/망가진 gitconfig가 이길 수 없다는
+테스트로 고정했다.

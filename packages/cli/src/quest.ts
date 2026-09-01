@@ -42,7 +42,9 @@ import {
   resolveInterventionModel,
   paperGrounding,
   neighbourIndex,
+  componentSourcesIndex,
   type ComponentNeighbours,
+  type DriftContext,
   type LlmProvider,
 } from '@scale/core';
 
@@ -54,10 +56,12 @@ import {
   readConfigSafe,
   loadEffectiveConfig,
   noteCheckOutcome,
+  readCoverageSafe,
   readQuestsSafe,
   readSessionSafe,
 } from './state.js';
 import { recomputeCoverageFromDisk } from './coverage.js';
+import { driftContext } from './drift-context.js';
 import { chatText, MissingKeyError } from './llm.js';
 
 /** Default number of quests generated per post-session run (PLAN §6.2). */
@@ -200,8 +204,30 @@ export function pickComponents(
  * the two prompts cannot drift apart again, and it now carries the paper's PROSE
  * — the mechanism the generator needs to write a `structure` item at all.
  */
-function groundingText(paper: LoadedPaper, neighbours?: ComponentNeighbours): string {
-  return paperGrounding(paper, { neighbours });
+function groundingText(
+  paper: LoadedPaper,
+  neighbours?: ComponentNeighbours,
+  drift?: DriftContext | null,
+): string {
+  return paperGrounding(paper, { neighbours, ...(drift ? { drift } : {}) });
+}
+
+/**
+ * The drift context for a component, when it has one — i.e. when the code moved
+ * after the junior validated it. Grounds a RECOVERY check in what actually
+ * changed rather than re-asking what they already answered. Null everywhere
+ * else, which leaves the grounding exactly as it was.
+ */
+function driftFor(
+  cwd: string,
+  coverage: UserCoverage,
+  loaded: LoadedScale,
+  componentId: string,
+): DriftContext | null {
+  const comp = coverage.components[componentId];
+  if (!comp || comp.state !== 'stale' || !comp.driftCause) return null;
+  const sources = componentSourcesIndex(loaded).find((s) => s.id === componentId)?.sources ?? [];
+  return driftContext(cwd, comp.lastValidatedSha, sources, comp.driftCause);
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +263,7 @@ async function llmQuizItems(
   paper: LoadedPaper,
   language: Language = 'en',
   neighbours?: ComponentNeighbours,
+  drift?: DriftContext | null,
 ): Promise<QuestItem[]> {
   const text = await chatText({
     provider,
@@ -266,7 +293,7 @@ async function llmQuizItems(
       {
         role: 'user',
         content:
-          `${groundingText(paper, neighbours)}\n\n` +
+          `${groundingText(paper, neighbours, drift)}\n\n` +
           'Write exactly 2 multiple-choice items. Return JSON of the form:\n' +
           '{"items":[{"stem":"...","options":["A","B","C","D"],"correctIndex":0,"dim":"concepts"}]}\n' +
           'Rules: exactly 4 options each; correctIndex is 0-3; the correct option must ' +
@@ -318,6 +345,7 @@ async function llmSocraticItems(
   paper: LoadedPaper,
   language: Language = 'en',
   neighbours?: ComponentNeighbours,
+  drift?: DriftContext | null,
 ): Promise<QuestItem[]> {
   const text = await chatText({
     provider,
@@ -332,7 +360,7 @@ async function llmSocraticItems(
       {
         role: 'user',
         content:
-          `${groundingText(paper, neighbours)}\n\n` +
+          `${groundingText(paper, neighbours, drift)}\n\n` +
           'Return JSON of the form:\n' +
           '{"seedQuestion":"...","focus":"one sentence naming the concept/rationale to probe"}\n' +
           'The seedQuestion should invite the learner to explain how this component works ' +
@@ -662,19 +690,30 @@ export async function generateQuests(
   for (const componentId of picked) {
     const paper = paperById(loaded, componentId);
     if (!paper) continue;
+    // A `stale` component is a RECOVERY check: ground it in what changed since
+    // the junior validated it, not in the paper alone.
+    const drift = driftFor(cwd, coverage, loaded, componentId);
 
     let items: QuestItem[] | null = null;
     if (!llmDisabled) {
       try {
         items =
           modality === 'quiz'
-            ? await llmQuizItems(provider, model, paper, config.language, neighbours.get(componentId))
+            ? await llmQuizItems(
+                provider,
+                model,
+                paper,
+                config.language,
+                neighbours.get(componentId),
+                drift,
+              )
             : await llmSocraticItems(
                 provider,
                 model,
                 paper,
                 config.language,
                 neighbours.get(componentId),
+                drift,
               );
         usedLlm = true;
       } catch (err) {
@@ -745,6 +784,16 @@ export async function generateVoluntaryQuest(
   const neighbours = readMapJsonSafe(cwd)
     ? neighbourIndex(readMapJsonSafe(cwd)!).get(componentId)
     : undefined;
+  // …and the same recovery grounding. `/scale-study` on a fallen territory is
+  // the async user's ONLY route back in, so it must ask about the change too.
+  // Read from the coverage snapshot; this path deliberately avoids a recompute.
+  const drift = (() => {
+    try {
+      return driftFor(cwd, readCoverageSafe(dir) ?? { user: config.user, updatedAt: '', components: {} }, loaded, componentId);
+    } catch {
+      return null;
+    }
+  })();
 
   const modality = config.gate.modality;
   let items: QuestItem[] | null = null;
@@ -752,8 +801,8 @@ export async function generateVoluntaryQuest(
   try {
     items =
       modality === 'quiz'
-        ? await llmQuizItems(provider, model, paper, config.language, neighbours)
-        : await llmSocraticItems(provider, model, paper, config.language);
+        ? await llmQuizItems(provider, model, paper, config.language, neighbours, drift)
+        : await llmSocraticItems(provider, model, paper, config.language, neighbours, drift);
     via = 'llm';
   } catch {
     items = null; // no key / API error → deterministic fallback below
