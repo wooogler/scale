@@ -50,7 +50,12 @@ import {
   appendEvidence,
 } from './state.js';
 import { recomputeCoverageFromDisk } from './coverage.js';
-import { completeQuizQuest, generateVoluntaryQuest } from './quest.js';
+import {
+  completeQuizQuest,
+  generateVoluntaryQuest,
+  questForClient,
+  gradeQuizPicks,
+} from './quest.js';
 import { chatText, MissingKeyError } from './llm.js';
 import { keyStatus, resolveKey, setKey } from './keys.js';
 
@@ -427,7 +432,8 @@ async function handle(
   }
 
   if (pathname === '/api/quests') {
-    sendJson(res, 200, readQuestsSafe(dir));
+    // Answer key stripped — grading happens server-side (see questForClient).
+    sendJson(res, 200, readQuestsSafe(dir).map(questForClient));
     return;
   }
 
@@ -491,7 +497,16 @@ async function handleQuestComplete(
   questId: string,
 ): Promise<void> {
   const body = parseBody(await readBody(req));
-  const results = Array.isArray(body.results) ? body.results : [];
+  const quest = readQuestsSafe(stateDir(cwd)).find((q) => q.id === questId);
+  if (!quest) {
+    sendJson(res, 404, { error: 'unknown quest', id: questId });
+    return;
+  }
+  // Body is `{ picks: number[] }` — WHICH OPTION, not what it scored. The
+  // client no longer has the key to grade with and its score is no longer
+  // taken on trust; a check now opens a lock, so the grading has to happen on
+  // the side that owns the lock.
+  const { results, reveal } = gradeQuizPicks(quest, body.picks);
   // The web quest runner is the junior clicking through the items themselves.
   const result = await completeQuizQuest(cwd, questId, results, 'user');
   if (!result) {
@@ -503,6 +518,8 @@ async function handleQuestComplete(
     recorded: result.recorded,
     quest: { id: questId, status: 'completed' },
     component: result.component,
+    // Now — and only now — the runner learns what the answers were.
+    reveal,
   });
 }
 

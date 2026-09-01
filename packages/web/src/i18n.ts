@@ -87,6 +87,8 @@ export interface Strings {
   answerLabel: string;
   submitAnswers: string;
   recording: string;
+  /** shown when the server could not be reached to grade + record */
+  completeFailed: string;
   /** fallback opening probe when a socratic quest has no seed item */
   socraticSeed: string;
   /** chat participant names ('문답관'/'나' in ko, 'Tutor'/'You' in en) */
@@ -213,6 +215,8 @@ export const STRINGS: Record<Language, Strings> = {
     answerLabel: 'Answer:',
     submitAnswers: 'Submit answers',
     recording: 'Recording…',
+    completeFailed:
+      'Could not reach the server to grade this. Nothing was recorded — try again.',
     socraticSeed: 'Tell me what you understand about this component.',
     tutorName: 'Tutor',
     youName: 'You',
@@ -344,6 +348,7 @@ export const STRINGS: Record<Language, Strings> = {
     answerLabel: '정답:',
     submitAnswers: '답안 제출',
     recording: '기록 중…',
+    completeFailed: '채점 서버에 연결하지 못했습니다. 기록된 것이 없습니다 — 다시 시도하세요.',
     socraticSeed: '이 컴포넌트에 대해 이해한 바를 말해 보세요.',
     tutorName: '문답관',
     youName: '나',

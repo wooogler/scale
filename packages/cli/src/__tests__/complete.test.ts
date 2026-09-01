@@ -4,7 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { stateDir, paths } from '../state.js';
-import { completeQuizQuest, completeSocraticQuest } from '../quest.js';
+import {
+  completeQuizQuest,
+  completeSocraticQuest,
+  questForClient,
+  gradeQuizPicks,
+} from '../quest.js';
+import { QuestSchema, type Quest } from '@scale/core';
 
 // completeQuizQuest / completeSocraticQuest are the SHARED completion path used
 // by BOTH the CLI (`scale quest complete`) and the web POST endpoint. These
@@ -135,5 +141,81 @@ describe('completeSocraticQuest (shared CLI path)', () => {
 
     const quests = JSON.parse(fs.readFileSync(paths.quests(stateDir(repo)), 'utf8'));
     expect(quests[0].status).toBe('completed');
+  });
+});
+
+describe('server-side grading (PLAN-GATE S3)', () => {
+  const quiz = (): Quest =>
+    QuestSchema.parse({
+      id: 'q1',
+      componentId: 'alpha',
+      modality: 'quiz',
+      origin: 'session',
+      status: 'pending',
+      items: [
+        {
+          prompt: 'one?',
+          dim: 'concepts',
+          options: ['a', 'b', 'c', 'd'],
+          correctIndex: 2,
+          answer: 'c',
+          explanation: 'because c',
+        },
+        { prompt: 'two?', dim: 'concepts', options: ['a', 'b'], correctIndex: 0, answer: 'a' },
+        { prompt: 'three?', dim: 'structure', options: ['a', 'b'], correctIndex: 1, answer: 'b' },
+      ],
+    });
+
+  it('questForClient strips every part of the answer key', () => {
+    // The key used to ride along on GET /api/quests, visible in the network tab
+    // of any quiz. Cosmetic when a check moved a number; not cosmetic now that
+    // a passed check unlocks territory.
+    const sent = questForClient(quiz());
+    for (const item of sent.items) {
+      const rec = item as Record<string, unknown>;
+      expect(rec.correctIndex).toBeUndefined();
+      expect(rec.answer).toBeUndefined();
+      expect(rec.explanation).toBeUndefined();
+      // …while everything the runner draws survives.
+      expect(rec.prompt).toBeTruthy();
+      expect(rec.options).toBeTruthy();
+      expect(rec.dim).toBeTruthy();
+    }
+    expect(JSON.stringify(sent)).not.toContain('because c');
+  });
+
+  it('grades picks against the stored key, per dimension', () => {
+    const { results, reveal } = gradeQuizPicks(quiz(), [2, 1, 1]);
+    // concepts: item0 right, item1 wrong → 0.5. structure: item2 right → 1.
+    expect(results).toEqual(
+      expect.arrayContaining([
+        { dim: 'concepts', score: 0.5 },
+        { dim: 'structure', score: 1 },
+      ]),
+    );
+    expect(reveal.map((r) => r.correct)).toEqual([true, false, true]);
+    expect(reveal[0]?.answer).toBe('c');
+    expect(reveal[0]?.explanation).toBe('because c');
+  });
+
+  it('scores unanswered and out-of-range picks as wrong, never as right', () => {
+    const { results } = gradeQuizPicks(quiz(), [null, undefined, 99]);
+    expect(results.every((r) => r.score === 0)).toBe(true);
+  });
+
+  it('ignores a client that sends more picks than there are items', () => {
+    const { results, reveal } = gradeQuizPicks(quiz(), [2, 0, 1, 0, 0, 0]);
+    expect(reveal).toHaveLength(3);
+    expect(results.find((r) => r.dim === 'concepts')?.score).toBe(1);
+  });
+
+  it('a client cannot claim a score — only picks are accepted', () => {
+    // The shape the old endpoint trusted. Passed as picks it grades to zero,
+    // because none of it names an option index.
+    const { results } = gradeQuizPicks(quiz(), [
+      { dim: 'concepts', score: 1 },
+      { dim: 'structure', score: 1 },
+    ] as unknown);
+    expect(results.every((r) => r.score === 0)).toBe(true);
   });
 });

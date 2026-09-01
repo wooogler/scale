@@ -237,12 +237,22 @@ export interface DimResult {
   score: number;
 }
 
+/** One item's answer key, returned only in the completion response. */
+export interface ItemReveal {
+  correctIndex: number;
+  answer: string;
+  explanation?: string;
+  correct: boolean;
+}
+
 /** Response of POST /api/quests/:id/complete (quiz). */
 export interface CompleteResponse {
   componentId: string;
   recorded: number;
   quest: { id: string; status: string };
   component: ComponentCoverage;
+  /** The key, revealed by the server now that the picks are in. */
+  reveal: ItemReveal[];
 }
 
 /** Response of POST /api/socratic/:id/message. */
@@ -358,21 +368,22 @@ export async function createVoluntaryQuest(
  */
 export async function completeQuiz(
   questId: string,
-  results: DimResult[],
-): Promise<CompleteResponse> {
+  picks: (number | null)[],
+): Promise<CompleteResponse | null> {
   try {
+    // Send WHICH OPTION, never a score: the server owns the answer key and the
+    // grading, because a passed check now unlocks territory.
     return await postJson<CompleteResponse>(
       `/api/quests/${encodeURIComponent(questId)}/complete`,
-      { results },
+      { picks },
     );
   } catch (err) {
+    // Deliberately NOT faked. This used to synthesize a component and render a
+    // full "Territory taken" card while nothing had been written — the map then
+    // silently contradicted the card. It is also now impossible: grading lives
+    // on the server, so an unreachable server means there is no result to show.
     note(`quest ${questId} complete`, err);
-    return {
-      componentId: '',
-      recorded: results.length,
-      quest: { id: questId, status: 'completed' },
-      component: synthComponent(results),
-    };
+    return null;
   }
 }
 

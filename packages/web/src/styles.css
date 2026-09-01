@@ -883,6 +883,11 @@ body {
   border-top: 1px dashed var(--border);
   padding-top: 10px;
 }
+.qr-submit-error {
+  color: var(--warn, #e0803a);
+  margin: 0 0 8px;
+}
+
 .qr-explain strong {
   color: var(--text);
 }

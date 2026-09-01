@@ -11,7 +11,6 @@ import {
   completeQuiz,
   sendSocraticMessage,
   type CompleteResponse,
-  type DimResult,
   type SocraticResponse,
 } from './data.js';
 import { useLang, useStrings } from './i18n.js';
@@ -97,31 +96,26 @@ function QuizRunner({ quest, onCompleted }: { quest: Quest; onCompleted: Props['
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<CompleteResponse | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const allAnswered = picks.every((p) => p !== null);
 
   const submit = async (): Promise<void> => {
     if (!allAnswered || busy) return;
     setBusy(true);
-    // Tally per-dim: average correctness across items sharing a dim (§5.1).
-    const byDim = new Map<DimName, { sum: number; n: number }>();
-    items.forEach((item, i) => {
-      const dim = (itemField<DimName>(item, 'dim') ?? 'concepts') as DimName;
-      const correctIndex = itemField<number>(item, 'correctIndex') ?? 0;
-      const score = picks[i] === correctIndex ? 1 : 0;
-      const cur = byDim.get(dim) ?? { sum: 0, n: 0 };
-      cur.sum += score;
-      cur.n += 1;
-      byDim.set(dim, cur);
-    });
-    const results: DimResult[] = [...byDim.entries()].map(([dim, { sum, n }]) => ({
-      dim,
-      score: n ? sum / n : 0,
-    }));
-    const res = await completeQuiz(quest.id, results);
+    setSubmitError(null);
+    // Send the PICKS. The server holds the answer key and does the grading —
+    // a passed check unlocks territory, so neither the key nor the score is
+    // the browser's to hold.
+    const res = await completeQuiz(quest.id, picks);
+    setBusy(false);
+    if (!res) {
+      // No fabricated outcome: nothing was recorded, so nothing is claimed.
+      setSubmitError(S.completeFailed);
+      return;
+    }
     setResult(res);
     setSubmitted(true);
-    setBusy(false);
     onCompleted(res.componentId || quest.componentId, res.component);
   };
 
@@ -130,10 +124,12 @@ function QuizRunner({ quest, onCompleted }: { quest: Quest; onCompleted: Props['
       <div className="qr-cards">
         {items.map((item, i) => {
           const options = itemField<string[]>(item, 'options') ?? [];
-          const correctIndex = itemField<number>(item, 'correctIndex') ?? 0;
           const dim = itemField<DimName>(item, 'dim') ?? 'concepts';
-          const explanation = itemField<string>(item, 'explanation');
-          const answer = itemField<string>(item, 'answer') ?? options[correctIndex];
+          // The key arrives with the graded response, never with the quest.
+          const rev = result?.reveal[i];
+          const correctIndex = rev?.correctIndex ?? -1;
+          const explanation = rev?.explanation;
+          const answer = rev?.answer ?? '';
           return (
             <div className="qr-card" key={i}>
               <div className="qr-card-head">
@@ -182,9 +178,12 @@ function QuizRunner({ quest, onCompleted }: { quest: Quest; onCompleted: Props['
       </div>
 
       {!submitted ? (
-        <button type="button" className="qr-submit" disabled={!allAnswered || busy} onClick={() => void submit()}>
-          {busy ? S.recording : S.submitAnswers}
-        </button>
+        <>
+          {submitError && <p className="qr-explain qr-submit-error">{submitError}</p>}
+          <button type="button" className="qr-submit" disabled={!allAnswered || busy} onClick={() => void submit()}>
+            {busy ? S.recording : S.submitAnswers}
+          </button>
+        </>
       ) : (
         result && <Outcome component={result.component} />
       )}

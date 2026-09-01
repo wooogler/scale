@@ -29096,6 +29096,46 @@ var DIM_NAMES = ["structure", "concepts", "rationale"];
 function completionUser(dir) {
   return readConfigSafe(dir)?.user ?? process.env.USER ?? "user";
 }
+function questForClient(quest2) {
+  return {
+    ...quest2,
+    items: quest2.items.map((item) => {
+      const { correctIndex: _c, answer: _a2, explanation: _e, ...rest } = item;
+      return rest;
+    })
+  };
+}
+function gradeQuizPicks(quest2, picks) {
+  const arr = Array.isArray(picks) ? picks : [];
+  const byDim = /* @__PURE__ */ new Map();
+  const reveal = [];
+  quest2.items.forEach((item, i) => {
+    const rec = item;
+    const options = Array.isArray(rec.options) ? rec.options : [];
+    const correctIndex = typeof rec.correctIndex === "number" && Number.isInteger(rec.correctIndex) ? rec.correctIndex : 0;
+    const dimRaw = rec.dim;
+    const dim = typeof dimRaw === "string" && DIM_NAMES.includes(dimRaw) ? dimRaw : "concepts";
+    const picked = arr[i];
+    const correct = typeof picked === "number" && picked === correctIndex;
+    const cur = byDim.get(dim) ?? { sum: 0, n: 0 };
+    cur.sum += correct ? 1 : 0;
+    cur.n += 1;
+    byDim.set(dim, cur);
+    reveal.push({
+      correctIndex,
+      answer: typeof rec.answer === "string" ? rec.answer : options[correctIndex] ?? "",
+      ...typeof rec.explanation === "string" ? { explanation: rec.explanation } : {},
+      correct
+    });
+  });
+  return {
+    results: [...byDim.entries()].map(([dim, { sum, n }]) => ({
+      dim,
+      score: n ? sum / n : 0
+    })),
+    reveal
+  };
+}
 async function completeQuizQuest(cwd, questId, results, by = "user") {
   const dir = stateDir(cwd);
   const quests = readQuestsSafe(dir);
@@ -29442,7 +29482,7 @@ async function handle(req, res, cwd) {
     return;
   }
   if (pathname === "/api/quests") {
-    sendJson(res, 200, readQuestsSafe(dir));
+    sendJson(res, 200, readQuestsSafe(dir).map(questForClient));
     return;
   }
   if (pathname === "/api/settings" || pathname === "/api/settings/") {
@@ -29480,7 +29520,12 @@ async function handle(req, res, cwd) {
 }
 async function handleQuestComplete(req, res, cwd, questId) {
   const body = parseBody(await readBody(req));
-  const results = Array.isArray(body.results) ? body.results : [];
+  const quest2 = readQuestsSafe(stateDir(cwd)).find((q) => q.id === questId);
+  if (!quest2) {
+    sendJson(res, 404, { error: "unknown quest", id: questId });
+    return;
+  }
+  const { results, reveal } = gradeQuizPicks(quest2, body.picks);
   const result = await completeQuizQuest(cwd, questId, results, "user");
   if (!result) {
     sendJson(res, 404, { error: "unknown quest", id: questId });
@@ -29490,7 +29535,9 @@ async function handleQuestComplete(req, res, cwd, questId) {
     componentId: result.componentId,
     recorded: result.recorded,
     quest: { id: questId, status: "completed" },
-    component: result.component
+    component: result.component,
+    // Now — and only now — the runner learns what the answers were.
+    reveal
   });
 }
 async function handleQuestCreate(req, res, cwd) {

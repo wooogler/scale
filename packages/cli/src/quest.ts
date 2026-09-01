@@ -803,6 +803,95 @@ function completionUser(dir: string): string {
   return readConfigSafe(dir)?.user ?? process.env.USER ?? 'user';
 }
 
+/** One item's answer key, revealed only AFTER the picks are in. */
+export interface ItemReveal {
+  correctIndex: number;
+  answer: string;
+  explanation?: string;
+  correct: boolean;
+}
+
+/** What the server hands back once it has graded a set of picks. */
+export interface GradedPicks {
+  results: { dim: DimName; score: number }[];
+  reveal: ItemReveal[];
+}
+
+/**
+ * Strip a quest's answer key for transport to the browser.
+ *
+ * The viewer used to receive quests verbatim and grade them itself, which meant
+ * `correctIndex` sat in the network tab of every quiz — no intent required to
+ * see it — and the score the client POSTed was simply believed. That was a
+ * cosmetic flaw while a check only nudged a number. It is not one now: a passed
+ * check UNLOCKS territory, so the answer key and the score were both a way to
+ * open the gate, and neither the picks nor the grading were the study's to
+ * trust. What survives here is exactly what the runner has to draw.
+ */
+export function questForClient(quest: Quest): Quest {
+  return {
+    ...quest,
+    items: quest.items.map((item) => {
+      const { correctIndex: _c, answer: _a, explanation: _e, ...rest } = item as Record<
+        string,
+        unknown
+      >;
+      return rest as QuestItem;
+    }),
+  };
+}
+
+/**
+ * Grade option picks against the quest's own stored key (server side).
+ *
+ * `picks[i]` is the option index chosen for `items[i]`; `null`/absent counts as
+ * unanswered and scores 0. Per-dim scores average correctness across the items
+ * sharing that dimension, matching the coverage model's per-dim EMA.
+ */
+export function gradeQuizPicks(quest: Quest, picks: unknown): GradedPicks {
+  const arr = Array.isArray(picks) ? picks : [];
+  const byDim = new Map<DimName, { sum: number; n: number }>();
+  const reveal: ItemReveal[] = [];
+
+  quest.items.forEach((item, i) => {
+    const rec = item as Record<string, unknown>;
+    const options = Array.isArray(rec.options) ? (rec.options as string[]) : [];
+    const correctIndex =
+      typeof rec.correctIndex === 'number' && Number.isInteger(rec.correctIndex)
+        ? rec.correctIndex
+        : 0;
+    const dimRaw = rec.dim;
+    const dim = (
+      typeof dimRaw === 'string' && (DIM_NAMES as string[]).includes(dimRaw)
+        ? dimRaw
+        : 'concepts'
+    ) as DimName;
+
+    const picked = arr[i];
+    const correct = typeof picked === 'number' && picked === correctIndex;
+    const cur = byDim.get(dim) ?? { sum: 0, n: 0 };
+    cur.sum += correct ? 1 : 0;
+    cur.n += 1;
+    byDim.set(dim, cur);
+
+    reveal.push({
+      correctIndex,
+      answer:
+        typeof rec.answer === 'string' ? rec.answer : (options[correctIndex] ?? ''),
+      ...(typeof rec.explanation === 'string' ? { explanation: rec.explanation } : {}),
+      correct,
+    });
+  });
+
+  return {
+    results: [...byDim.entries()].map(([dim, { sum, n }]) => ({
+      dim,
+      score: n ? sum / n : 0,
+    })),
+    reveal,
+  };
+}
+
 /**
  * Mark `questId` completed and return its updated component coverage. Appends a
  * `quiz_result` (origin 'session') per valid graded dimension, flips the quest
