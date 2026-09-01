@@ -125,8 +125,10 @@ scale map index    # build .scale/index.json (file → component reverse index) 
 ```
 
 `map.json` is frozen once and extended incrementally so the map stays spatially
-stable. `scale map drift` reports the built-from SHA vs current HEAD (full
-per-component churn detection is not yet wired — see below).
+stable. `scale map drift` reports the built-from SHA vs current HEAD; the
+per-component churn detection that matters to a junior is not this command but
+[Rebellion](#rebellion--when-a-teammate-changes-your-territory), which runs on
+every recompute.
 
 ---
 
@@ -205,6 +207,32 @@ record it as your decision.
 The CLI's `scale gate edit` is pure file I/O (no LLM, no git churn scan) and
 emits one JSON line `{"allow":bool,"component":str|null,"reason":str|null}`; the
 plugin hook turns `allow:false` into the edit-blocking deny.
+
+### Rebellion — when a teammate changes your territory
+
+Unlocking is durable, but not unconditional: if the code you demonstrated moves,
+your understanding of it is out of date. On every recompute (SessionStart, and
+after each check) SCALE measures each validated component's churn since the sha
+you validated it at, **split by who authored the commits**:
+
+- **A collaborator's change** re-locks the territory once it passes
+  `rebellion.foreignRatio` (default 0.25 of the component's size). The territory
+  goes `stale`, leaves your unlock ledger, and SessionStart tells you once a day
+  who changed it. The next edit into it is denied with a message that says you
+  *did* demonstrate it and points the check at what changed.
+- **Your own change** uses a much higher bar (`rebellion.selfRatio`, default 0.8)
+  — the gate already cleared you before you wrote it, so re-locking you on your
+  own work would mostly measure how much you typed. The high bar still catches
+  the real case: unlocking with one check and then rewriting the thing wholesale.
+
+One passing check recovers it. `scale status` shows which territories are
+re-locked, and your git identity plus how much of recent history it matches — a
+mismatched `user.email` is the one failure that would otherwise be invisible.
+
+Attribution uses the mailmap-canonical **author** (never the committer), so
+merging a teammate's PR credits their churn to them, not to you. With no
+resolvable identity, everything reads as yours: a missing `user.email` can never
+lock you out of your own codebase.
 
 ---
 
@@ -295,16 +323,18 @@ like an in-chat check.
 
 **Not yet** (staged in PLAN-GATE §4)
 
-- **Rebellion v2 (S2)** — collaborator commits re-locking your unlocked territory,
-  with the recovery quiz grounded in their diff; today staleness has no authorship
-  filter and never re-locks.
+- **Diff-grounded recovery (S2b)** — rebellion re-locks and the deny text points the
+  tutor at what changed, but the collaborator's diff itself is not yet in the grounding
+  (a rebellion-scale diff measures 8.5k–78k chars, so it needs a skeleton-plus-excerpt
+  design and a trust boundary). Ships with S3.
 - **Async surfaces (S3)** — pending unlocks in the viewer, server-side quiz
   grading (the answer key currently reaches the browser — it must move before
   checks guard anything), LAN token for mobile.
 - **Mode A live co-construction** — building the memory alongside the junior in the
   flow (the hook infrastructure exists; the mode does not).
-- **Full drift detection** — `scale map drift` reports SHAs only;
-  per-component source-churn staleness is not yet wired.
+- **`scale map drift`** — still a stub reporting SHAs only. Per-component staleness
+  itself is wired (it runs on every recompute — see Rebellion); this senior-side
+  reporting command never caught up.
 - Senior rationale interviews (schema-ready via `provenance`) and study-logging
   infra are deferred (`PLAN.md` §11).
 

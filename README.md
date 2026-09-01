@@ -164,7 +164,14 @@ Then work normally in Claude Code:
   unlocks the territory durably. `async` assessment: the agent teaches instead, and you
   unlock later in the map viewer or with `/scale-study`. `scale gate defer <id>` skips —
   a session-scoped unlock; it locks again next session.
-- **Check progress:** `scale status` (coverage + how much territory is unlocked) and
+- **Rebellion:** unlocking is durable but not unconditional. Every recompute measures each
+  validated component's churn since the sha you validated it at, **split by author**. A
+  collaborator's change past `rebellion.foreignRatio` re-locks the territory (SessionStart
+  names them, once a day); your own change uses a far higher bar, since the gate already
+  cleared you before you wrote it. One passing check recovers it, and the deny says you
+  *did* demonstrate it — a rebellion is not a failure.
+- **Check progress:** `scale status` (coverage, how much territory is unlocked, what
+  rebelled, and whether your git identity actually matches your commits) and
   `scale serve` (the map).
 - **Post-session quests** (async assessment only): `scale quest generate` produces quests
   for touched components; complete them with `scale quest complete` or in the map viewer —
@@ -219,6 +226,11 @@ row at the top, then the rest — same file, same validation, no terminal needed
 | `gate.assessment` | `sync` \| `async` | Where the check runs after a deny: in chat right now, vs. teach now + unlock later (map viewer / `/scale-study`). |
 | `gate.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
 | `gate.enforcement` | `advisory` \| `soft` \| `hard` | Note-only, block-with-skip, or block-without-skip. There is no absolute lock: your own `enforcement` override is the sanctioned pressure valve. |
+| `rebellion.foreignRatio` | 0–1 | A **collaborator's** churn ÷ component size that re-locks it (default 0.25). Low on purpose — their change is code you have never read, and re-locking only costs you if you go on to edit that territory. |
+| `rebellion.selfRatio` | 0–1 | The same for **your own** churn (default 0.8). Much higher: the gate cleared you before you wrote it, so this only catches a wholesale rewrite of something you unlocked with one check. |
+| `rebellion.trigger` | `ratio` \| `any-foreign-commit` | `any-foreign-commit` re-locks on a single foreign commit. Measured here, one commit touches ~7.9 of 37 components and the busiest are touched by ~60% of commits, so on a real team it re-locks the same territory daily. Available, not the default. |
+| `rebellion.digest` | `daily` \| `session` \| `off` | How often SessionStart names newly re-locked territory. |
+| `identity.emails` | list | Extra git addresses that are also **you** (a work address, a GitHub `users.noreply`), on top of `git config user.email`. Personal only — a team policy can never set who you are. Prefer a committed `.mailmap`, which SCALE already honors. |
 | `unlock.passBar` | 0–1 | Mean score a single check needs to count as passed (default 0.6). |
 | `unlock.checksRequired` | ≥ 1 | Passed checks needed before a territory unlocks (default 1). |
 | `exempt.paths` | glob list | Files the gate never fires on (`*` within a segment, `**` across). New files are already exempt — only exact paper anchors gate. |
@@ -301,18 +313,20 @@ completion path, both unlock) → web map viewer + JSON API.
 
 **Not yet** (see PLAN-GATE §4 for the staged plan)
 
-- **Rebellion v2 (S2)** — authorship-aware re-locking: a collaborator's commits into your
-  unlocked territory should flip it stale, re-lock it, and ground the recovery quiz in
-  their diff. Today staleness uses total churn with no authorship filter, and rebellion
-  does not yet re-lock.
+- **Diff-grounded recovery (S2b)** — a rebellion re-locks and the deny text tells the
+  tutor to ask about what changed, but the collaborator's actual diff is not yet in the
+  grounding. Measured, a rebellion-scale diff runs 8.5k–78k characters, so it needs a
+  skeleton-plus-excerpt design (and a trust boundary — it is someone else's text landing
+  in a prompt), which ships with S3's server-side grading.
 - **Async completion surfaces (S3)** — deny-time teaching works, but pending unlocks are
   not yet surfaced in the viewer, quiz grading still happens client-side (the answer key
   reaches the browser — must move server-side before checks guard anything), and there is
   no LAN token for a phone.
 - **Mode A live co-construction** — building the memory alongside the junior in-flow (hook
   infrastructure exists; the mode does not).
-- **Full drift / rebellion detection** — `scale map drift` reports SHAs only; per-component
-  source-churn staleness isn't wired yet.
+- **`scale map drift`** — still a stub that reports SHAs only. Per-component staleness
+  itself IS wired (it runs on every recompute; see Rebellion below); this senior-side
+  reporting command just never caught up.
 - **API-dependent paths** — LLM quest generation and the web Socratic proxy need an API key
   (Anthropic or OpenAI); both fall back to deterministic behavior offline (quest generation
   synthesizes items from the paper; the Socratic proxy is unavailable without a key).
