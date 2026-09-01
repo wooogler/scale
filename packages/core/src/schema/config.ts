@@ -57,7 +57,7 @@ export const UnlockConfigSchema = z
 export type UnlockConfig = z.infer<typeof UnlockConfigSchema>;
 
 /**
- * How rebellion fires — the re-lock trigger (PLAN-GATE §4 S2).
+ * How DRIFT fires — the re-lock trigger (PLAN-GATE §4 S2).
  *
  * `ratio` (default) compares churn since the component's `lastValidatedSha`
  * against its size. `any-foreign-commit` re-locks on a single foreign commit,
@@ -67,12 +67,12 @@ export type UnlockConfig = z.infer<typeof UnlockConfigSchema>;
  * territory daily forever. It stays available for a lead who wants maximum
  * strictness on a small, well-partitioned codebase.
  */
-export const RebellionTriggerSchema = z.enum(['ratio', 'any-foreign-commit']);
-export type RebellionTrigger = z.infer<typeof RebellionTriggerSchema>;
+export const DriftTriggerSchema = z.enum(['ratio', 'any-foreign-commit']);
+export type DriftTrigger = z.infer<typeof DriftTriggerSchema>;
 
-export const RebellionConfigSchema = z
+export const DriftConfigSchema = z
   .object({
-    trigger: RebellionTriggerSchema.default('ratio'),
+    trigger: DriftTriggerSchema.default('ratio'),
     /**
      * Foreign churn ÷ component size at or above which the territory re-locks.
      *
@@ -91,14 +91,14 @@ export const RebellionConfigSchema = z
      * and then rewrites it wholesale over weeks with the agent.
      */
     selfRatio: z.number().min(0).max(1).default(0.8),
-    /** How often SessionStart mentions rebellions. `off` never mentions them. */
+    /** How often SessionStart mentions drifted territory. `off` never mentions them. */
     digest: z.enum(['daily', 'session', 'off']).default('daily'),
   })
   .default({});
-export type RebellionConfig = z.infer<typeof RebellionConfigSchema>;
+export type DriftConfig = z.infer<typeof DriftConfigSchema>;
 
 /**
- * Who the user is IN GIT — the identity rebellion attribution compares against.
+ * Who the user is IN GIT — the identity drift attribution compares against.
  * Personal, never team policy.
  *
  * `git config user.email` is the base answer; `emails` adds the other addresses
@@ -302,8 +302,16 @@ export type Thresholds = z.infer<typeof ThresholdsSchema>;
  */
 export function migrateLegacyConfig(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-  const cfg = raw as Record<string, unknown>;
-  if (cfg.condition === undefined && cfg.inflow === undefined) return raw;
+  let cfg = raw as Record<string, unknown>;
+
+  // `drift` shipped briefly as `rebellion` — a UI skin word in a config key,
+  // which the neutral-terms rule forbids. An explicit `drift` always wins.
+  if (cfg.rebellion !== undefined) {
+    const { rebellion, ...rest } = cfg;
+    cfg = cfg.drift === undefined ? { ...rest, drift: rebellion } : rest;
+  }
+
+  if (cfg.condition === undefined && cfg.inflow === undefined) return cfg;
 
   const { condition, inflow, ...rest } = cfg;
   const gate: Record<string, unknown> =
@@ -338,7 +346,7 @@ export const ScaleConfigSchema = z.preprocess(
     gate: GateConfigSchema,
     unlock: UnlockConfigSchema,
     exempt: ExemptConfigSchema,
-    rebellion: RebellionConfigSchema,
+    drift: DriftConfigSchema,
     budgets: BudgetsSchema.default({}),
     thresholds: ThresholdsSchema.default({}),
     models: ModelsConfigSchema,

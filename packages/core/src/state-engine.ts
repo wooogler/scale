@@ -30,6 +30,8 @@ export function emptyComponentCoverage(): ComponentCoverage {
     dims: { structure: 0, concepts: 0, rationale: 0 },
     lastValidatedSha: null,
     loyalty: 1,
+    driftCause: null,
+    driftAuthors: [],
   };
 }
 
@@ -169,7 +171,17 @@ export function applyEvidence(
       if (prev.state !== 'validated') loyalty = 1;
     }
 
-    next.components[id] = { state, dims, lastValidatedSha, loyalty };
+    // Drift fields are recomputed wholly by `recomputeDrift` after this fold,
+    // so the fold clears them: a component the evidence has re-validated must
+    // not carry the previous run's "who took it" into the new verdict.
+    next.components[id] = {
+      state,
+      dims,
+      lastValidatedSha,
+      loyalty,
+      driftCause: null,
+      driftAuthors: [],
+    };
   }
 
   return next;
@@ -178,7 +190,7 @@ export function applyEvidence(
 /**
  * Churn on one component since its `lastValidatedSha`, SPLIT BY AUTHORSHIP.
  *
- * The split is the whole point of rebellion v2: a teammate's change is code this
+ * The split is the whole point of the drift split: a teammate's change is code this
  * user has never read, while their own change was already gated before they
  * wrote it. Measured by the CLI (git); injected here so this stays pure.
  */
@@ -211,11 +223,11 @@ export interface DriftOpts {
   config: ScaleConfig;
 }
 
-/** Why a component rebelled, or null when it did not. */
-export type RebellionCause = 'foreign' | 'self' | null;
+/** Why a component drifted, or null when it did not. */
+export type DriftCause = 'foreign' | 'self' | null;
 
 /**
- * Decide whether a component has rebelled. The SINGLE rebellion rule — see the
+ * Decide whether a component has DRIFTED. The SINGLE drift rule — see the
  * note on {@link classifyState} for why it is not also derived from loyalty.
  *
  * `ratio` mode compares each side's churn against the component's size, with a
@@ -223,12 +235,12 @@ export type RebellionCause = 'foreign' | 'self' | null;
  * unknown (0) any churn at all counts as total, which errs toward re-checking
  * rather than toward silently trusting an unmeasurable component.
  */
-export function rebellionCause(
+export function causeOfDrift(
   churn: ComponentChurn,
   size: number,
   config: ScaleConfig,
-): RebellionCause {
-  const reb = config.rebellion;
+): DriftCause {
+  const reb = config.drift;
   if (reb.trigger === 'any-foreign-commit') {
     return (churn.foreignCommits ?? 0) > 0 ? 'foreign' : null;
   }
@@ -247,7 +259,7 @@ export function rebellionCause(
  * `lastValidatedSha`:
  *
  *   loyalty = 1 − min(1, (foreign + self) / size)      // display: how far it moved
- *   stale   = it was `validated` AND {@link rebellionCause} fires
+ *   stale   = it was `validated` AND {@link causeOfDrift} fires
  *
  * Components never validated (lastValidatedSha null) keep loyalty 1 and their
  * fog/explored state — you cannot lose ground you never held. With empty churn,
@@ -267,11 +279,18 @@ export function recomputeDrift(coverage: UserCoverage, opts: DriftOpts): UserCov
     // caller always supplies sizes, so this only bites on malformed input.
     const loyalty = total <= 0 ? 1 : size > 0 ? computeLoyalty(total, size) : 0;
 
-    const state =
-      comp.state === 'validated' && rebellionCause(churn, size, opts.config) !== null
-        ? 'stale'
-        : comp.state;
-    next.components[id] = { ...comp, loyalty, state };
+    const cause = comp.state === 'validated' ? causeOfDrift(churn, size, opts.config) : null;
+    const state = cause !== null ? 'stale' : comp.state;
+    next.components[id] = {
+      ...comp,
+      loyalty,
+      state,
+      // Carried on the record so the viewer can tell the two kinds apart without
+      // a second endpoint, and cleared the moment a component is no longer stale
+      // — a recovered territory must not still say who took it.
+      driftCause: cause,
+      driftAuthors: cause === 'foreign' ? (churn.foreignAuthors ?? []) : [],
+    };
   }
 
   return next;
@@ -303,8 +322,8 @@ export interface MaterializeOpts {
  * measured from the anchor this fold PRODUCES, not from the one the previous
  * run persisted. Measuring from the stale anchor made recovery take two
  * recomputes — a component that had just been re-validated was still compared
- * against the pre-rebellion sha, so it flipped straight back to `stale` (and,
- * once the edit gate re-locks on rebellion, straight back to LOCKED) in the very
+ * against the pre-drift sha, so it flipped straight back to `stale` (and,
+ * once the edit gate re-locks on drift, straight back to LOCKED) in the very
  * same command that recorded the passing check.
  *
  * Deterministic: evidence is sorted by `ts` ascending, ties keeping input order.

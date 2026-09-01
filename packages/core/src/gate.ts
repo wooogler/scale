@@ -61,10 +61,10 @@ export interface GateEditInput {
   /** Components the user deferred THIS budget period (skip = session unlock). */
   sessionSkips: string[];
   /**
-   * componentId → why it was re-locked, for components locked by rebellion.
+   * componentId → why it was re-locked, for components locked by drift.
    * Only shapes the deny wording; absence just means "never demonstrated".
    */
-  rebellions?: Record<string, RebellionNote>;
+  drifted?: Record<string, DriftNote>;
   /**
    * Components handled within the marker TTL — a fresh check result or a
    * deferred/completed intervention. This is what makes the retried edit pass
@@ -97,13 +97,13 @@ export interface GateDecision {
 }
 
 /**
- * Why a locked component is locked, when it is locked because it REBELLED
+ * Why a locked component is locked, when it is locked because it DRIFTED
  * rather than because it was never checked. Supplied by the CLI from the lock
- * ledger's rebellion notes.
+ * ledger's drift notes.
  */
-export interface RebellionNote {
+export interface DriftNote {
   cause: 'foreign' | 'self';
-  /** Author emails of the foreign commits; empty for a self rebellion. */
+  /** Author emails of the foreign commits; empty for a self-caused drift. */
   authors: string[];
 }
 
@@ -175,24 +175,24 @@ function topCandidate(cands: Candidate[], importance?: Record<string, number>): 
 export function gateDenyReason(
   component: string,
   config: ScaleConfig,
-  rebellion?: RebellionNote,
+  drift?: DriftNote,
 ): string {
   const { modality, assessment, enforcement } = config.gate;
   const language: Language = config.language;
 
-  // A rebellion is NOT "you never understood this". The junior demonstrated it;
+  // A drift is NOT "you never understood this". The junior demonstrated it;
   // the code moved underneath them. Saying otherwise would be both false and
   // demoralizing, and it would corrupt what the study is measuring — so the
   // deny names the cause and, when someone else caused it, names them.
-  const head = rebellion
-    ? rebellion.cause === 'self'
+  const head = drift
+    ? drift.cause === 'self'
       ? `SCALE edit gate — the '${component}' territory is locked again. The junior ` +
         `DID demonstrate this component before; since then it has been rewritten ` +
         `far enough (by their own work) that the old check no longer covers it. ` +
         `This moment is for the JUNIOR, not for you to resolve.`
       : `SCALE edit gate — the '${component}' territory REBELLED and is locked again. ` +
         `The junior DID demonstrate this component before; ` +
-        `${rebellion.authors.length > 0 ? rebellion.authors.join(', ') : 'someone else'} ` +
+        `${drift.authors.length > 0 ? drift.authors.join(', ') : 'someone else'} ` +
         `has changed it since, so their understanding is out of date — this is not a ` +
         `failure on their part. This moment is for the JUNIOR, not for you to resolve.`
     : `SCALE edit gate — the '${component}' territory is LOCKED for this user ` +
@@ -203,7 +203,7 @@ export function gateDenyReason(
     assessment === 'sync'
       ? `Run the ${modality} comprehension check on '${component}' using the ` +
         `scale-tutor skill and put it in front of them now` +
-        (rebellion
+        (drift
           ? `, focused on WHAT CHANGED since they last validated it rather than ` +
             `re-asking what they already answered`
           : '') +
@@ -293,7 +293,7 @@ export function gateEditDecision(input: GateEditInput): GateDecision {
     return {
       action: 'deny',
       component: pending,
-      reason: gateDenyReason(pending, config, input.rebellions?.[pending]),
+      reason: gateDenyReason(pending, config, input.drifted?.[pending]),
     };
   }
 
@@ -315,7 +315,7 @@ export function gateEditDecision(input: GateEditInput): GateDecision {
   return {
     action: 'deny',
     component: target.id,
-    reason: gateDenyReason(target.id, config, input.rebellions?.[target.id]),
+    reason: gateDenyReason(target.id, config, input.drifted?.[target.id]),
     spendBudget: true,
   };
 }

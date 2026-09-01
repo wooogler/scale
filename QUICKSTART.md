@@ -127,7 +127,7 @@ scale map index    # build .scale/index.json (file → component reverse index) 
 `map.json` is frozen once and extended incrementally so the map stays spatially
 stable. `scale map drift` reports the built-from SHA vs current HEAD; the
 per-component churn detection that matters to a junior is not this command but
-[Rebellion](#rebellion--when-a-teammate-changes-your-territory), which runs on
+[Drift](#drift--when-someone-changes-your-territory), which runs on
 every recompute.
 
 ---
@@ -208,19 +208,20 @@ The CLI's `scale gate edit` is pure file I/O (no LLM, no git churn scan) and
 emits one JSON line `{"allow":bool,"component":str|null,"reason":str|null}`; the
 plugin hook turns `allow:false` into the edit-blocking deny.
 
-### Rebellion — when a teammate changes your territory
+### Drift — when someone changes your territory
 
 Unlocking is durable, but not unconditional: if the code you demonstrated moves,
 your understanding of it is out of date. On every recompute (SessionStart, and
 after each check) SCALE measures each validated component's churn since the sha
 you validated it at, **split by who authored the commits**:
 
-- **A collaborator's change** re-locks the territory once it passes
-  `rebellion.foreignRatio` (default 0.25 of the component's size). The territory
+- **A collaborator's change** — the map calls this **함락 / Fallen** — re-locks the
+  territory once it passes
+  `drift.foreignRatio` (default 0.25 of the component's size). The territory
   goes `stale`, leaves your unlock ledger, and SessionStart tells you once a day
   who changed it. The next edit into it is denied with a message that says you
   *did* demonstrate it and points the check at what changed.
-- **Your own change** uses a much higher bar (`rebellion.selfRatio`, default 0.8)
+- **Your own change** — **재건 / Rebuilt** — uses a much higher bar (`drift.selfRatio`, default 0.8)
   — the gate already cleared you before you wrote it, so re-locking you on your
   own work would mostly measure how much you typed. The high bar still catches
   the real case: unlocking with one check and then rewriting the thing wholesale.
@@ -323,9 +324,9 @@ like an in-chat check.
 
 **Not yet** (staged in PLAN-GATE §4)
 
-- **Diff-grounded recovery (S2b)** — rebellion re-locks and the deny text points the
+- **Diff-grounded recovery (S2b)** — drift re-locks and the deny text points the
   tutor at what changed, but the collaborator's diff itself is not yet in the grounding
-  (a rebellion-scale diff measures 8.5k–78k chars, so it needs a skeleton-plus-excerpt
+  (a drift-scale diff measures 8.5k–78k chars, so it needs a skeleton-plus-excerpt
   design and a trust boundary). Ships with S3.
 - **Async surfaces (S3)** — pending unlocks in the viewer, server-side quiz
   grading (the answer key currently reaches the browser — it must move before
@@ -333,7 +334,7 @@ like an in-chat check.
 - **Mode A live co-construction** — building the memory alongside the junior in the
   flow (the hook infrastructure exists; the mode does not).
 - **`scale map drift`** — still a stub reporting SHAs only. Per-component staleness
-  itself is wired (it runs on every recompute — see Rebellion); this senior-side
+  itself is wired (it runs on every recompute — see Drift); this senior-side
   reporting command never caught up.
 - Senior rationale interviews (schema-ready via `provenance`) and study-logging
   infra are deferred (`PLAN.md` §11).

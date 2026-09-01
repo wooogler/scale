@@ -24,4 +24,18 @@ export * from './index-map.js';
 export * from './layout.js';
 
 // Higher-level state operations (pure).
-export * from './state-engine.js';
+// `DriftCause` is the coverage-record field type (schema/coverage.js); the
+// state-engine's same-named alias is internal, so it is not re-exported.
+export {
+  applyEvidence,
+  recomputeDrift,
+  causeOfDrift,
+  foldEvidence,
+  materializeCoverage,
+  finalizeCoverage,
+  emptyComponentCoverage,
+  type ComponentChurn,
+  type DriftOpts,
+  type ApplyContext,
+  type MaterializeOpts,
+} from './state-engine.js';

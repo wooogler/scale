@@ -312,12 +312,12 @@ describe('gateDenyReason — a rebellion is not a failure', () => {
   });
 });
 
-describe('gateEditDecision — rebellion notes reach the deny text', () => {
+describe('gateEditDecision — drift notes reach the deny text', () => {
   it('a re-locked component denies with its rebellion wording', () => {
     const d = gateEditDecision(
       input({
         coverage: coverageOf({ a: comp({ state: 'stale', lastValidatedSha: 'abc' }) }),
-        rebellions: { a: { cause: 'foreign', authors: ['ada@example.com'] } },
+        drifted: { a: { cause: 'foreign', authors: ['ada@example.com'] } },
       }),
     );
     expect(d.action).toBe('deny');

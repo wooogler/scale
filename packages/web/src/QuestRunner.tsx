@@ -60,7 +60,7 @@ function Outcome({
   grades?: Record<DimName, number>;
 }): JSX.Element {
   const S = useStrings();
-  const skin = skinFor(component.state);
+  const skin = skinFor(component.state, component.driftCause ?? null);
   return (
     <div className="qr-outcome">
       <div className="qr-won">

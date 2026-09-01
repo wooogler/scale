@@ -555,7 +555,9 @@ export function MapView({
           {(nodeAlpha > 0.02 || hlActive) &&
             map.nodes.map((n) => {
               const st = stateOf(coverage, n.id);
-              const skin = skinFor(st);
+              // A fallen territory and a rebuilt one are both `stale` but read
+              // differently on the map — the cause rides on the coverage record.
+              const skin = skinFor(st, coverage?.components[n.id]?.driftCause ?? null);
               const r = nodeRadius(n.importance);
               const selected = n.id === selectedId;
               const hovered = n.id === hoveredId;
@@ -605,8 +607,8 @@ export function MapView({
                     <circle r={r + 6} className="highlight-ring" stroke={skin.color} />
                   )}
                   {updated && <circle r={r} className="conquest-pulse" stroke={skin.color} />}
-                  {skin.treatment === 'rebellion' && (
-                    <circle r={r + 7} className="rebellion-ring" stroke={skin.color} />
+                  {skin.treatment === 'drifted' && (
+                    <circle r={r + 7} className="drift-ring" stroke={skin.color} />
                   )}
                   {selected && <circle r={r + 4} className="select-ring" />}
                   <circle
@@ -614,7 +616,7 @@ export function MapView({
                     fill={skin.treatment === 'filled' ? skin.color : '#151a24'}
                     stroke={skin.color}
                     strokeWidth={
-                      skin.treatment === 'outlined' || skin.treatment === 'rebellion' ? 3 : 2
+                      skin.treatment === 'outlined' || skin.treatment === 'drifted' ? 3 : 2
                     }
                     opacity={fog ? 0.6 : 1}
                   />

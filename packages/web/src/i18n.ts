@@ -23,7 +23,7 @@ import {
  *    CONTENT is never translated here (Markdown.tsx is untouched).
  *
  * Game-skin vocabulary: skin.ts owns the term DEFINITIONS (미탐사/정찰됨/정복/
- * 반란, 공성전, 천하통일 진행도…) and entries reference its labelKo/labelEn
+ * 함락, 공성전, 천하통일 진행도…) and entries reference its labelKo/labelEn
  * pairs where a term stands alone; longer ko sentences here may EMBED those
  * terms (e.g. state blurbs, '대기 중인 공성전') — new skin nouns still belong in
  * skin.ts first.
@@ -60,7 +60,7 @@ export interface Strings {
     /** completion banner (Territory taken / 정복 완료) */
     won: string;
   };
-  /** quest origin tags shown next to quest entries (session/rebellion/voluntary) */
+  /** quest origin tags shown next to quest entries (session/drift/voluntary) */
   origin: Record<QuestOrigin, string>;
 
   /* ---- paper renderer chrome (Markdown) — viewer text, NOT paper content ---- */
@@ -191,7 +191,7 @@ export const STRINGS: Record<Language, Strings> = {
       socratic: QUEST_SKIN.socraticEn,
       won: QUEST_SKIN.wonEn,
     },
-    origin: { session: 'session', rebellion: 'rebellion', voluntary: 'voluntary' },
+    origin: { session: 'session', drift: 'retake', voluntary: 'voluntary' },
 
     mermaidBadge: 'mermaid diagram',
     mermaidTodo: 'Rendered diagram is a TODO for a later phase.',
@@ -322,7 +322,7 @@ export const STRINGS: Record<Language, Strings> = {
       socratic: QUEST_SKIN.socraticKo,
       won: QUEST_SKIN.wonKo,
     },
-    origin: { session: '세션', rebellion: '반란', voluntary: '자율' },
+    origin: { session: '세션', drift: '탈환', voluntary: '자율' },
 
     mermaidBadge: 'mermaid 다이어그램',
     mermaidTodo: '다이어그램 렌더링은 이후 단계에서 지원됩니다.',

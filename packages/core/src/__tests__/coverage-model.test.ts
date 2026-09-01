@@ -55,8 +55,8 @@ describe('unificationProgress', () => {
       user: 'u',
       updatedAt: 'now',
       components: {
-        a: { state: 'validated', dims: { structure: 1, concepts: 1, rationale: 1 }, lastValidatedSha: 's', loyalty: 1 },
-        b: { state: 'fog', dims: { structure: 0, concepts: 0, rationale: 0 }, lastValidatedSha: null, loyalty: 1 },
+        a: { state: 'validated', dims: { structure: 1, concepts: 1, rationale: 1 }, lastValidatedSha: 's', loyalty: 1, driftCause: null, driftAuthors: [] },
+        b: { state: 'fog', dims: { structure: 0, concepts: 0, rationale: 0 }, lastValidatedSha: null, loyalty: 1, driftCause: null, driftAuthors: [] },
       },
     };
     // (0.8*1 + 0.2*0) / (0.8+0.2) = 0.8
@@ -79,6 +79,8 @@ describe('classifyState', () => {
     dims: { structure: 0, concepts: 0, rationale: 0 },
     lastValidatedSha: null,
     loyalty: 1,
+    driftCause: null,
+    driftAuthors: [],
   };
 
   it('stays fog with no signal', () => {
@@ -95,9 +97,9 @@ describe('classifyState', () => {
     const c: ComponentCoverage = { ...base, dims: { structure: 0.7, concepts: 0.7, rationale: 0.7 } };
     expect(classifyState(c, { activeValidations: 1 })).toBe('explored');
   });
-  it('does NOT decide stale — rebellion belongs to recomputeDrift alone', () => {
+  it('does NOT decide stale — drift belongs to recomputeDrift alone', () => {
     // classifyState used to flip a low-loyalty component to `stale` too, which
-    // meant two rules for one state. Rebellion needs authorship-split churn that
+    // meant two rules for one state. Drift needs authorship-split churn that
     // only drift is given, and this branch never actually fired (loyalty is
     // always 1 inside the fold, and drift runs after), so it was dead code
     // masquerading as policy. Pinned so it does not grow back.

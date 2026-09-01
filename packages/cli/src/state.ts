@@ -566,7 +566,7 @@ export interface LockEntry {
  * changed it and the recovery check can be grounded in the right range, and it
  * is cleared when the component is unlocked again.
  */
-export interface RebellionEntry {
+export interface DriftEntry {
   /** When we noticed. */
   at: string;
   /** Anchor the user had validated at — the recovery diff starts here. */
@@ -582,14 +582,14 @@ export interface LocksRecord {
   components: Record<string, LockEntry>;
   /** Passed-check counts still below `unlock.checksRequired`. */
   progress: Record<string, number>;
-  /** Territories re-locked by rebellion, keyed by component id. */
-  rebellions: Record<string, RebellionEntry>;
-  /** Last time the SessionStart rebellion digest was shown (ISO). */
+  /** Territories re-locked by drift, keyed by component id. */
+  drifted: Record<string, DriftEntry>;
+  /** Last time the SessionStart drift digest was shown (ISO). */
   digestShownAt?: string;
 }
 
 export function emptyLocks(): LocksRecord {
-  return { version: 1, components: {}, progress: {}, rebellions: {} };
+  return { version: 1, components: {}, progress: {}, drifted: {} };
 }
 
 /** Read locks.json, defaulting structure; malformed entries are dropped. */
@@ -620,11 +620,11 @@ export function readLocksSafe(dir: string): LocksRecord {
       if (typeof v === 'number' && Number.isFinite(v) && v > 0) out.progress[id] = Math.trunc(v);
     }
   }
-  if (r.rebellions && typeof r.rebellions === 'object' && !Array.isArray(r.rebellions)) {
-    for (const [id, v] of Object.entries(r.rebellions as Record<string, unknown>)) {
+  if (r.drifted && typeof r.drifted === 'object' && !Array.isArray(r.drifted)) {
+    for (const [id, v] of Object.entries(r.drifted as Record<string, unknown>)) {
       if (!v || typeof v !== 'object') continue;
       const e = v as Record<string, unknown>;
-      out.rebellions[id] = {
+      out.drifted[id] = {
         at: typeof e.at === 'string' ? e.at : '',
         sinceSha: typeof e.sinceSha === 'string' ? e.sinceSha : '',
         foreignAuthors: Array.isArray(e.foreignAuthors)
@@ -709,7 +709,7 @@ export function noteCheckOutcome(
       // Recovering from a rebellion clears the rebellion note along with the
       // lock — otherwise the digest would keep announcing a territory the user
       // has already won back.
-      delete locks.rebellions[componentId];
+      delete locks.drifted[componentId];
       locks.components[componentId] = { unlockedAt: now, sha: headSha, checks, via: 'check' };
       writeLocks(dir, locks);
       return { unlocked: true, alreadyUnlocked: false, checks };
@@ -739,7 +739,7 @@ export function noteCheckOutcome(
  * optional `detail` only enriches the note. Fails toward NOT re-locking: if the
  * lock is contended, nothing changes and the next caller tries again.
  */
-export function syncLocksWithRebellion(
+export function syncLocksWithDrift(
   dir: string,
   stateOf: Record<string, { state: string }>,
   detail: Record<string, { sinceSha?: string | null; foreignAuthors?: string[]; cause?: 'foreign' | 'self' }> = {},
@@ -762,7 +762,7 @@ export function syncLocksWithRebellion(
       delete locks.components[id];
       delete locks.progress[id];
       const d = detail[id] ?? {};
-      locks.rebellions[id] = {
+      locks.drifted[id] = {
         at: now,
         sinceSha: d.sinceSha ?? '',
         foreignAuthors: d.foreignAuthors ?? [],
@@ -786,10 +786,10 @@ export function pendingDigest(
   dir: string,
   cadence: 'daily' | 'session' | 'off',
   now: Date = new Date(),
-): { id: string; entry: RebellionEntry }[] {
+): { id: string; entry: DriftEntry }[] {
   if (cadence === 'off') return [];
   const locks = readLocksSafe(dir);
-  const ids = Object.keys(locks.rebellions).sort();
+  const ids = Object.keys(locks.drifted).sort();
   if (ids.length === 0) return [];
   if (cadence === 'daily' && locks.digestShownAt) {
     const shown = new Date(locks.digestShownAt);
@@ -798,7 +798,7 @@ export function pendingDigest(
       return [];
     }
   }
-  return ids.map((id) => ({ id, entry: locks.rebellions[id]! }));
+  return ids.map((id) => ({ id, entry: locks.drifted[id]! }));
 }
 
 /** Stamp the digest as shown (best-effort — a lost stamp only repeats a notice). */

@@ -4,12 +4,19 @@ import type { CoverageState } from '@scale/core/browser';
  * The terminology skin (PLAN §2). This module DEFINES the Koei-style game terms
  * for the neutral coverage states; i18n.ts may embed them inside longer display
  * sentences, but a new game noun starts here. Core schemas and the CLI never
- * speak "conquered" or "반란"; the skin boundary is the web viewer, on purpose.
+ * speak "conquered" or "함락"; the skin boundary is the web viewer, on purpose.
  *
  *   fog       -> 미탐사   (unexplored / fog)
  *   explored  -> 정찰됨   (scouted)
  *   validated -> 정복     (conquered)
- *   stale     -> 반란     (rebellion)
+ *   stale     -> 함락     (fallen — a teammate's change took it)
+ *              or 재건   (rebuilt — you rewrote it yourself)
+ *
+ * `stale` is the only state whose label depends on WHY. A teammate outrunning
+ * your understanding and you outrunning it yourself are different events in the
+ * multiplayer framing this skin borrows: one is territory lost to another
+ * player, the other is your own land rebuilt past your last survey. Calling both
+ * '반란' said the territory was revolting against you, which is neither.
  */
 export interface Skin {
   /** canonical coverage state (unchanged) */
@@ -21,7 +28,7 @@ export interface Skin {
   /** primary color for this state */
   color: string;
   /** how the node should read visually */
-  treatment: 'fog' | 'outlined' | 'filled' | 'rebellion';
+  treatment: 'fog' | 'outlined' | 'filled' | 'drifted';
   /** one-line description for the panel */
   blurb: string;
 }
@@ -51,18 +58,46 @@ export const SKIN: Record<CoverageState, Skin> = {
     treatment: 'filled',
     blurb: 'Validated by active comprehension checks. Held territory.',
   },
+  // Default (cause unknown — an older coverage.json, or drift we could not
+  // attribute). `skinFor` swaps in the cause-specific label when there is one.
   stale: {
     state: 'stale',
-    labelKo: '반란',
-    labelEn: 'Rebellion',
+    labelKo: '함락',
+    labelEn: 'Fallen',
     color: '#e0803a',
-    treatment: 'rebellion',
-    blurb: 'Source code drifted since last validation. Re-validation needed.',
+    treatment: 'drifted',
+    blurb: 'The code moved since you validated this. Retake it with a check.',
   },
 };
 
-export function skinFor(state: CoverageState): Skin {
-  return SKIN[state];
+/** The two ways a territory can go `stale`, skinned apart. */
+export const DRIFT_SKIN = {
+  foreign: {
+    labelKo: '함락',
+    labelEn: 'Fallen',
+    icon: '⚔',
+    blurbKo: '다른 사람이 이 영토를 바꿨습니다. 체크를 통과해 탈환하세요.',
+    blurbEn: 'Someone else changed this territory. Pass a check to retake it.',
+  },
+  self: {
+    labelKo: '재건',
+    labelEn: 'Rebuilt',
+    icon: '🔨',
+    blurbKo: '직접 다시 지었습니다. 예전 측량이 더 이상 맞지 않습니다.',
+    blurbEn: 'You rebuilt this yourself. Your earlier survey no longer fits.',
+  },
+} as const;
+export type DriftCauseSkin = keyof typeof DRIFT_SKIN;
+
+/**
+ * The skin for a state, specialized by drift cause when the state is `stale`.
+ * Anything else ignores `cause` — only `stale` has two faces.
+ */
+export function skinFor(state: CoverageState, cause?: DriftCauseSkin | null): Skin {
+  const base = SKIN[state];
+  if (state !== 'stale' || !cause) return base;
+  const d = DRIFT_SKIN[cause];
+  return { ...base, labelKo: d.labelKo, labelEn: d.labelEn, blurb: d.blurbEn };
 }
 
 /** Weighted-total coverage label (§2: unification progress / 천하통일 진행도). */

@@ -49,7 +49,7 @@ to the code they're shipping.
   teaches at deny time and the junior unlocks later in the map viewer or via
   `/scale-study`. Team leads set defaults in a committed `.scale/policy.json`;
   every member may override any knob in their own config.
-- **Game skin is UI only.** territory / conquest / rebellion (and importance-sized castles)
+- **Game skin is UI only.** territory / conquest / fallen-or-rebuilt (and importance-sized castles)
   are a rendering layer over the neutral `component` / `coverage` / `staleness` model —
   schemas and code never use game terms.
 
@@ -160,18 +160,20 @@ Then work normally in Claude Code:
 - **Learn:** `/scale-study [id]` (voluntary reading guide + check) or `/scale-quiz [id]`
   (manual check) — MCQ quiz or short Socratic dialogue per `gate.modality`.
 - **The edit gate:** an Edit/Write into LOCKED territory (never checked, or re-locked by
-  rebellion) is denied. `sync` assessment: the tutor runs the check in chat and a pass
+  drift) is denied. `sync` assessment: the tutor runs the check in chat and a pass
   unlocks the territory durably. `async` assessment: the agent teaches instead, and you
   unlock later in the map viewer or with `/scale-study`. `scale gate defer <id>` skips —
   a session-scoped unlock; it locks again next session.
-- **Rebellion:** unlocking is durable but not unconditional. Every recompute measures each
+- **Drift — 함락 / 재건:** unlocking is durable but not unconditional. Every recompute measures each
   validated component's churn since the sha you validated it at, **split by author**. A
-  collaborator's change past `rebellion.foreignRatio` re-locks the territory (SessionStart
+  collaborator's change past `drift.foreignRatio` re-locks the territory (SessionStart
   names them, once a day); your own change uses a far higher bar, since the gate already
   cleared you before you wrote it. One passing check recovers it, and the deny says you
-  *did* demonstrate it — a rebellion is not a failure.
+  *did* demonstrate it. The map skins the two causes apart: a teammate's change leaves the
+  territory **Fallen** (함락) with their name on it, your own rewrite leaves it **Rebuilt**
+  (재건). Neither is a failure.
 - **Check progress:** `scale status` (coverage, how much territory is unlocked, what
-  rebelled, and whether your git identity actually matches your commits) and
+  drifted, and whether your git identity actually matches your commits) and
   `scale serve` (the map).
 - **Post-session quests** (async assessment only): `scale quest generate` produces quests
   for touched components; complete them with `scale quest complete` or in the map viewer —
@@ -226,10 +228,10 @@ row at the top, then the rest — same file, same validation, no terminal needed
 | `gate.assessment` | `sync` \| `async` | Where the check runs after a deny: in chat right now, vs. teach now + unlock later (map viewer / `/scale-study`). |
 | `gate.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
 | `gate.enforcement` | `advisory` \| `soft` \| `hard` | Note-only, block-with-skip, or block-without-skip. There is no absolute lock: your own `enforcement` override is the sanctioned pressure valve. |
-| `rebellion.foreignRatio` | 0–1 | A **collaborator's** churn ÷ component size that re-locks it (default 0.25). Low on purpose — their change is code you have never read, and re-locking only costs you if you go on to edit that territory. |
-| `rebellion.selfRatio` | 0–1 | The same for **your own** churn (default 0.8). Much higher: the gate cleared you before you wrote it, so this only catches a wholesale rewrite of something you unlocked with one check. |
-| `rebellion.trigger` | `ratio` \| `any-foreign-commit` | `any-foreign-commit` re-locks on a single foreign commit. Measured here, one commit touches ~7.9 of 37 components and the busiest are touched by ~60% of commits, so on a real team it re-locks the same territory daily. Available, not the default. |
-| `rebellion.digest` | `daily` \| `session` \| `off` | How often SessionStart names newly re-locked territory. |
+| `drift.foreignRatio` | 0–1 | A **collaborator's** churn ÷ component size that re-locks it (default 0.25). Low on purpose — their change is code you have never read, and re-locking only costs you if you go on to edit that territory. |
+| `drift.selfRatio` | 0–1 | The same for **your own** churn (default 0.8). Much higher: the gate cleared you before you wrote it, so this only catches a wholesale rewrite of something you unlocked with one check. |
+| `drift.trigger` | `ratio` \| `any-foreign-commit` | `any-foreign-commit` re-locks on a single foreign commit. Measured here, one commit touches ~7.9 of 37 components and the busiest are touched by ~60% of commits, so on a real team it re-locks the same territory daily. Available, not the default. |
+| `drift.digest` | `daily` \| `session` \| `off` | How often SessionStart names newly re-locked territory. |
 | `identity.emails` | list | Extra git addresses that are also **you** (a work address, a GitHub `users.noreply`), on top of `git config user.email`. Personal only — a team policy can never set who you are. Prefer a committed `.mailmap`, which SCALE already honors. |
 | `unlock.passBar` | 0–1 | Mean score a single check needs to count as passed (default 0.6). |
 | `unlock.checksRequired` | ≥ 1 | Passed checks needed before a territory unlocks (default 1). |
@@ -313,9 +315,9 @@ completion path, both unlock) → web map viewer + JSON API.
 
 **Not yet** (see PLAN-GATE §4 for the staged plan)
 
-- **Diff-grounded recovery (S2b)** — a rebellion re-locks and the deny text tells the
+- **Diff-grounded recovery (S2b)** — drift re-locks and the deny text tells the
   tutor to ask about what changed, but the collaborator's actual diff is not yet in the
-  grounding. Measured, a rebellion-scale diff runs 8.5k–78k characters, so it needs a
+  grounding. Measured, a drift-scale diff runs 8.5k–78k characters, so it needs a
   skeleton-plus-excerpt design (and a trust boundary — it is someone else's text landing
   in a prompt), which ships with S3's server-side grading.
 - **Async completion surfaces (S3)** — deny-time teaching works, but pending unlocks are
@@ -325,7 +327,7 @@ completion path, both unlock) → web map viewer + JSON API.
 - **Mode A live co-construction** — building the memory alongside the junior in-flow (hook
   infrastructure exists; the mode does not).
 - **`scale map drift`** — still a stub that reports SHAs only. Per-component staleness
-  itself IS wired (it runs on every recompute; see Rebellion below); this senior-side
+  itself IS wired (it runs on every recompute; see Drift above); this senior-side
   reporting command just never caught up.
 - **API-dependent paths** — LLM quest generation and the web Socratic proxy need an API key
   (Anthropic or OpenAI); both fall back to deterministic behavior offline (quest generation

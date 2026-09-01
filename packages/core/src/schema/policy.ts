@@ -29,7 +29,7 @@ export const POLICY_SECTIONS = [
   'gate',
   'unlock',
   'exempt',
-  'rebellion',
+  'drift',
   'budgets',
   'thresholds',
 ] as const;

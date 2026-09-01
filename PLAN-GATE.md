@@ -13,9 +13,9 @@
    Edit/Write/MultiEdit가 트리거. **커밋 게이트는 제거한다** (백스톱으로도
    남기지 않음 — 깔끔한 교체).
 3. **통과 = 영구 언락.** 체크를 통과한 component는 이후 퀴즈 없이 edit 승인.
-   재잠금은 반란(rebellion)만이 일으킨다.
-4. **반란 = collaborator의 변경.** 남이 그 component의 sources를 바꾸면 stale
-   (반란)로 전환 + 재잠금. 변경분(diff)에 근거한 퀴즈를 통과하면 회복.
+   재잠금은 drift(코드가 움직인 것)만이 일으킨다.
+4. **drift = 누군가의 변경.** 남이 그 component의 sources를 바꾸면 stale
+   (drift)로 전환 + 재잠금. 변경분(diff)에 근거한 퀴즈를 통과하면 회복.
 5. **async 조건 (구 postsession):** 잠긴 영토의 edit은 차단하되, 에이전트가 그
    자리에서 파일을 **설명해 가르치고**, 실제 체크는 나중에 — 웹/모바일 또는
    다음 세션의 /scale-study — 에서 통과시켜 언락한다.
@@ -32,7 +32,7 @@
 |---|---|---|
 | 트리거 | Claude Code Bash 도구의 `git commit` | `PreToolUse(Edit\|Write\|MultiEdit)` |
 | 측정 대상 | 방금 만든 변경의 이해 (사후) | 건드리기 전 영토의 이해 (사전 자격) |
-| 통과 효과 | marker TTL 10분 | **영구 언락** (반란만 재잠금) |
+| 통과 효과 | marker TTL 10분 | **영구 언락** (drift만 재잠금) |
 | skip | 항상 가능, 최종 (drop) | enforcement 정책에 따름; soft에서 **세션 한정 임시 언락** |
 | 조건 축 | timing: 게이트 유무 자체가 다름 | assessment: 같은 락·같은 가르침, **평가 시점만** 다름 (sync/async) |
 | 설정 주체 | 개인 config | **팀장 default(policy.json) < 개인 override(config.json)** |
@@ -251,3 +251,24 @@ SessionStart/record가 계속 갱신한다.
 - **10분 유예**: `recentlyAddressed`가 상태 검사보다 먼저라, 마지막 체크 후 10분
   안에 도착한 반란은 그 창 동안 강제되지 않는다.
 - **로컬 squash-merge**: 동료 작업이 self로 읽힌다 (위 표). 안전 방향.
+
+## 12. 용어 결정 (2026-09-01, 사용자)
+
+**`반란/rebellion`을 폐기한다.** 영토가 나에게 저항한다는 뜻인데, 실제로 일어난
+일은 *다른 플레이어가 그 땅을 가져간 것*이다 (삼국지·Civ 멀티플레이 프레이밍).
+그리고 S2에서 원인을 authorship으로 쪼갠 이상 **한 단어로 두 사건을 덮을 수 없다.**
+
+| 레이어 | 용어 |
+|---|---|
+| coverage state (중립, 불변) | `stale` |
+| 코드·스키마·config·CLI | `drift` — `config.drift.*`, `causeOfDrift`, `locks.drifted`, `syncLocksWithDrift`, `ComponentCoverage.driftCause` |
+| 스킨 (web 전용, `skin.ts`) | foreign → **함락 / Fallen** ⚔ · self → **재건 / Rebuilt** 🔨 |
+
+S2가 `rebellion`을 코어와 CLI에 넣은 것은 **PLAN §1-1 위반이었다** (스키마와 코드는
+중립 용어, 게임 용어 금지). `skin.ts`가 경계이고 그 파일이 스스로 그렇게 적어두고
+있었다. 이번 커밋이 그 위반을 되돌린다.
+
+마이그레이션: `config.rebellion` → `config.drift` (명시적 `drift`가 이김),
+`QuestOrigin 'rebellion'` → `'drift'`, `locks.json`의 `rebellions` → `drifted`.
+`ComponentCoverage`에 `driftCause`/`driftAuthors`를 추가한 이유는 뷰어가 두 라벨을
+구분하려면 원인이 필요한데 그때까지는 `locks.json`에만 있었기 때문이다.

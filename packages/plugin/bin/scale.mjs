@@ -26616,13 +26616,22 @@ var DimensionsSchema = external_exports.object({
   concepts: external_exports.number().min(0).max(1),
   rationale: external_exports.number().min(0).max(1)
 });
+var DriftCauseSchema = external_exports.enum(["foreign", "self"]);
 var ComponentCoverageSchema = external_exports.object({
   state: CoverageStateSchema,
   dims: DimensionsSchema,
   /** SHA at which this component was last validated; null if never. */
   lastValidatedSha: external_exports.string().nullable(),
-  /** 1 − churn/size since lastValidatedSha; low loyalty → rebellion/stale. */
-  loyalty: external_exports.number().min(0).max(1)
+  /** 1 − churn/size since lastValidatedSha; low loyalty → drift/stale. */
+  loyalty: external_exports.number().min(0).max(1),
+  /** Why it is `stale`, when it is. Null otherwise. */
+  driftCause: DriftCauseSchema.nullable().default(null),
+  /**
+   * Mailmap-canonical author emails behind a `foreign` drift, sorted. Empty for
+   * a self-caused one. Lives here so the viewer can name them without a second
+   * endpoint; the state dir is per-user and never in the repo.
+   */
+  driftAuthors: external_exports.array(external_exports.string()).default([])
 });
 var UserCoverageSchema = external_exports.object({
   user: external_exports.string(),
@@ -26743,7 +26752,7 @@ var EvidenceEntrySchema = external_exports.discriminatedUnion("type", [
 
 // packages/core/dist/schema/quest.js
 var QuestModalitySchema = external_exports.enum(["quiz", "socratic"]);
-var QuestOriginSchema = external_exports.enum(["session", "rebellion", "voluntary"]);
+var QuestOriginSchema = external_exports.preprocess((v) => v === "rebellion" ? "drift" : v, external_exports.enum(["session", "drift", "voluntary"]));
 var QuestStatusSchema = external_exports.enum(["pending", "completed", "skipped"]);
 var QuestItemSchema = external_exports.object({
   prompt: external_exports.string(),
@@ -26780,9 +26789,9 @@ var UnlockConfigSchema = external_exports.object({
   /** Passed checks needed before the component unlocks. */
   checksRequired: external_exports.number().int().min(1).default(1)
 }).default({});
-var RebellionTriggerSchema = external_exports.enum(["ratio", "any-foreign-commit"]);
-var RebellionConfigSchema = external_exports.object({
-  trigger: RebellionTriggerSchema.default("ratio"),
+var DriftTriggerSchema = external_exports.enum(["ratio", "any-foreign-commit"]);
+var DriftConfigSchema = external_exports.object({
+  trigger: DriftTriggerSchema.default("ratio"),
   /**
    * Foreign churn ÷ component size at or above which the territory re-locks.
    *
@@ -26801,7 +26810,7 @@ var RebellionConfigSchema = external_exports.object({
    * and then rewrites it wholesale over weeks with the agent.
    */
   selfRatio: external_exports.number().min(0).max(1).default(0.8),
-  /** How often SessionStart mentions rebellions. `off` never mentions them. */
+  /** How often SessionStart mentions drifted territory. `off` never mentions them. */
   digest: external_exports.enum(["daily", "session", "off"]).default("daily")
 }).default({});
 var IdentityConfigSchema = external_exports.object({
@@ -26878,9 +26887,13 @@ var ThresholdsSchema = external_exports.object({
 function migrateLegacyConfig(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     return raw;
-  const cfg = raw;
+  let cfg = raw;
+  if (cfg.rebellion !== void 0) {
+    const { rebellion, ...rest2 } = cfg;
+    cfg = cfg.drift === void 0 ? { ...rest2, drift: rebellion } : rest2;
+  }
   if (cfg.condition === void 0 && cfg.inflow === void 0)
-    return raw;
+    return cfg;
   const { condition, inflow, ...rest } = cfg;
   const gate2 = rest.gate && typeof rest.gate === "object" && !Array.isArray(rest.gate) ? { ...rest.gate } : {};
   if (condition && typeof condition === "object" && !Array.isArray(condition)) {
@@ -26907,7 +26920,7 @@ var ScaleConfigSchema = external_exports.preprocess(migrateLegacyConfig, externa
   gate: GateConfigSchema,
   unlock: UnlockConfigSchema,
   exempt: ExemptConfigSchema,
-  rebellion: RebellionConfigSchema,
+  drift: DriftConfigSchema,
   budgets: BudgetsSchema.default({}),
   thresholds: ThresholdsSchema.default({}),
   models: ModelsConfigSchema
@@ -26918,7 +26931,7 @@ var POLICY_SECTIONS = [
   "gate",
   "unlock",
   "exempt",
-  "rebellion",
+  "drift",
   "budgets",
   "thresholds"
 ];
@@ -27624,7 +27637,9 @@ function emptyComponentCoverage() {
     state: "fog",
     dims: { structure: 0, concepts: 0, rationale: 0 },
     lastValidatedSha: null,
-    loyalty: 1
+    loyalty: 1,
+    driftCause: null,
+    driftAuthors: []
   };
 }
 function applyEvidence(coverage2, entry, config2, ctx = {}) {
@@ -27688,13 +27703,20 @@ function applyEvidence(coverage2, entry, config2, ctx = {}) {
       if (prev.state !== "validated")
         loyalty = 1;
     }
-    next.components[id] = { state, dims, lastValidatedSha, loyalty };
+    next.components[id] = {
+      state,
+      dims,
+      lastValidatedSha,
+      loyalty,
+      driftCause: null,
+      driftAuthors: []
+    };
   }
   return next;
 }
 var NO_CHURN = { foreign: 0, self: 0 };
-function rebellionCause(churn, size, config2) {
-  const reb = config2.rebellion;
+function causeOfDrift(churn, size, config2) {
+  const reb = config2.drift;
   if (reb.trigger === "any-foreign-commit") {
     return (churn.foreignCommits ?? 0) > 0 ? "foreign" : null;
   }
@@ -27716,8 +27738,18 @@ function recomputeDrift(coverage2, opts) {
     const size = opts.sizes[id] ?? 0;
     const total = churn.foreign + churn.self;
     const loyalty = total <= 0 ? 1 : size > 0 ? computeLoyalty(total, size) : 0;
-    const state = comp.state === "validated" && rebellionCause(churn, size, opts.config) !== null ? "stale" : comp.state;
-    next.components[id] = { ...comp, loyalty, state };
+    const cause = comp.state === "validated" ? causeOfDrift(churn, size, opts.config) : null;
+    const state = cause !== null ? "stale" : comp.state;
+    next.components[id] = {
+      ...comp,
+      loyalty,
+      state,
+      // Carried on the record so the viewer can tell the two kinds apart without
+      // a second endpoint, and cleared the moment a component is no longer stale
+      // — a recovered territory must not still say who took it.
+      driftCause: cause,
+      driftAuthors: cause === "foreign" ? churn.foreignAuthors ?? [] : []
+    };
   }
   return next;
 }
@@ -27790,11 +27822,11 @@ function topCandidate(cands, importance) {
   });
   return sorted[0];
 }
-function gateDenyReason(component, config2, rebellion) {
+function gateDenyReason(component, config2, drift) {
   const { modality, assessment, enforcement } = config2.gate;
   const language = config2.language;
-  const head = rebellion ? rebellion.cause === "self" ? `SCALE edit gate \u2014 the '${component}' territory is locked again. The junior DID demonstrate this component before; since then it has been rewritten far enough (by their own work) that the old check no longer covers it. This moment is for the JUNIOR, not for you to resolve.` : `SCALE edit gate \u2014 the '${component}' territory REBELLED and is locked again. The junior DID demonstrate this component before; ${rebellion.authors.length > 0 ? rebellion.authors.join(", ") : "someone else"} has changed it since, so their understanding is out of date \u2014 this is not a failure on their part. This moment is for the JUNIOR, not for you to resolve.` : `SCALE edit gate \u2014 the '${component}' territory is LOCKED for this user (comprehension not yet demonstrated), and this edit reaches into it. This moment is for the JUNIOR, not for you to resolve.`;
-  const body = assessment === "sync" ? `Run the ${modality} comprehension check on '${component}' using the scale-tutor skill and put it in front of them now` + (rebellion ? `, focused on WHAT CHANGED since they last validated it rather than re-asking what they already answered` : "") + `. After they complete it (scale record), retry the edit \u2014 a passing check unlocks this territory durably.` : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH instead \u2014 explain what '${component}' does and why, grounded in its paper under .scale/ and in what this edit is trying to change. Then tell the junior the territory stays locked until they pass its check later (in the SCALE map viewer, or with /scale-study ${component} in a coming session). The edit itself stays blocked for now.`;
+  const head = drift ? drift.cause === "self" ? `SCALE edit gate \u2014 the '${component}' territory is locked again. The junior DID demonstrate this component before; since then it has been rewritten far enough (by their own work) that the old check no longer covers it. This moment is for the JUNIOR, not for you to resolve.` : `SCALE edit gate \u2014 the '${component}' territory REBELLED and is locked again. The junior DID demonstrate this component before; ${drift.authors.length > 0 ? drift.authors.join(", ") : "someone else"} has changed it since, so their understanding is out of date \u2014 this is not a failure on their part. This moment is for the JUNIOR, not for you to resolve.` : `SCALE edit gate \u2014 the '${component}' territory is LOCKED for this user (comprehension not yet demonstrated), and this edit reaches into it. This moment is for the JUNIOR, not for you to resolve.`;
+  const body = assessment === "sync" ? `Run the ${modality} comprehension check on '${component}' using the scale-tutor skill and put it in front of them now` + (drift ? `, focused on WHAT CHANGED since they last validated it rather than re-asking what they already answered` : "") + `. After they complete it (scale record), retry the edit \u2014 a passing check unlocks this territory durably.` : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH instead \u2014 explain what '${component}' does and why, grounded in its paper under .scale/ and in what this edit is trying to change. Then tell the junior the territory stays locked until they pass its check later (in the SCALE map viewer, or with /scale-study ${component} in a coming session). The edit itself stays blocked for now.`;
   const skip = enforcement === "hard" ? `Skipping is disabled by team policy (enforcement: hard) \u2014 do not look for a way around the lock; work elsewhere or unlock it properly.` : `Do NOT skip on their behalf. If \u2014 and only if \u2014 the junior says to skip, run \`scale gate defer ${component}\` (this unlocks it for THIS SESSION only), then retry the edit. If you skip without asking (e.g. no junior is in the loop), you MUST run \`scale gate defer ${component} --by agent\` and say so in your reply.`;
   const ko = language === "ko" ? ` The junior's interaction language is KOREAN: deliver everything junior-facing entirely in Korean, keeping code identifiers and technical terms in English.` : "";
   return `${head}
@@ -27840,7 +27872,7 @@ function gateEditDecision(input) {
     return {
       action: "deny",
       component: pending,
-      reason: gateDenyReason(pending, config2, input.rebellions?.[pending])
+      reason: gateDenyReason(pending, config2, input.drifted?.[pending])
     };
   }
   if (session2.interventionsThisSession >= config2.budgets.maxPerSession) {
@@ -27853,7 +27885,7 @@ function gateEditDecision(input) {
   return {
     action: "deny",
     component: target.id,
-    reason: gateDenyReason(target.id, config2, input.rebellions?.[target.id]),
+    reason: gateDenyReason(target.id, config2, input.drifted?.[target.id]),
     spendBudget: true
   };
 }
@@ -28177,7 +28209,7 @@ function writePendingEdits(dir, pending) {
   }
 }
 function emptyLocks() {
-  return { version: 1, components: {}, progress: {}, rebellions: {} };
+  return { version: 1, components: {}, progress: {}, drifted: {} };
 }
 function readLocksSafe(dir) {
   let raw;
@@ -28206,11 +28238,11 @@ function readLocksSafe(dir) {
       if (typeof v === "number" && Number.isFinite(v) && v > 0) out.progress[id] = Math.trunc(v);
     }
   }
-  if (r.rebellions && typeof r.rebellions === "object" && !Array.isArray(r.rebellions)) {
-    for (const [id, v] of Object.entries(r.rebellions)) {
+  if (r.drifted && typeof r.drifted === "object" && !Array.isArray(r.drifted)) {
+    for (const [id, v] of Object.entries(r.drifted)) {
       if (!v || typeof v !== "object") continue;
       const e = v;
-      out.rebellions[id] = {
+      out.drifted[id] = {
         at: typeof e.at === "string" ? e.at : "",
         sinceSha: typeof e.sinceSha === "string" ? e.sinceSha : "",
         foreignAuthors: Array.isArray(e.foreignAuthors) ? e.foreignAuthors.filter((a) => typeof a === "string") : [],
@@ -28253,7 +28285,7 @@ function noteCheckOutcome(cwd, dir, componentId, meanScore, by, headSha2, now = 
     const checks = (locks.progress[componentId] ?? 0) + 1;
     if (checks >= config2.unlock.checksRequired) {
       delete locks.progress[componentId];
-      delete locks.rebellions[componentId];
+      delete locks.drifted[componentId];
       locks.components[componentId] = { unlockedAt: now, sha: headSha2, checks, via: "check" };
       writeLocks(dir, locks);
       return { unlocked: true, alreadyUnlocked: false, checks };
@@ -28264,7 +28296,7 @@ function noteCheckOutcome(cwd, dir, componentId, meanScore, by, headSha2, now = 
   });
   return result ?? { unlocked: false, alreadyUnlocked: false, checks: 0 };
 }
-function syncLocksWithRebellion(dir, stateOf, detail = {}, now = (/* @__PURE__ */ new Date()).toISOString()) {
+function syncLocksWithDrift(dir, stateOf, detail = {}, now = (/* @__PURE__ */ new Date()).toISOString()) {
   const current = readLocksSafe(dir);
   const toRelock = Object.keys(current.components).filter(
     (id) => stateOf[id]?.state === "stale"
@@ -28278,7 +28310,7 @@ function syncLocksWithRebellion(dir, stateOf, detail = {}, now = (/* @__PURE__ *
       delete locks.components[id];
       delete locks.progress[id];
       const d = detail[id] ?? {};
-      locks.rebellions[id] = {
+      locks.drifted[id] = {
         at: now,
         sinceSha: d.sinceSha ?? "",
         foreignAuthors: d.foreignAuthors ?? [],
@@ -28294,7 +28326,7 @@ function syncLocksWithRebellion(dir, stateOf, detail = {}, now = (/* @__PURE__ *
 function pendingDigest(dir, cadence, now = /* @__PURE__ */ new Date()) {
   if (cadence === "off") return [];
   const locks = readLocksSafe(dir);
-  const ids = Object.keys(locks.rebellions).sort();
+  const ids = Object.keys(locks.drifted).sort();
   if (ids.length === 0) return [];
   if (cadence === "daily" && locks.digestShownAt) {
     const shown = new Date(locks.digestShownAt);
@@ -28302,7 +28334,7 @@ function pendingDigest(dir, cadence, now = /* @__PURE__ */ new Date()) {
       return [];
     }
   }
-  return ids.map((id) => ({ id, entry: locks.rebellions[id] }));
+  return ids.map((id) => ({ id, entry: locks.drifted[id] }));
 }
 function markDigestShown(dir, now = (/* @__PURE__ */ new Date()).toISOString()) {
   withSessionLock(dir, () => {
@@ -29490,7 +29522,7 @@ async function handleSettingsPatch(req, res, cwd, dir) {
   const next = { ...currentRaw };
   if (typeof patch.user === "string" && patch.user.trim()) next.user = patch.user.trim();
   if (typeof patch.language === "string") next.language = patch.language;
-  for (const section of ["gate", "unlock", "exempt", "budgets", "thresholds", "models"]) {
+  for (const section of ["gate", "unlock", "exempt", "drift", "budgets", "thresholds", "models"]) {
     if (patch[section] !== void 0) {
       next[section] = mergeSection(next[section], patch[section]);
     }
@@ -29992,7 +30024,7 @@ function contextSummary(res, config2, dir) {
   );
   const weak = scored.filter((s) => s.state === "fog" || s.state === "explored").sort((a, b) => a.mean - b.mean).slice(0, 3).map((s) => s.state === "fog" ? `${s.id} (fog)` : `${s.id} (explored ${fmt(s.mean)})`);
   if (weak.length > 0) lines.push(`You're weak on: ${weak.join(", ")}.`);
-  const digest = pendingDigest(dir, config2.rebellion.digest);
+  const digest = pendingDigest(dir, config2.drift.digest);
   if (digest.length > 0) {
     const shown = digest.slice(0, 3).map(({ id, entry }) => {
       const who = entry.cause === "self" ? "your own rewrite" : entry.foreignAuthors.length > 0 ? entry.foreignAuthors.join(", ") : "someone else";
@@ -30061,10 +30093,10 @@ program2.command("context").description("Print the SessionStart coverage summary
     detail[id] = {
       sinceSha: comp.lastValidatedSha,
       foreignAuthors: c?.foreignAuthors ?? [],
-      cause: rebellionCause(c ?? { foreign: 0, self: 0 }, res.sizes[id] ?? 0, res.config) ?? "foreign"
+      cause: causeOfDrift(c ?? { foreign: 0, self: 0 }, res.sizes[id] ?? 0, res.config) ?? "foreign"
     };
   }
-  syncLocksWithRebellion(dir, res.coverage.components, detail);
+  syncLocksWithDrift(dir, res.coverage.components, detail);
   console.log(contextSummary(res, contextConfig, dir));
 });
 var session = program2.command("session").description("Budget-period accounting for the interruption gate (PLAN \xA76.1)");
@@ -30128,7 +30160,7 @@ function buildStatus(cwd, res, dir) {
       error: eff.policyError
     },
     locks: { unlocked: unlockedCount, locked: map2.nodes.length - unlockedCount },
-    rebellions: Object.keys(locks.rebellions).sort(),
+    rebellions: Object.keys(locks.drifted).sort(),
     identity: resolveIdentityStatus(cwd, config2),
     models: config2.models,
     progress: counts.progress,
@@ -30370,7 +30402,7 @@ gate.command("edit").description(
   const map2 = readMapJsonSafe2(cwd);
   const importance = {};
   if (map2) for (const n of map2.nodes) importance[n.id] = n.importance;
-  syncLocksWithRebellion(dir, coverage2.components);
+  syncLocksWithDrift(dir, coverage2.components);
   const locks = readLocksSafe(dir);
   const decided = withSessionLock(dir, () => {
     const stored = readSessionSafe(dir);
@@ -30392,10 +30424,10 @@ gate.command("edit").description(
       },
       unlocked: Object.keys(locks.components),
       sessionSkips: session2.sessionSkips,
-      rebellions: Object.fromEntries(
-        Object.entries(locks.rebellions).map(([id, r]) => [
+      drifted: Object.fromEntries(
+        Object.entries(locks.drifted).map(([id, d]) => [
           id,
-          { cause: r.cause, authors: r.foreignAuthors }
+          { cause: d.cause, authors: d.foreignAuthors }
         ])
       ),
       recentlyAddressed,

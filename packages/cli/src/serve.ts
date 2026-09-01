@@ -570,7 +570,7 @@ async function handleSettingsPatch(
   const next: Record<string, unknown> = { ...currentRaw };
   if (typeof patch.user === 'string' && patch.user.trim()) next.user = patch.user.trim();
   if (typeof patch.language === 'string') next.language = patch.language;
-  for (const section of ['gate', 'unlock', 'exempt', 'budgets', 'thresholds', 'models'] as const) {
+  for (const section of ['gate', 'unlock', 'exempt', 'drift', 'budgets', 'thresholds', 'models'] as const) {
     if (patch[section] !== undefined) {
       next[section] = mergeSection(next[section], patch[section]);
     }

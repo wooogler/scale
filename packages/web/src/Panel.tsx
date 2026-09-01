@@ -1,6 +1,6 @@
 import { useEffect, useState, type JSX } from 'react';
 import type { ComponentCoverage, Dimensions, Quest } from '@scale/core/browser';
-import { skinFor, QUEST_SKIN } from './skin.js';
+import { skinFor, DRIFT_SKIN, QUEST_SKIN } from './skin.js';
 import { loadPaper, createVoluntaryQuest, type PaperResponse } from './data.js';
 import { Markdown } from './Markdown.js';
 import { useLang, useStrings } from './i18n.js';
@@ -58,7 +58,7 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
   }, [componentId]);
 
   const state = coverage?.state ?? 'fog';
-  const skin = skinFor(state);
+  const skin = skinFor(state, coverage?.driftCause ?? null);
   const dims = coverage?.dims ?? { structure: 0, concepts: 0, rationale: 0 };
 
   const challenge = async (): Promise<void> => {
@@ -93,9 +93,22 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
 
       <div className="panel-state" style={{ borderColor: skin.color }}>
         <span className="state-dot" style={{ background: skin.color }} />
-        <span className="state-ko">{S.state[state].label}</span>
+        <span className="state-ko">{skin.labelKo !== skin.labelEn ? (lang === 'ko' ? skin.labelKo : skin.labelEn) : S.state[state].label}</span>
       </div>
-      <p className="state-blurb">{S.state[state].blurb}</p>
+      <p className="state-blurb">
+        {state === 'stale' && coverage?.driftCause
+          ? lang === 'ko'
+            ? DRIFT_SKIN[coverage.driftCause].blurbKo
+            : DRIFT_SKIN[coverage.driftCause].blurbEn
+          : S.state[state].blurb}
+      </p>
+      {/* Naming WHO is the whole reason the drift split exists: it turns a
+          re-lock from an arbitrary setback into a legible event. */}
+      {state === 'stale' && (coverage?.driftAuthors.length ?? 0) > 0 && (
+        <p className="state-blurb drift-authors">
+          {DRIFT_SKIN.foreign.icon} {coverage!.driftAuthors.join(', ')}
+        </p>
+      )}
 
       <section className="panel-section">
         <h4>{S.devStats}</h4>

@@ -4,7 +4,15 @@ import { DimNameSchema } from './evidence.js';
 export const QuestModalitySchema = z.enum(['quiz', 'socratic']);
 export type QuestModality = z.infer<typeof QuestModalitySchema>;
 
-export const QuestOriginSchema = z.enum(['session', 'rebellion', 'voluntary']);
+/**
+ * Where a quest came from. `drift` was spelled `rebellion` — a UI skin word that
+ * had leaked into a schema enum, which PLAN §1-1 forbids; nothing ever produced
+ * it, but an old quests.json could carry it, so it migrates rather than failing.
+ */
+export const QuestOriginSchema = z.preprocess(
+  (v) => (v === 'rebellion' ? 'drift' : v),
+  z.enum(['session', 'drift', 'voluntary']),
+);
 export type QuestOrigin = z.infer<typeof QuestOriginSchema>;
 
 export const QuestStatusSchema = z.enum(['pending', 'completed', 'skipped']);

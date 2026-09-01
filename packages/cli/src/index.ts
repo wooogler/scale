@@ -38,7 +38,7 @@ import {
   emptyComponentCoverage,
   meanDims,
   gateEditDecision,
-  rebellionCause,
+  causeOfDrift,
   pathMatchesAny,
   migrateLegacyConfig,
   resolveConfig,
@@ -77,7 +77,7 @@ import {
   loadEffectiveConfig,
   readLocksSafe,
   noteCheckOutcome,
-  syncLocksWithRebellion,
+  syncLocksWithDrift,
   pendingDigest,
   markDigestShown,
   appendEvidence,
@@ -330,7 +330,7 @@ function contextSummary(res: RecomputeResult, config: ScaleConfig, dir: string):
   // notice nobody reads. It names WHO changed the territory — that is the whole
   // point of the authorship split, and it is what makes the re-lock legible
   // rather than arbitrary.
-  const digest = pendingDigest(dir, config.rebellion.digest);
+  const digest = pendingDigest(dir, config.drift.digest);
   if (digest.length > 0) {
     const shown = digest.slice(0, 3).map(({ id, entry }) => {
       const who =
@@ -459,10 +459,10 @@ program
       detail[id] = {
         sinceSha: comp.lastValidatedSha,
         foreignAuthors: c?.foreignAuthors ?? [],
-        cause: rebellionCause(c ?? { foreign: 0, self: 0 }, res.sizes[id] ?? 0, res.config) ?? 'foreign',
+        cause: causeOfDrift(c ?? { foreign: 0, self: 0 }, res.sizes[id] ?? 0, res.config) ?? 'foreign',
       };
     }
-    syncLocksWithRebellion(dir, res.coverage.components, detail);
+    syncLocksWithDrift(dir, res.coverage.components, detail);
 
     // Per-user interaction language (config is optional pre-`init` → 'en').
     console.log(contextSummary(res, contextConfig, dir));
@@ -595,7 +595,7 @@ function buildStatus(cwd: string, res: RecomputeResult, dir: string) {
       error: eff.policyError,
     },
     locks: { unlocked: unlockedCount, locked: map.nodes.length - unlockedCount },
-    rebellions: Object.keys(locks.rebellions).sort(),
+    rebellions: Object.keys(locks.drifted).sort(),
     identity: resolveIdentityStatus(cwd, config),
     models: config.models,
     progress: counts.progress,
@@ -996,7 +996,7 @@ gate
     // ledger. Pure file work, no git — the drift itself was measured by
     // whichever recompute ran last, and this only makes it bite. Without it a
     // rebellion noticed mid-session would not gate until the next SessionStart.
-    syncLocksWithRebellion(dir, coverage.components);
+    syncLocksWithDrift(dir, coverage.components);
     const locks = readLocksSafe(dir);
 
     // Budget accounting is a read-decide-write; take the session lock for the
@@ -1027,10 +1027,10 @@ gate
         },
         unlocked: Object.keys(locks.components),
         sessionSkips: session.sessionSkips,
-        rebellions: Object.fromEntries(
-          Object.entries(locks.rebellions).map(([id, r]) => [
+        drifted: Object.fromEntries(
+          Object.entries(locks.drifted).map(([id, d]) => [
             id,
-            { cause: r.cause, authors: r.foreignAuthors },
+            { cause: d.cause, authors: d.foreignAuthors },
           ]),
         ),
         recentlyAddressed,

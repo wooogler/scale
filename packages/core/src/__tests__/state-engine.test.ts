@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyEvidence,
   recomputeDrift,
-  rebellionCause,
+  causeOfDrift,
   materializeCoverage,
   emptyComponentCoverage,
   ScaleConfigSchema,
@@ -70,6 +70,8 @@ describe('emptyComponentCoverage', () => {
       dims: { structure: 0, concepts: 0, rationale: 0 },
       lastValidatedSha: null,
       loyalty: 1,
+      driftCause: null,
+      driftAuthors: [],
     });
   });
 });
@@ -291,51 +293,51 @@ describe('materializeCoverage', () => {
   });
 });
 
-describe('rebellionCause — the single rebellion rule (PLAN-GATE S2)', () => {
+describe('causeOfDrift — the single drift rule (PLAN-GATE S2)', () => {
   const cfg = (rebellion: Record<string, unknown> = {}): ScaleConfig =>
     ScaleConfigSchema.parse({ user: 'u', rebellion });
 
   it('foreign churn fires at the (lower) foreign bar', () => {
     // 30/100 = 0.30 ≥ foreignRatio 0.25
-    expect(rebellionCause({ foreign: 30, self: 0 }, 100, cfg())).toBe('foreign');
-    expect(rebellionCause({ foreign: 20, self: 0 }, 100, cfg())).toBeNull();
+    expect(causeOfDrift({ foreign: 30, self: 0 }, 100, cfg())).toBe('foreign');
+    expect(causeOfDrift({ foreign: 20, self: 0 }, 100, cfg())).toBeNull();
   });
 
   it('the SAME churn from the user themselves does not fire', () => {
     // This asymmetry is the design: the edit gate cleared them before they wrote
     // it, so their own work is not evidence their understanding lapsed.
-    expect(rebellionCause({ foreign: 0, self: 30 }, 100, cfg())).toBeNull();
-    expect(rebellionCause({ foreign: 0, self: 85 }, 100, cfg())).toBe('self');
+    expect(causeOfDrift({ foreign: 0, self: 30 }, 100, cfg())).toBeNull();
+    expect(causeOfDrift({ foreign: 0, self: 85 }, 100, cfg())).toBe('self');
   });
 
   it('foreign wins when both bars are crossed — it is the more informative cause', () => {
-    expect(rebellionCause({ foreign: 50, self: 90 }, 100, cfg())).toBe('foreign');
+    expect(causeOfDrift({ foreign: 50, self: 90 }, 100, cfg())).toBe('foreign');
   });
 
   it('an unmeasurable foreign change (binary-classified file) fires on its own', () => {
     expect(
-      rebellionCause({ foreign: 0, self: 0, unmeasurableForeign: true }, 100, cfg()),
+      causeOfDrift({ foreign: 0, self: 0, unmeasurableForeign: true }, 100, cfg()),
     ).toBe('foreign');
     // A binary change the USER made is not a rebellion.
-    expect(rebellionCause({ foreign: 0, self: 0 }, 100, cfg())).toBeNull();
+    expect(causeOfDrift({ foreign: 0, self: 0 }, 100, cfg())).toBeNull();
   });
 
   it('unknown size treats any churn as total, erring toward re-checking', () => {
-    expect(rebellionCause({ foreign: 1, self: 0 }, 0, cfg())).toBe('foreign');
-    expect(rebellionCause({ foreign: 0, self: 0 }, 0, cfg())).toBeNull();
+    expect(causeOfDrift({ foreign: 1, self: 0 }, 0, cfg())).toBe('foreign');
+    expect(causeOfDrift({ foreign: 0, self: 0 }, 0, cfg())).toBeNull();
   });
 
   it('any-foreign-commit mode fires on a single commit, whatever its size', () => {
     const c = cfg({ trigger: 'any-foreign-commit' });
-    expect(rebellionCause({ foreign: 1, self: 0, foreignCommits: 1 }, 100000, c)).toBe('foreign');
-    expect(rebellionCause({ foreign: 0, self: 9999, foreignCommits: 0 }, 100, c)).toBeNull();
+    expect(causeOfDrift({ foreign: 1, self: 0, foreignCommits: 1 }, 100000, c)).toBe('foreign');
+    expect(causeOfDrift({ foreign: 0, self: 9999, foreignCommits: 0 }, 100, c)).toBeNull();
   });
 
   it('thresholds are policy-settable', () => {
     const strict = cfg({ foreignRatio: 0.01 });
-    expect(rebellionCause({ foreign: 2, self: 0 }, 100, strict)).toBe('foreign');
+    expect(causeOfDrift({ foreign: 2, self: 0 }, 100, strict)).toBe('foreign');
     const loose = cfg({ foreignRatio: 1 });
-    expect(rebellionCause({ foreign: 99, self: 0 }, 100, loose)).toBeNull();
+    expect(causeOfDrift({ foreign: 99, self: 0 }, 100, loose)).toBeNull();
   });
 });
 
@@ -350,6 +352,8 @@ describe('recomputeDrift — split churn', () => {
         dims: { structure: 0.9, concepts: 0.9, rationale: 0.9 },
         lastValidatedSha: 'abc',
         loyalty: 1,
+        driftCause: null,
+        driftAuthors: [],
       },
     },
   });

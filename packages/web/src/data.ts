@@ -193,6 +193,7 @@ export interface SettingsPatch {
   gate?: Partial<ScaleConfig['gate']>;
   unlock?: Partial<ScaleConfig['unlock']>;
   exempt?: Partial<ScaleConfig['exempt']>;
+  drift?: Partial<ScaleConfig['drift']>;
   budgets?: Partial<ScaleConfig['budgets']>;
   thresholds?: Partial<ScaleConfig['thresholds']>;
   models?: Partial<ScaleConfig['models']>;
@@ -273,6 +274,8 @@ function synthComponent(results: DimResult[]): ComponentCoverage {
     dims,
     lastValidatedSha: mean >= 0.6 ? 'localdemo' : null,
     loyalty: 1,
+    driftCause: null,
+    driftAuthors: [],
   };
 }
 
