@@ -16,6 +16,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
+  explainConfig,
+  unsetPath,
   loadScaleDir,
   paperById,
   resolveInterventionModel,
@@ -53,6 +55,7 @@ import {
   ensureStateDir,
   appendEvidence,
 } from './state.js';
+import { recordConfigDelta } from './telemetry.js';
 import { recomputeCoverageFromDisk } from './coverage.js';
 import { driftContext } from './drift-context.js';
 import {
@@ -418,6 +421,10 @@ async function handle(
       await handleQuestCreate(req, res, cwd);
       return;
     }
+    if (pathname === '/api/settings/unset') {
+      await handleSettingsUnset(req, res, cwd, dir);
+      return;
+    }
     if (pathname === '/api/settings' || pathname === '/api/settings/') {
       await handleSettingsPatch(req, res, cwd, dir);
       return;
@@ -517,6 +524,7 @@ async function handle(
         applied: eff.policyApplied,
         error: eff.policyError,
       },
+      sources: settingsSources(cwd, dir),
       keys: keyStatus(),
       repoId: resolveRepoId(cwd),
       stateDir: dir,
@@ -650,6 +658,7 @@ async function handleSettingsPatch(
   dir: string,
 ): Promise<void> {
   const patch = parseBody(await readBody(req));
+  const before = loadEffectiveConfig(cwd, dir).config;
   const currentRaw = readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' };
   const next: Record<string, unknown> = { ...currentRaw };
   if (typeof patch.user === 'string' && patch.user.trim()) next.user = patch.user.trim();
@@ -670,7 +679,67 @@ async function handleSettingsPatch(
   }
   ensureStateDir(dir);
   fs.writeFileSync(paths.config(dir), JSON.stringify(migrated, null, 2) + '\n');
-  sendJson(res, 200, { config: resolved.config, keys: keyStatus() });
+  // Logged AFTER the write, so a rejected patch leaves no row (PLAN-GATE §15).
+  recordConfigDelta(dir, cwd, before, resolved.config, 'web', false);
+  sendJson(res, 200, {
+    config: resolved.config,
+    keys: keyStatus(),
+    sources: settingsSources(cwd, dir),
+  });
+}
+
+/**
+ * Per-leaf provenance for the Settings modal: `default` / `policy` / `user`,
+ * with the policy value where the team names one. Computed from the raw files,
+ * never from the effective object, because equality with the team default does
+ * not mean the user did not pin it.
+ */
+function settingsSources(cwd: string, dir: string): ReturnType<typeof explainConfig> {
+  const policy = readPolicyRaw(cwd);
+  try {
+    return explainConfig(readUserConfigRaw(dir) ?? { user: 'user' }, policy.parseError ? undefined : policy.raw);
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * POST /api/settings/unset `{ path }` — drop ONE personal override so the team
+ * default (or schema default) shows through again. This is the S4 "back to
+ * team default" affordance. The user field cannot be unset. The change is
+ * logged as a config_change with `reset: true`.
+ */
+async function handleSettingsUnset(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  cwd: string,
+  dir: string,
+): Promise<void> {
+  const body = parseBody(await readBody(req));
+  const dotted = typeof body.path === 'string' ? body.path.trim() : '';
+  if (!/^[a-zA-Z][\w.]*$/.test(dotted) || dotted === 'user') {
+    sendJson(res, 400, { error: 'path must be a dotted config key other than "user"' });
+    return;
+  }
+  const before = loadEffectiveConfig(cwd, dir).config;
+  const currentRaw = readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' };
+  const next = unsetPath(migrateLegacyConfig(currentRaw) as Record<string, unknown>, dotted);
+  const policy = readPolicyRaw(cwd);
+  let resolved: ResolvedConfig;
+  try {
+    resolved = resolveConfig(next, policy.parseError ? undefined : policy.raw);
+  } catch (err) {
+    sendJson(res, 400, { error: 'invalid settings', detail: (err as Error).message });
+    return;
+  }
+  ensureStateDir(dir);
+  fs.writeFileSync(paths.config(dir), JSON.stringify(next, null, 2) + '\n');
+  recordConfigDelta(dir, cwd, before, resolved.config, 'web', true);
+  sendJson(res, 200, {
+    config: resolved.config,
+    keys: keyStatus(),
+    sources: settingsSources(cwd, dir),
+  });
 }
 
 /**
@@ -995,6 +1064,7 @@ async function handleSocraticMessage(
           'user',
           sha,
           now,
+          'socratic',
         );
       }
     } else {

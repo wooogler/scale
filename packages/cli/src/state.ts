@@ -14,6 +14,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { appendTelemetry } from './telemetry-append.js';
 import { promises as fsp } from 'node:fs';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -91,6 +92,7 @@ export const paths = {
   quests: (dir: string) => path.join(dir, 'quests.json'),
   pendingEdits: (dir: string) => path.join(dir, 'pending-edits.json'),
   locks: (dir: string) => path.join(dir, 'locks.json'),
+  telemetry: (dir: string) => path.join(dir, 'telemetry.jsonl'),
 };
 
 /** Create the state dir (idempotent). */
@@ -289,6 +291,28 @@ export interface SessionRecord {
    * again. Dies with the record, which is exactly the intended lifetime.
    */
   sessionSkips: string[];
+  /**
+   * Per-period tallies for the `session_end` telemetry row (PLAN-GATE S4).
+   * `edits` is every gate call; the rest partition its outcomes. `redirects`
+   * counts allowed edits elsewhere while a deny was outstanding.
+   */
+  counters: SessionCounters;
+  /** When the most recent deny fired this period — the clock `skip`/`redirect` measure from. */
+  lastDenyAt: string | null;
+}
+
+export interface SessionCounters {
+  edits: number;
+  allows: number;
+  denies: number;
+  redenies: number;
+  advisories: number;
+  redirects: number;
+  skips: number;
+}
+
+export function zeroCounters(): SessionCounters {
+  return { edits: 0, allows: 0, denies: 0, redenies: 0, advisories: 0, redirects: 0, skips: 0 };
 }
 
 /** A brand-new session record (fresh budget). */
@@ -301,6 +325,8 @@ export function defaultSession(sessionId: string, startedAt: string): SessionRec
     pendingComponent: null,
     openWindows: 0,
     sessionSkips: [],
+    counters: zeroCounters(),
+    lastDenyAt: null,
   };
 }
 
@@ -331,10 +357,23 @@ export function readSessionSafe(dir: string): SessionRecord | null {
       sessionSkips: Array.isArray(raw.sessionSkips)
         ? raw.sessionSkips.filter((s): s is string => typeof s === 'string')
         : [],
+      counters: readCounters(raw.counters),
+      lastDenyAt: typeof raw.lastDenyAt === 'string' ? raw.lastDenyAt : null,
     };
   } catch {
     return null;
   }
+}
+
+function readCounters(raw: unknown): SessionCounters {
+  const out = zeroCounters();
+  if (raw && typeof raw === 'object') {
+    for (const k of Object.keys(out) as (keyof SessionCounters)[]) {
+      const v = (raw as Record<string, unknown>)[k];
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) out[k] = Math.trunc(v);
+    }
+  }
+  return out;
 }
 
 /** Write session.json (pretty-printed). */
@@ -740,6 +779,7 @@ export function noteCheckOutcome(
   by: 'user' | 'agent',
   headSha: string,
   now: string = new Date().toISOString(),
+  via: 'record' | 'quiz' | 'socratic' = 'record',
 ): { unlocked: boolean; alreadyUnlocked: boolean; checks: number } {
   const { config } = loadEffectiveConfig(cwd, dir);
   if (by !== 'user' || !Number.isFinite(meanScore) || meanScore < config.unlock.passBar) {
@@ -757,6 +797,9 @@ export function noteCheckOutcome(
     }
     const checks = (locks.progress[componentId] ?? 0) + 1;
     if (checks >= config.unlock.checksRequired) {
+      const owedSince = locks.pendingUnlocks[componentId]?.at;
+      const owedMs = owedSince ? Math.max(0, Date.parse(now) - Date.parse(owedSince)) : null;
+      const recovery = !!locks.drifted[componentId];
       delete locks.progress[componentId];
       // Recovering clears the drift note and the async to-do along with the
       // lock — otherwise the digest and the viewer would keep announcing a
@@ -765,6 +808,19 @@ export function noteCheckOutcome(
       delete locks.pendingUnlocks[componentId];
       locks.components[componentId] = { unlockedAt: now, sha: headSha, checks, via: 'check' };
       writeLocks(dir, locks);
+      appendTelemetry(dir, {
+        v: 1,
+        type: 'unlock',
+        ts: now,
+        user: config.user,
+        sessionId: readSessionSafe(dir)?.sessionId ?? null,
+        component: componentId,
+        via,
+        meanScore: Math.max(0, Math.min(1, meanScore)),
+        checks,
+        owedMs: Number.isFinite(owedMs as number) ? owedMs : null,
+        recovery,
+      });
       return { unlocked: true, alreadyUnlocked: false, checks };
     }
     locks.progress[componentId] = checks;
@@ -825,6 +881,59 @@ export function syncLocksWithDrift(
     }
     if (relocked.length > 0) writeLocks(dir, locks);
     return relocked;
+  });
+  if (done && done.length > 0) {
+    const user = (readUserConfigRaw(dir)?.user as string | undefined) ?? 'user';
+    const sessionId = readSessionSafe(dir)?.sessionId ?? null;
+    for (const id of done) {
+      const d = detail[id] ?? {};
+      appendTelemetry(dir, {
+        v: 1,
+        type: 'relock',
+        ts: now,
+        user,
+        sessionId,
+        component: id,
+        cause: d.cause ?? 'foreign',
+        foreignAuthors: d.foreignAuthors?.length ?? 0,
+      });
+    }
+  }
+  return done ?? [];
+}
+
+/**
+ * Drop ledger entries for components the map no longer knows (PLAN-GATE §14.4).
+ * A paper that was deleted or renamed otherwise leaves a permanent owed check
+ * in the SessionStart line and the viewer header. Called where the map is at
+ * hand (`scale context`), never from the gate. Returns the ids removed.
+ */
+export function pruneLocksToKnown(dir: string, knownIds: Iterable<string>): string[] {
+  const known = new Set(knownIds);
+  const current = readLocksSafe(dir);
+  const stray = (o: Record<string, unknown>): string[] => Object.keys(o).filter((id) => !known.has(id));
+  const candidates = new Set([
+    ...stray(current.components),
+    ...stray(current.progress),
+    ...stray(current.drifted),
+    ...stray(current.pendingUnlocks),
+  ]);
+  if (candidates.size === 0) return [];
+  const done = withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    const removed: string[] = [];
+    for (const id of candidates) {
+      let hit = false;
+      for (const table of [locks.components, locks.progress, locks.drifted, locks.pendingUnlocks] as Record<string, unknown>[]) {
+        if (id in table) {
+          delete table[id];
+          hit = true;
+        }
+      }
+      if (hit) removed.push(id);
+    }
+    if (removed.length > 0) writeLocks(dir, locks);
+    return removed;
   });
   return done ?? [];
 }

@@ -131,3 +131,101 @@ export function pathMatchesAny(relPath: string, patterns: readonly string[]): bo
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Provenance — which layer each effective leaf came from (PLAN-GATE S4)
+// ---------------------------------------------------------------------------
+
+export type ConfigSource = 'default' | 'policy' | 'user';
+
+export interface LeafProvenance {
+  value: unknown;
+  source: ConfigSource;
+  /** What the team policy says for this leaf, or undefined if it is silent. */
+  policyValue?: unknown;
+  /** The schema default. */
+  defaultValue: unknown;
+}
+
+function leafPaths(obj: unknown, prefix = '', out: Record<string, unknown> = {}): Record<string, unknown> {
+  if (!isPlainObject(obj)) {
+    if (prefix) out[prefix] = obj;
+    return out;
+  }
+  for (const k of Object.keys(obj)) leafPaths(obj[k], prefix ? `${prefix}.${k}` : k, out);
+  return out;
+}
+
+function hasPath(raw: unknown, dotted: string): boolean {
+  let cur: unknown = raw;
+  for (const k of dotted.split('.')) {
+    if (!isPlainObject(cur) || !(k in cur)) return false;
+    cur = cur[k];
+  }
+  return cur !== undefined;
+}
+
+/**
+ * Explain the effective config leaf by leaf: the value the user is actually
+ * running under and whether it is theirs, the team's, or the schema's.
+ *
+ * "Theirs" means the SPARSE user file names that path — even when the value it
+ * names equals the team default. That is the honest reading: a member who
+ * explicitly set `enforcement: soft` while the policy also says `soft` has
+ * pinned it, and a later policy change will not move them. The Settings UI
+ * uses this to say so and to offer the way back.
+ *
+ * A policy that fails to apply (see `resolveConfig`) contributes nothing: every
+ * leaf then reads `default` or `user`, matching what is really in force.
+ */
+export function explainConfig(userRaw: unknown, policyRaw?: unknown): Record<string, LeafProvenance> {
+  const user = migrateLegacyConfig(userRaw);
+  const userName = isPlainObject(user) && typeof user.user === 'string' ? user.user : 'user';
+  const defaults = leafPaths(ScaleConfigSchema.parse({ user: userName }));
+  const policyOnly = resolveConfig({ user: userName }, policyRaw);
+  const policyLeaves = policyOnly.policyApplied ? leafPaths(policyOnly.config) : defaults;
+  const effective = leafPaths(resolveConfig(user, policyRaw).config);
+
+  const overlay: Record<string, unknown> = {};
+  if (policyOnly.policyApplied && isPlainObject(policyRaw)) {
+    for (const s of POLICY_SECTIONS) if (policyRaw[s] !== undefined) overlay[s] = policyRaw[s];
+  }
+
+  const out: Record<string, LeafProvenance> = {};
+  for (const path of Object.keys(effective)) {
+    const fromUser = hasPath(user, path);
+    const fromPolicy = hasPath(overlay, path);
+    out[path] = {
+      value: effective[path],
+      source: fromUser ? 'user' : fromPolicy ? 'policy' : 'default',
+      defaultValue: defaults[path],
+      ...(fromPolicy ? { policyValue: policyLeaves[path] } : {}),
+    };
+  }
+  return out;
+}
+
+/**
+ * Remove one dotted path from a sparse raw config, pruning parents that become
+ * empty so the file stays sparse. Returns a new object; `user` (the identity
+ * field) cannot be unset. No-op when the path is absent.
+ */
+export function unsetPath(raw: Record<string, unknown>, dotted: string): Record<string, unknown> {
+  if (dotted === 'user') return raw;
+  const keys = dotted.split('.');
+  const out = structuredClone(raw);
+  const chain: Record<string, unknown>[] = [out];
+  let cur: Record<string, unknown> = out;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const next = cur[keys[i]!];
+    if (!isPlainObject(next)) return raw;
+    cur = next;
+    chain.push(cur);
+  }
+  if (!(keys[keys.length - 1]! in cur)) return raw;
+  delete cur[keys[keys.length - 1]!];
+  for (let i = chain.length - 1; i > 0; i--) {
+    if (Object.keys(chain[i]!).length === 0) delete chain[i - 1]![keys[i - 1]!];
+  }
+  return out;
+}

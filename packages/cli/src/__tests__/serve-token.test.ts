@@ -90,3 +90,69 @@ describe('token-guarded API', () => {
     expect(foreign.status).toBe(403);
   });
 });
+
+describe('settings provenance and reset (PLAN-GATE S4)', () => {
+  it('GET /api/settings says where each leaf came from; unset drops the pin and logs a reset', async () => {
+    fs.writeFileSync(
+      path.join(repo, '.scale', 'policy.json'),
+      JSON.stringify({ gate: { enforcement: 'hard' } }),
+    );
+    const base = await listen({});
+    // Pin enforcement to the SAME value the team chose.
+    const saved = await fetch(`${base}/api/settings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ gate: { enforcement: 'hard' } }),
+    });
+    expect(saved.status).toBe(200);
+    const s1 = (await fetch(`${base}/api/settings`).then((r) => r.json())) as {
+      sources: Record<string, { source: string; policyValue?: unknown }>;
+    };
+    expect(s1.sources['gate.enforcement']).toMatchObject({ source: 'user', policyValue: 'hard' });
+    expect(s1.sources['gate.modality']).toMatchObject({ source: 'default' });
+
+    const reset = await fetch(`${base}/api/settings/unset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'gate.enforcement' }),
+    });
+    expect(reset.status).toBe(200);
+    const body = (await reset.json()) as { config: { gate: { enforcement: string } }; sources: Record<string, { source: string }> };
+    expect(body.config.gate.enforcement).toBe('hard'); // team value shows through
+    expect(body.sources['gate.enforcement']!.source).toBe('policy');
+
+    // The identity field is not an override.
+    const bad = await fetch(`${base}/api/settings/unset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'user' }),
+    });
+    expect(bad.status).toBe(400);
+
+    // Telemetry: the pin changed nothing effective (no row); the reset changed
+    // nothing effective either — same value — so no row. Now change for real.
+    const loosen = await fetch(`${base}/api/settings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ gate: { enforcement: 'advisory' } }),
+    });
+    expect(loosen.status).toBe(200);
+    const stateDirs = fs.readdirSync(path.join(home, '.scale'));
+    const tel = fs
+      .readFileSync(path.join(home, '.scale', stateDirs[0]!, 'telemetry.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(tel).toHaveLength(1);
+    expect(tel[0]).toMatchObject({
+      type: 'config_change',
+      path: 'gate.enforcement',
+      from: 'hard',
+      to: 'advisory',
+      source: 'web',
+      reset: false,
+      policyValue: 'hard',
+      direction: 'loosen',
+    });
+  });
+});

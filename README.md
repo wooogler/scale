@@ -208,7 +208,10 @@ Then work normally in Claude Code:
 | `scale map layout` | Compute/extend the frozen spatial layout → `.scale/map.json`. | ⚡ |
 | `scale map index` | Build the file→component reverse index → `.scale/index.json`. | ⚡ |
 | `scale map drift` | Flag components whose sources changed since the build SHA (minimal stub). | ⚡ |
-| `scale serve [-p 4318] [--host <addr>] [--token <t>]` | Serve the local web map viewer + JSON API. | ⚡/🧠 |
+| `scale serve [-p 4318] [--host <addr>] [--token <t>]` | Serve the local web map viewer + JSON API → settings provenance + reset → local study telemetry (overrides,
+denies, skips, redirects, out-of-band edits, unlocks, re-locks, session tallies). | ⚡/🧠 |
+| `scale config unset <key>` | Drop one personal override so the team default applies again. | ⚡ |
+| `scale telemetry summary [--json]` | Counts and learning-vs-avoidance ratios from the local study log. | ⚡ |
 | `scale reset [-y]` | Delete the `~/.scale/<repo-id>/` state dir (demo/pilot reset). | ⚡ |
 
 `scale serve` itself is pure Node; only its Socratic runner (`/api/socratic/:id/message`)
@@ -226,6 +229,35 @@ owe a check (`Unlocked for editing: 3/37. 1 territory still owes a check…`), S
 quest generation targets those first, the viewer shows a 🔒 badge on the node and a
 count in the header (`GET /api/locks`), and the panel points at the quiz or socratic
 runner. Passing there — graded server-side — unlocks the edit for the next session.
+
+**Where a setting comes from.** The Settings modal marks every gate and budget knob
+`default` / `team default` / `yours`. `yours` means your own config pins it, so a later
+team change will not move you; the ↺ button beside it (or `scale config unset <key>`)
+drops the pin and the team value shows through. If the phone tab outlives the server,
+the page says its key expired instead of rendering an empty map.
+
+## Study telemetry (local only)
+
+Alongside `evidence.jsonl` (the comprehension model's input, which never leaves the
+machine) SCALE writes `~/.scale/<repo-id>/telemetry.jsonl`: the stream a deployment
+study would collect, designed from the start to be shippable — no prompt text, no file
+contents, no file paths, no collaborator addresses (authors are counted). Every row is
+`{v:1, ts, user, sessionId, type, …}`:
+
+| type | when | what it carries |
+|---|---|---|
+| `config_change` | any override lands (CLI or Settings) | one row per changed leaf: `path`, `from`, `to`, `source`, `reset`, the team's `policyValue`, and `direction` (`loosen` / `tighten` / `neutral`) |
+| `gate` | a deny, re-deny, or advisory | component, `cause` (`locked` / `drift_foreign` / `drift_self`), enforcement, assessment, budget used/max |
+| `skip` | `scale gate defer` | component, `by`, time since the deny |
+| `redirect` | an edit is allowed elsewhere while a deny is outstanding | the denied component, what was edited instead, unanchored file count, time since the deny |
+| `out_of_band` | at period end, from git | a locked component whose sources changed with no Edit/Write reaching the gate — an edit around the tools |
+| `unlock` | the ledger unlocks a component | `via`, mean score, checks, how long the check was owed, whether it recovered drift |
+| `relock` | drift re-locks a component | cause, number of foreign authors |
+| `session_end` | the last window closes | edits / allows / denies / re-denies / advisories / redirects / skips, ledger counts |
+
+`scale telemetry summary` reads it back: denies, unlocks and recoveries, the three
+avoidance signals, and the share of denied components that were never unlocked. Nothing
+is transmitted; the collection path is a separate decision (PLAN-GATE §15).
 
 ---
 
@@ -332,10 +364,8 @@ viewer + JSON API.
 
 **Not yet** (see PLAN-GATE §4 for the staged plan)
 
-- **Settings provenance (S4)** — the Settings modal does not yet show whether a knob is
-  the team default or your override, and there is no one-click "back to team default".
-- **Telemetry (S4)** — override deltas, skips and avoidance (working around a locked
-  territory) are not logged yet; that is the learning-vs-avoidance measurement.
+- **Telemetry collection** — the local log exists and is shippable by design; how it
+  leaves the machine (consent, transport, aggregation) is not decided or built.
 - **Mode A live co-construction** — building the memory alongside the junior in-flow (hook
   infrastructure exists; the mode does not).
 - **`scale map drift`** — still a stub that reports SHAs only. Per-component staleness

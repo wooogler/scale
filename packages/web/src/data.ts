@@ -70,8 +70,31 @@ function authHeaders(): Record<string, string> {
   }
 }
 
+/**
+ * The server refused the API for want of the bearer token. Off loopback the
+ * token dies with the `scale serve` process, so a phone that kept the tab open
+ * across a restart sees exactly this — and it must NOT look like an empty
+ * repository. The shell shows a banner naming the fix (open the fresh URL).
+ */
+export class ApiAuthError extends Error {
+  constructor(path: string) {
+    super(`GET ${path} -> 401 (token missing or expired)`);
+    this.name = 'ApiAuthError';
+  }
+}
+
+let authFailed = false;
+/** True once any API call was refused with 401 this page-load. */
+export function apiAuthFailed(): boolean {
+  return authFailed;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: { accept: 'application/json', ...authHeaders() } });
+  if (res.status === 401) {
+    authFailed = true;
+    throw new ApiAuthError(path);
+  }
   if (!res.ok) {
     throw new Error(`GET ${path} -> ${res.status}`);
   }
@@ -84,6 +107,10 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     headers: { 'content-type': 'application/json', accept: 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
   });
+  if (res.status === 401) {
+    authFailed = true;
+    throw new ApiAuthError(path);
+  }
   if (!res.ok) {
     // Settings/keys writes surface the server's message verbatim (e.g. a schema
     // validation detail) — a bare status code isn't actionable in a form.
@@ -228,10 +255,22 @@ export interface ProviderKeyStatus {
 export type KeyStatusMap = Record<LlmProvider, ProviderKeyStatus>;
 
 /** GET /api/settings payload. */
+/** Which layer an effective config leaf came from (PLAN-GATE S4). */
+export type ConfigSource = 'default' | 'policy' | 'user';
+export interface LeafSource {
+  value: unknown;
+  source: ConfigSource;
+  policyValue?: unknown;
+  defaultValue: unknown;
+}
+export type SettingsSources = Record<string, LeafSource>;
+
 export interface SettingsResponse {
   config: ScaleConfig;
   /** Whether a committed team policy (.scale/policy.json) is defaulting things. */
   policy?: { present: boolean; applied: boolean; error: string | null };
+  /** Per-leaf provenance, keyed by dotted path (`gate.enforcement`). */
+  sources?: SettingsSources;
   keys: KeyStatusMap;
   repoId: string;
   stateDir: string;
@@ -264,11 +303,23 @@ export async function loadSettings(): Promise<SettingsResponse> {
   return getJson<SettingsResponse>('/api/settings');
 }
 
+export interface SaveResponse {
+  config: ScaleConfig;
+  keys: KeyStatusMap;
+  sources?: SettingsSources;
+}
+
 /** POST /api/settings — merge a partial config, validate, persist. */
-export async function saveSettings(
-  patch: SettingsPatch,
-): Promise<{ config: ScaleConfig; keys: KeyStatusMap }> {
-  return postJson<{ config: ScaleConfig; keys: KeyStatusMap }>('/api/settings', patch);
+export async function saveSettings(patch: SettingsPatch): Promise<SaveResponse> {
+  return postJson<SaveResponse>('/api/settings', patch);
+}
+
+/**
+ * POST /api/settings/unset — drop one personal override so the team default
+ * (or the schema default) applies again.
+ */
+export async function unsetSetting(path: string): Promise<SaveResponse> {
+  return postJson<SaveResponse>('/api/settings/unset', { path });
 }
 
 /**

@@ -270,6 +270,10 @@ API call needs the token (the page keeps it for the tab); the static bundle does
 not. Whoever has the URL can read your coverage and change your settings, so share
 it like a password. `--token <value>` pins your own.
 
+Every gate and budget knob in Settings shows where its value comes from —
+`default`, `team default`, or `yours` — and a `↺` beside anything that is yours
+puts the team default back (CLI: `scale config unset gate.enforcement`).
+
 ### Settings (⚙ in the header)
 
 Everything in `config.json` is editable from the browser — interaction language
@@ -339,12 +343,13 @@ like an in-chat check.
 - Web map viewer + JSON API; coverage materialized from evidence.
 - Async completion: pending unlocks (SessionStart count, 🔒 in the viewer,
   `/api/locks`), server-side quiz grading, LAN bearer token for a phone.
+- Settings provenance + reset; local study telemetry in
+  `~/.scale/<repo-id>/telemetry.jsonl` (README → "Study telemetry").
 
 **Not yet** (staged in PLAN-GATE §4)
 
-- **Settings provenance + telemetry (S4)** — the Settings modal does not yet say
-  "team default" vs "my override"; override deltas, skips and avoidance are not
-  logged.
+- **Telemetry collection** — `telemetry.jsonl` is written locally (see
+  `scale telemetry summary`); nothing is sent anywhere yet.
 - **Mode A live co-construction** — building the memory alongside the junior in the
   flow (the hook infrastructure exists; the mode does not).
 - **`scale map drift`** — still a stub reporting SHAs only. Per-component staleness

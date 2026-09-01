@@ -13,6 +13,7 @@ export * from './schema/coverage.js';
 export * from './schema/evidence.js';
 export * from './schema/quest.js';
 export * from './schema/config.js';
+export * from './schema/telemetry.js';
 
 // Pure coverage model.
 export * from './coverage-model.js';

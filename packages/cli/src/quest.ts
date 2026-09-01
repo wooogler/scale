@@ -1034,7 +1034,7 @@ export async function completeQuizQuest(
   // check surfaces, and both funnel through noteCheckOutcome so the ledger
   // cannot disagree with `scale record`.
   if (recorded > 0) {
-    noteCheckOutcome(cwd, dir, quest.componentId, scoreSum / recorded, by, sha, now);
+    noteCheckOutcome(cwd, dir, quest.componentId, scoreSum / recorded, by, sha, now, 'quiz');
   }
 
   return finishCompletion(cwd, dir, quests, questId, quest.componentId, recorded);
@@ -1091,7 +1091,7 @@ export async function completeSocraticQuest(
       const vals = Object.values(graded).filter((v): v is number => typeof v === 'number');
       const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
       // Same single unlock funnel as `scale record` (PLAN-GATE §3.1).
-      noteCheckOutcome(cwd, dir, quest.componentId, mean, by, sha, now);
+      noteCheckOutcome(cwd, dir, quest.componentId, mean, by, sha, now, 'socratic');
     }
   }
 

@@ -1369,3 +1369,59 @@ body {
 .owed-badge-icon { font-size: 11px; }
 .legend-owed { cursor: default; }
 .owed-note { color: var(--warn, #e0803a); }
+
+/* Settings provenance (PLAN-GATE S4) */
+.set-src {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  border: 1px solid var(--line, #d8d3c8);
+  color: var(--ink-3, #7b7568);
+  background: transparent;
+}
+.set-src-policy {
+  border-color: rgba(60, 110, 170, 0.45);
+  color: #3c6eaa;
+}
+.set-src-user {
+  border-color: rgba(170, 100, 40, 0.5);
+  color: #a86428;
+}
+.set-reset {
+  margin-left: 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(170, 100, 40, 0.5);
+  background: transparent;
+  color: #a86428;
+  cursor: pointer;
+}
+.set-reset:hover:not(:disabled) {
+  background: rgba(170, 100, 40, 0.08);
+}
+.set-reset:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.set-label-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.auth-banner {
+  padding: 8px 14px;
+  background: #fbe9e4;
+  color: #7a2e1c;
+  border-bottom: 1px solid #e6b8ab;
+  font-size: 13px;
+}
+.auth-banner code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

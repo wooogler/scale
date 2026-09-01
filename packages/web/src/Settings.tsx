@@ -9,8 +9,12 @@ import {
   loadSettings,
   saveKey,
   saveSettings,
+  unsetSetting,
+  type ConfigSource,
   type KeyStatusMap,
   type SettingsPatch,
+  type SettingsSources,
+  type SaveResponse,
 } from './data.js';
 import { useStrings, type Strings } from './i18n.js';
 
@@ -58,6 +62,40 @@ const PLACEHOLDER: Record<LlmProvider, string> = {
   openai: 'sk-…',
 };
 
+/**
+ * Where a setting's value comes from, and the way back (PLAN-GATE S4).
+ *
+ * `yours` means the user's own sparse config names this path — it is pinned,
+ * and a later change to the team policy will not move it. The reset button
+ * drops that pin; its label says what will show through (the team's value if
+ * the policy names one, else the schema default) so the click is informed.
+ */
+function Provenance({
+  source,
+  hasPolicy,
+  onReset,
+  disabled,
+}: {
+  source: ConfigSource | undefined;
+  hasPolicy: boolean;
+  onReset: () => void;
+  disabled?: boolean;
+}): JSX.Element | null {
+  const S = useStrings();
+  if (!source) return null;
+  const label = source === 'user' ? S.set.srcUser : source === 'policy' ? S.set.srcPolicy : S.set.srcDefault;
+  return (
+    <>
+      <span className={`set-src set-src-${source}`}>{label}</span>
+      {source === 'user' && (
+        <button type="button" className="set-reset" disabled={disabled} onClick={onReset}>
+          {hasPolicy ? S.set.resetToPolicy : S.set.resetToDefault}
+        </button>
+      )}
+    </>
+  );
+}
+
 /** A labelled row of mutually exclusive choices. */
 function ChoiceRow<T extends string>({
   label,
@@ -65,16 +103,21 @@ function ChoiceRow<T extends string>({
   options,
   onPick,
   disabled,
+  provenance,
 }: {
   label: string;
   value: T;
   options: { value: T; label: string; hint?: string }[];
   onPick: (v: T) => void;
   disabled?: boolean;
+  provenance?: JSX.Element | null;
 }): JSX.Element {
   return (
     <div className="set-row">
-      <div className="set-label">{label}</div>
+      <div className="set-label set-label-row">
+        {label}
+        {provenance}
+      </div>
       <div className="set-choices">
         {options.map((o) => (
           <button
@@ -228,6 +271,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
   const [config, setConfig] = useState<ScaleConfig | null>(null);
   const [keys, setKeys] = useState<KeyStatusMap | null>(null);
   const [policy, setPolicy] = useState<{ present: boolean; applied: boolean } | null>(null);
+  const [sources, setSources] = useState<SettingsSources>({});
   const [where, setWhere] = useState<{ repoId: string; stateDir: string } | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
@@ -241,6 +285,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
         setConfig(s.config);
         setKeys(s.keys);
         setPolicy(s.policy ?? null);
+        setSources(s.sources ?? {});
         setWhere({ repoId: s.repoId, stateDir: s.stateDir });
       },
       (e: unknown) => {
@@ -270,6 +315,45 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
    * otherwise a failed save leaves the whole UI in a language config.json
    * doesn't have, desynced until a full reload.
    */
+  const applySaved = useCallback(
+    (r: SaveResponse) => {
+      setConfig(r.config);
+      setKeys(r.keys);
+      if (r.sources) setSources(r.sources);
+      onLanguageChange(r.config.language);
+    },
+    [onLanguageChange],
+  );
+
+  /** Drop one personal override; the server answers with what now applies. */
+  const reset = useCallback(
+    (path: string) => {
+      setSaving(true);
+      setSaveErr(null);
+      void unsetSetting(path).then(
+        (r) => {
+          applySaved(r);
+          setSaving(false);
+        },
+        (e: unknown) => {
+          setSaveErr((e as Error).message);
+          setSaving(false);
+        },
+      );
+    },
+    [applySaved],
+  );
+
+  /** Provenance chip + reset for one dotted path. */
+  const prov = (path: string): JSX.Element | null => (
+    <Provenance
+      source={sources[path]?.source}
+      hasPolicy={sources[path]?.policyValue !== undefined}
+      disabled={saving}
+      onReset={() => reset(path)}
+    />
+  );
+
   const patch = useCallback(
     (p: SettingsPatch, optimistic: (c: ScaleConfig) => ScaleConfig) => {
       setConfig((cur) => (cur ? optimistic(cur) : cur));
@@ -277,9 +361,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
       setSaveErr(null);
       void saveSettings(p).then(
         (r) => {
-          setConfig(r.config);
-          setKeys(r.keys);
-          onLanguageChange(r.config.language);
+          applySaved(r);
           setSaving(false);
         },
         (e: unknown) => {
@@ -295,7 +377,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
         },
       );
     },
-    [onLanguageChange],
+    [onLanguageChange, applySaved],
   );
 
   const body = (): JSX.Element => {
@@ -399,6 +481,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
           <h3 className="set-h">{S.set.gateHeading}</h3>
           <ChoiceRow
             label={S.set.gateEnabled}
+            provenance={prov('gate.enabled')}
             value={config.gate.enabled ? 'on' : 'off'}
             disabled={saving}
             options={[
@@ -414,6 +497,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
           />
           <ChoiceRow
             label={S.set.assessment}
+            provenance={prov('gate.assessment')}
             value={config.gate.assessment}
             disabled={saving}
             options={[
@@ -429,6 +513,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
           />
           <ChoiceRow
             label={S.set.modality}
+            provenance={prov('gate.modality')}
             value={config.gate.modality}
             disabled={saving}
             options={[
@@ -444,6 +529,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
           />
           <ChoiceRow
             label={S.set.enforcement}
+            provenance={prov('gate.enforcement')}
             value={config.gate.enforcement}
             disabled={saving}
             options={[
@@ -459,6 +545,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
             }
           />
           {policy?.applied ? <p className="set-note">{S.set.policyNote}</p> : null}
+          <p className="set-note">{S.set.provenanceNote}</p>
         </section>
 
         <section className="set-section">
@@ -471,7 +558,10 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
               ] as const
             ).map(([key, label]) => (
               <label className="set-num" key={key}>
-                <span>{label}</span>
+                <span className="set-label-row">
+                  {label}
+                  {prov(`budgets.${key}`)}
+                </span>
                 <DraftInput
                   className="set-input set-input-num"
                   value={config.budgets[key]}

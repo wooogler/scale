@@ -50,6 +50,8 @@ export interface Strings {
   owedUnlock: string;
   /** panel note under the state chip for such a territory */
   owedUnlockNote: string;
+  /** Banner when the API refuses the bearer token (server restarted). */
+  authExpired: string;
 
   /* ---- shared quest / dimension vocabulary ---- */
   devStats: string;
@@ -161,6 +163,14 @@ export interface Strings {
     enfHard: string;
     enfHardHint: string;
     policyNote: string;
+    /** Provenance chips beside a setting (S4). */
+    srcDefault: string;
+    srcPolicy: string;
+    srcUser: string;
+    /** Reset button; policy variant when the team names a value. */
+    resetToPolicy: string;
+    resetToDefault: string;
+    provenanceNote: string;
     budgetHeading: string;
     perSession: string;
     cooldownMin: string;
@@ -190,6 +200,8 @@ export const STRINGS: Record<Language, Strings> = {
     owedUnlock: 'awaiting your check',
     owedUnlockNote:
       'An edit here was held back. Pass this check to unlock the territory — or use /scale-study in Claude Code.',
+    authExpired:
+      'This tab\'s key no longer matches the server — scale serve was restarted. Open the fresh URL it printed (it carries a new ?token=).',
 
     devStats: DEV_STATS_LABEL_EN,
     dim: { structure: 'Structure', concepts: 'Concepts', rationale: 'Rationale' },
@@ -289,6 +301,13 @@ export const STRINGS: Record<Language, Strings> = {
       enfHardHint: 'block, no skip',
       policyNote:
         'Team policy sets the defaults here — anything you change becomes your personal override.',
+      srcDefault: 'default',
+      srcPolicy: 'team default',
+      srcUser: 'yours',
+      resetToPolicy: '↺ team default',
+      resetToDefault: '↺ default',
+      provenanceNote:
+        'Each setting shows where its value comes from. "yours" is pinned in your own config and will not follow a later team change — ↺ lets it go.',
       budgetHeading: 'Interruption budget',
       perSession: 'per session',
       cooldownMin: 'cooldown (min)',
@@ -326,6 +345,8 @@ export const STRINGS: Record<Language, Strings> = {
     owedUnlock: '확인 대기',
     owedUnlockNote:
       '이 영토에서 편집이 보류됐습니다. 체크를 통과하면 열립니다 — Claude Code의 /scale-study로도 가능합니다.',
+    authExpired:
+      '이 탭의 키가 더 이상 서버와 맞지 않습니다 — scale serve가 다시 시작됐습니다. 터미널에 새로 찍힌 URL(새 ?token= 포함)을 여세요.',
 
     devStats: DEV_STATS_LABEL_KO,
     dim: { structure: '구조', concepts: '개념', rationale: '설계 근거' },
@@ -424,6 +445,13 @@ export const STRINGS: Record<Language, Strings> = {
       enfHardHint: '차단, 스킵 없음',
       policyNote:
         '기본값은 팀 정책이 정합니다 — 여기서 바꾸면 내 개인 override가 됩니다.',
+      srcDefault: '기본값',
+      srcPolicy: '팀 기본값',
+      srcUser: '내 설정',
+      resetToPolicy: '↺ 팀 기본값으로',
+      resetToDefault: '↺ 기본값으로',
+      provenanceNote:
+        '각 설정 옆에 값의 출처가 표시됩니다. "내 설정"은 내 config에 고정된 값이라 팀 기본값이 바뀌어도 따라가지 않습니다 — ↺로 해제할 수 있습니다.',
       budgetHeading: '방해 예산',
       perSession: '세션당',
       cooldownMin: '쿨다운 (분)',

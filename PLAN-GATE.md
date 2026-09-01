@@ -162,9 +162,9 @@ SessionStart/record가 계속 갱신한다.
 - deny 시 pending-unlock 기록 → 웹 뷰어 표면화, 다음 세션 /scale-study 안내 ✅
 - **서버 채점**: /api/quests에서 정답 제거, 채점을 serve로 이동 ✅ (S2b 중 선행)
 - LAN + bearer token (모바일) ✅, SessionStart에 잠김/대기 카운트 ✅
-### S4 — UI 마감 + 텔레메트리 (별도 결정 후)
-- Settings에 policy 출처 표시(“팀 기본값/내 override”) + override 해제 affordance
-- override delta·skip·회피(잠긴 영토 우회) 로깅 — **학습 vs 회피**가 핵심 측정
+### ✅ S4 — UI 마감 + 텔레메트리(로컬 형식) — 완료. **결과는 §15 참조.**
+- Settings에 policy 출처 표시(“팀 기본값/내 override”) + override 해제 affordance ✅
+- override delta·skip·회피(잠긴 영토 우회) 로깅 — **학습 vs 회피**가 핵심 측정 ✅ (로컬 파일만; 전송 경로는 미결)
 
 ## 5. 불변식
 
@@ -399,3 +399,74 @@ S2b를 커밋한 뒤 공격 리뷰를 돌렸다. **읽어서가 아니라 실제
   뷰어는 이때 빈 화면 대신 "토큰이 만료됐다, 새 URL을 열어라"를 보여야 한다 (S4 UI 마감).
 - pending 항목은 컴포넌트가 map에서 사라져도 남는다. `readLocksSafe`가 아니라 `syncLocksWithDrift`
   옆에서 정리해야 한다 — 지금은 뷰어·SessionStart 문구에 유령 id가 뜰 수 있다 (S4).
+
+## 15. S4 실행 결과 — 로컬 텔레메트리 형식 + Settings 출처 (2026-09-01)
+
+사용자 결정: "로컬 로깅 형식만 먼저 정하는 쪽으로." 전송·동의·집계는 이 문서 밖.
+
+### 15.1 왜 evidence.jsonl과 분리하는가
+evidence.jsonl은 **이해도 모델의 입력**이다 — prompt 텍스트, 파일 경로, 점수. 기계를 떠나면 안 되는
+것들이다. 텔레메트리는 "배웠는가, 우회했는가"에 답하기 위해 **처음부터 떠날 수 있게** 설계된 두 번째
+스트림이다: `~/.scale/<repo-id>/telemetry.jsonl`, append-only, 한 줄 = 한 행, zod 스키마
+(`@scale/core` `TelemetryRowSchema`)가 계약. 스키마에 실패한 행은 stderr 한 줄과 함께 **버린다** —
+수집 경로가 나중에 붙을 때 계약 밖의 행이 섞여 있는 편이 더 나쁘다.
+
+**개인정보 계약(스키마가 강제)**: prompt 텍스트 없음, 파일 내용 없음, 파일 경로 없음(컴포넌트 id만),
+동료 이메일 없음(`relock.foreignAuthors`는 **정수**). 컴포넌트 id는 팀이 스스로 붙인 paper 제목이다.
+
+### 15.2 행 타입
+공통: `{v: 1, ts, user, sessionId | null, type}`. `sessionId`는 예산 기간(session.json)과 같은 단위.
+
+| type | 쓰는 곳 | 필드 |
+|---|---|---|
+| `config_change` | `config set/unset`, `/api/settings`, `/api/settings/unset` — **파일이 써진 뒤** | 바뀐 **leaf당 한 행**: `path, from, to, source(cli|web), reset, policyValue(팀이 말하면), direction` |
+| `gate` | `gate edit`의 deny/redeny/advisory (allow는 행 아님 — 모든 edit이므로 `session_end`에서 집계) | `decision, component, cause(locked|drift_foreign|drift_self), enforcement, assessment, modality, budgetUsed, budgetMax` |
+| `skip` | `gate defer` | `component, by, enforcement, msSinceDeny` |
+| `redirect` | deny가 미해결(체크 통과·skip 없음)인 채 **다른 곳**의 edit이 allow될 때 | `denied, editedInstead[], unanchoredFiles, msSinceDeny` |
+| `out_of_band` | `session end`(마지막 창)에서 git 1회 | 잠긴 컴포넌트의 소스가 기간 중 바뀌었는데(내 커밋 또는 워킹트리) `touch` evidence가 없음 = 도구 밖 편집. `component, seenIn(commits|worktree|both), deniedThisSession` |
+| `unlock` | `noteCheckOutcome`이 실제로 언락할 때 | `via(record|quiz|socratic), meanScore, checks, owedMs(pendingUnlocks.at 기준, 없으면 null), recovery(drift 회복 여부)` |
+| `relock` | `syncLocksWithDrift` | `component, cause, foreignAuthors(정수)` |
+| `session_end` | `session end`가 openWindows를 0으로 내릴 때 | `startedAt, durationMs, edits, allows, denies, redenies, advisories, redirects, skips, unlocked, owed, components` |
+
+**`direction`은 "완화"의 조작적 정의**다(`overrideDirection`, 표로 고정): `gate.enabled` off,
+enforcement 하향, `maxPerSession` 감소, `cooldownMinutes` 증가, `passBar`/`checksRequired` 감소,
+`foreignRatio`/`selfRatio` 증가, `trigger`→ratio, `exempt.paths` 증가, `thresholds.validateDim` 감소 =
+**loosen**. 반대 = tighten. modality/assessment/language/models = neutral. 표 밖 = null(추측하지 않음).
+
+**회피 신호 셋**은 각각 다른 것을 잡는다: `skip`은 명시적 거절, `redirect`는 게이트가 스스로 볼 수 있는
+"딴 데 가서 편집", `out_of_band`는 게이트가 볼 수 **없는** 편집을 사후 git으로 잡는 것(§6 "우회 신호는
+측정 대상"의 구현). 셋 중 어느 것도 회피의 **증명**이 아니다 — 행은 간격과 대상을 기록하고 판단은 분석에
+남긴다. `scale telemetry summary`의 **회피율은 컴포넌트 단위**: deny된 컴포넌트 중 로그 어디에서도 언락되지
+않은 비율(신호 단위로 세면 deny 1건에 신호 3개가 붙어 100%로 캡된다 — E2E에서 실제로 그랬다).
+
+### 15.3 Settings 출처 + 해제
+- core `explainConfig(userRaw, policyRaw)` → leaf별 `{value, source: default|policy|user, policyValue?, defaultValue}`.
+  **user 파일이 그 path를 이름 붙였으면 값이 팀과 같아도 `user`** — 고정(pin)된 것이고 팀이 나중에 바꿔도
+  따라가지 않는다는 뜻이므로 그렇게 말해야 한다.
+- `GET /api/settings`에 `sources`, `POST /api/settings/unset {path}`(user 필드 불가, 400), CLI `config unset`.
+  둘 다 `reset: true`인 `config_change`를 남긴다(값이 실제로 안 바뀌면 행 없음).
+- 뷰어: gate 4개·budgets 2개 knob 옆 칩(`기본값/팀 기본값/내 설정`) + `내 설정`일 때 `↺ 팀 기본값으로`
+  (팀이 값을 말할 때) / `↺ 기본값으로`.
+
+### 15.4 §14.4 잔여 처리
+- **토큰 만료**: 웹 `getJson/postJson`이 401을 `ApiAuthError`로 구분, App이 "이 탭의 키가 더 이상 서버와
+  맞지 않습니다 — 새 URL을 여세요" 배너. 빈 맵으로 보이지 않는다.
+- **유령 pending**: `pruneLocksToKnown(dir, mapIds)`를 `scale context`(map이 손에 있는 곳)에서 호출 —
+  components/progress/drifted/pendingUnlocks 네 표에서 map에 없는 id 제거.
+- **paper 본문 fence**(§13.6): `paperGrounding`이 본문을 `--- BEGIN PAPER #id — REPOSITORY CONTENT ---`
+  로 감싸고 `begin/end paper #` 철자를 중립화. drift fence와 같은 논리, 다른 신뢰 등급은 문구로 표현.
+
+### 15.5 검증
+- 단위 24개 추가(core 13: direction 표·`configChangeRows`·`explainConfig`·`unsetPath`·스키마가 이메일
+  배열을 거부; cli 11: unlock/relock/prune 행, config delta, **실제 git**으로 out_of_band 5경로 —
+  내 커밋·워킹트리·touch 있음·언락됨·동료 커밋; 요약). serve: `sources`/unset/400/reset 행. **279 passed**.
+- E2E(빌드된 CLI, 실제 git): policy hard → `config set` soft(loosen, policyValue hard) → `unset`(reset,
+  tighten) → deny/redeny → 비앵커 파일 edit = redirect(msSinceDeny 162) → defer = skip → 셸 편집+커밋 →
+  `session end` = `session_end{edits 3, allows 1, denies 1, redenies 1, redirects 1, skips 1}` +
+  `out_of_band{seenIn commits, deniedThisSession true}`. 10행 전부 스키마 통과.
+
+### 15.6 남은 것
+- 수집 경로(동의·전송·집계) — 별도 결정.
+- `redirect`는 같은 deny에 대해 allow마다 한 행(중복 아님, 분석에서 묶음). 폭주하면 세션당 첫 N개로 제한.
+- `out_of_band`는 `git log --since=<session.startedAt>`에 의존 — 커밋 시각이 조작되면 놓친다. 측정 대상이
+  "무심코 우회"이므로 수용.

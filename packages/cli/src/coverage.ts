@@ -25,6 +25,8 @@ import {
   loadScaleDir,
   computeLayout,
   componentSourcesIndex,
+  buildFileComponentIndex,
+  type FileComponentIndex,
   foldEvidence,
   type ComponentChurn,
   recomputeDrift,
@@ -425,3 +427,19 @@ export function coverageCounts(coverage: UserCoverage, map: MapJson): CoverageCo
   }
   return { ...counts, progress: unificationProgress(map.nodes, coverage) };
 }
+
+/**
+ * Load the file→component index for `cwd`: prefer the persisted
+ * `.scale/index.json`, else build it in-memory from the papers' sources. Both
+ * feed `componentsForFile` (exact match + nearest-dir fallback).
+ */
+export function loadFileComponentIndex(cwd: string, loaded: LoadedScale): FileComponentIndex {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(cwd, '.scale', 'index.json'), 'utf8'),
+    ) as FileComponentIndex;
+  } catch {
+    return buildFileComponentIndex(componentSourcesIndex(loaded));
+  }
+}
+

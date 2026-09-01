@@ -13,6 +13,7 @@ import {
   loadLocks,
   loadSettings,
   bootstrapToken,
+  apiAuthFailed,
   sampleDataActive,
   type LocksResponse,
 } from './data.js';
@@ -58,6 +59,7 @@ export function App(): JSX.Element {
   // other settings on mount; a pick in the Settings modal applies here
   // optimistically so the whole tree re-renders before the server round-trip.
   const [lang, setLang] = useState<Language>('en');
+  const [authExpired, setAuthExpired] = useState(false);
   // App renders the Provider itself, so it reads the table directly — hooks
   // below the Provider (children) use useStrings().
   const S = STRINGS[lang];
@@ -78,14 +80,20 @@ export function App(): JSX.Element {
     // Off-loopback `scale serve` hands the API token over in the URL exactly
     // once; stash it before the first fetch or every call below 401s.
     bootstrapToken();
-    void Promise.all([loadMap(), loadCoverage(), loadQuests(), loadLocks()]).then(([m, c, q, l]) => {
-      setUsingSample(sampleDataActive());
-      if (cancelled) return;
-      setMap(m);
-      setCoverage(c);
-      setQuests(q);
-      setLocks(l);
-    });
+    void Promise.all([loadMap(), loadCoverage(), loadQuests(), loadLocks()])
+      .then(([m, c, q, l]) => {
+        setUsingSample(sampleDataActive());
+        if (cancelled) return;
+        setMap(m);
+        setCoverage(c);
+        setQuests(q);
+        setLocks(l);
+      })
+      .catch(() => {
+        // A 401 means the token this tab holds no longer opens the server. Say
+        // so instead of rendering nothing (or, in dev, someone else's repo).
+        if (!cancelled) setAuthExpired(apiAuthFailed());
+      });
     // Language rides along with the other settings. loadSettings has no sample
     // fallback (unlike map/coverage), so swallow the failure — offline vite dev
     // simply stays on the 'en' default.
@@ -164,6 +172,11 @@ export function App(): JSX.Element {
   return (
     <LangContext.Provider value={lang}>
       <div className="app">
+        {authExpired ? (
+          <div className="auth-banner" role="alert">
+            {S.authExpired}
+          </div>
+        ) : null}
         {usingSample ? (
           <div className="sample-banner" role="status">
             <strong>Demo data.</strong> The live API is unreachable, so this map is

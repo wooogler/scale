@@ -57,6 +57,7 @@ import {
 } from './quest.js';
 import { loadDependsOnEdges, DEPS_MIN_COUNT } from './deps.js';
 import {
+  loadFileComponentIndex,
   recomputeCoverageFromDisk,
   myIdentities,
   coverageCounts,
@@ -64,6 +65,7 @@ import {
 } from './coverage.js';
 
 import {
+  pruneLocksToKnown,
   stateDir,
   resolveRepoId,
   ensureStateDir,
@@ -93,6 +95,14 @@ import {
   withSessionLock,
   isSessionAdoptable,
 } from './state.js';
+import {
+  appendTelemetry,
+  readTelemetrySafe,
+  recordConfigDelta,
+  outOfBandEdits,
+  summarizeTelemetry,
+} from './telemetry.js';
+import { unsetPath } from '@scale/core';
 import {
   readHookPayload,
   promptTextOf,
@@ -272,21 +282,6 @@ function matchComponentsFromText(loaded: LoadedScale, text: string): string[] {
     }
   }
   return ids;
-}
-
-/**
- * Load the file→component index for `cwd`: prefer the persisted
- * `.scale/index.json`, else build it in-memory from the papers' sources. Both
- * feed `componentsForFile` (exact match + nearest-dir fallback).
- */
-function loadFileComponentIndex(cwd: string, loaded: LoadedScale): FileComponentIndex {
-  try {
-    return JSON.parse(
-      fs.readFileSync(path.join(cwd, '.scale', 'index.json'), 'utf8'),
-    ) as FileComponentIndex;
-  } catch {
-    return buildFileComponentIndex(componentSourcesIndex(loaded));
-  }
 }
 
 /** Round a coverage progress/dim value to a compact 0.x string. */
@@ -486,6 +481,12 @@ program
       };
     }
     syncLocksWithDrift(dir, res.coverage.components, detail);
+    // The map is at hand here, so this is where a deleted/renamed paper stops
+    // haunting the owed-check line and the viewer header (PLAN-GATE §14.4).
+    pruneLocksToKnown(
+      dir,
+      res.map.nodes.map((n) => n.id),
+    );
 
     // Per-user interaction language (config is optional pre-`init` → 'en').
     console.log(contextSummary(res, contextConfig, dir));
@@ -513,17 +514,45 @@ session
     // the hook is a clean no-op.
     if (!readSessionSafe(dir)) return;
 
-    const remaining = withSessionLock(dir, () => {
+    const closed = withSessionLock(dir, () => {
       const existing = readSessionSafe(dir);
       if (!existing) return null;
       const openWindows = Math.max(0, existing.openWindows - 1);
       writeSession(dir, { ...existing, openWindows });
-      return openWindows;
+      return { remaining: openWindows, session: existing };
     });
     // Lock contention here is harmless: the idle backstop still ends the period,
     // and under-counting a close only means the budget persists a little longer,
     // which errs toward fewer interruptions.
-    if (remaining === null) return;
+    if (closed === null) return;
+    const remaining = closed.remaining;
+    if (remaining === 0) {
+      // The period is over: write its tallies and look for edits that went
+      // around the tools (PLAN-GATE §15). One git read, off the edit path.
+      const config = loadEffectiveConfig(cwd, dir).config;
+      const now = nowIso();
+      const locks = readLocksSafe(dir);
+      const map = readMapJsonSafe(cwd);
+      const s = closed.session;
+      appendTelemetry(dir, {
+        v: 1,
+        type: 'session_end',
+        ts: now,
+        user: config.user,
+        sessionId: s.sessionId,
+        startedAt: s.startedAt,
+        durationMs: s.startedAt ? Math.max(0, Date.parse(now) - Date.parse(s.startedAt)) : 0,
+        ...s.counters,
+        unlocked: Object.keys(locks.components).length,
+        owed: Object.keys(locks.pendingUnlocks).length,
+        components: map?.nodes.length ?? 0,
+      });
+      try {
+        for (const row of outOfBandEdits(cwd, dir, s, now)) appendTelemetry(dir, { ...row, user: config.user });
+      } catch {
+        /* git unavailable — the tallies still landed */
+      }
+    }
     console.log(
       remaining === 0
         ? 'scale: budget period ended (last window closed).'
@@ -1000,8 +1029,16 @@ gate
     }
     const index = loadFileComponentIndex(cwd, loadScaleDir(cwd));
     const touched = new Set<string>();
-    for (const f of kept) for (const id of index[f] ?? []) touched.add(id);
+    let unanchored = 0;
+    for (const f of kept) {
+      const ids = index[f] ?? [];
+      if (ids.length === 0) unanchored++;
+      for (const id of ids) touched.add(id);
+    }
     if (touched.size === 0) {
+      // Nothing to gate — but an edit that lands ONLY on unanchored files while
+      // a deny is outstanding is still a redirect worth a row.
+      noteUnanchoredRedirect(dir, config, unanchored);
       emit(true, null, null);
       return;
     }
@@ -1061,6 +1098,11 @@ gate
         importance,
       });
 
+      const counters = { ...session.counters, edits: session.counters.edits + 1 };
+      const driftCause = locks.drifted[decision.component ?? '']?.cause;
+      const cause: 'locked' | 'drift_foreign' | 'drift_self' =
+        driftCause === 'foreign' ? 'drift_foreign' : driftCause === 'self' ? 'drift_self' : 'locked';
+
       if (decision.action === 'deny' && decision.component) {
         if (decision.spendBudget) {
           // A fresh deny: spend a budget slot INSIDE the lock.
@@ -1068,36 +1110,76 @@ gate
             ...session,
             interventionsThisSession: session.interventionsThisSession + 1,
             lastInterventionAt: now,
+            lastDenyAt: now,
             pendingComponent: decision.component,
+            counters: { ...counters, denies: counters.denies + 1 },
           });
           return {
             kind: 'deny' as const,
             component: decision.component,
             reason: decision.reason ?? null,
             now,
+            cause,
+            budgetUsed: session.interventionsThisSession + 1,
+            sessionId: session.sessionId,
           };
         }
         // A re-deny of the still-pending component: no budget movement, and no
         // second `requested` evidence row — the intervention is already open.
+        writeSession(dir, { ...session, counters: { ...counters, redenies: counters.redenies + 1 } });
         return {
           kind: 'redeny' as const,
           component: decision.component,
           reason: decision.reason ?? null,
           now,
+          cause,
+          budgetUsed: session.interventionsThisSession,
+          sessionId: session.sessionId,
         };
       }
 
       if (decision.advisory && decision.component) {
         // Advisory: no budget spend, no block — the evidence row written
         // outside the lock enters recentlyAddressed and rate-limits repeats.
-        return { kind: 'advisory' as const, component: decision.component, now };
+        writeSession(dir, { ...session, counters: { ...counters, advisories: counters.advisories + 1 } });
+        return {
+          kind: 'advisory' as const,
+          component: decision.component,
+          now,
+          cause,
+          budgetUsed: session.interventionsThisSession,
+          sessionId: session.sessionId,
+        };
       }
 
       // Allow. Clear the pending marker if this allow resolved it.
-      if (session.pendingComponent && recentlyAddressed.includes(session.pendingComponent)) {
-        writeSession(dir, { ...session, pendingComponent: null });
-      }
-      return null;
+      const resolved =
+        !!session.pendingComponent && recentlyAddressed.includes(session.pendingComponent);
+      // REDIRECT (PLAN-GATE §15): a deny is still outstanding on some other
+      // component, no check has cleared it, and this edit was allowed somewhere
+      // else. Not proof of avoidance — the row records the gap and the target.
+      const redirect =
+        !resolved &&
+        !!session.pendingComponent &&
+        !touched.has(session.pendingComponent) &&
+        !!session.lastDenyAt
+          ? {
+              denied: session.pendingComponent,
+              editedInstead: [...touched].filter((id) => id !== session.pendingComponent),
+              msSinceDeny: Math.max(0, Date.parse(now) - Date.parse(session.lastDenyAt)),
+              sessionId: session.sessionId,
+            }
+          : null;
+      writeSession(dir, {
+        ...session,
+        pendingComponent: resolved ? null : session.pendingComponent,
+        counters: {
+          ...counters,
+          allows: counters.allows + 1,
+          redirects: counters.redirects + (redirect ? 1 : 0),
+        },
+      });
+      return redirect ? { kind: 'redirect' as const, ...redirect, now } : null;
     });
 
     if (!decided) {
@@ -1106,6 +1188,38 @@ gate
       emit(true, null, null);
       return;
     }
+
+    if (decided.kind === 'redirect') {
+      appendTelemetry(dir, {
+        v: 1,
+        type: 'redirect',
+        ts: decided.now,
+        user: config.user,
+        sessionId: decided.sessionId,
+        denied: decided.denied,
+        editedInstead: decided.editedInstead,
+        unanchoredFiles: unanchored,
+        msSinceDeny: decided.msSinceDeny,
+      });
+      emit(true, null, null);
+      return;
+    }
+
+    appendTelemetry(dir, {
+      v: 1,
+      type: 'gate',
+      ts: decided.now,
+      user: config.user,
+      sessionId: decided.sessionId,
+      decision: decided.kind,
+      component: decided.component,
+      cause: decided.cause,
+      enforcement: config.gate.enforcement,
+      assessment: config.gate.assessment,
+      modality: config.gate.modality,
+      budgetUsed: decided.budgetUsed,
+      budgetMax: config.budgets.maxPerSession,
+    });
 
     if (decided.kind === 'redeny') {
       emit(false, decided.component, decided.reason);
@@ -1159,6 +1273,48 @@ gate
     emit(false, decided.component, decided.reason);
   });
 
+/**
+ * An allowed edit that touched only files no paper anchors, while a deny was
+ * outstanding: recorded as a redirect with an empty `editedInstead`. Also
+ * counts the edit/allow in the session tallies.
+ */
+function noteUnanchoredRedirect(dir: string, config: ScaleConfig, unanchored: number): void {
+  const now = nowIso();
+  const out = withSessionLock(dir, () => {
+    const session = readSessionSafe(dir);
+    if (!session) return null;
+    const redirect = !!session.pendingComponent && !!session.lastDenyAt;
+    writeSession(dir, {
+      ...session,
+      counters: {
+        ...session.counters,
+        edits: session.counters.edits + 1,
+        allows: session.counters.allows + 1,
+        redirects: session.counters.redirects + (redirect ? 1 : 0),
+      },
+    });
+    return redirect
+      ? {
+          denied: session.pendingComponent!,
+          msSinceDeny: Math.max(0, Date.parse(now) - Date.parse(session.lastDenyAt!)),
+          sessionId: session.sessionId,
+        }
+      : null;
+  });
+  if (!out) return;
+  appendTelemetry(dir, {
+    v: 1,
+    type: 'redirect',
+    ts: now,
+    user: config.user,
+    sessionId: out.sessionId,
+    denied: out.denied,
+    editedInstead: [],
+    unanchoredFiles: unanchored,
+    msSinceDeny: out.msSinceDeny,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // gate defer  (REAL) — the user's "skip" escape hatch (defer = drop, PLAN §6.1)
 // ---------------------------------------------------------------------------
@@ -1206,7 +1362,7 @@ gate
       by: opts.by,
     });
 
-    withSessionLock(dir, () => {
+    const skipped = withSessionLock(dir, () => {
       const stored = readSessionSafe(dir);
       const session: SessionRecord =
         stored && isSessionAdoptable(stored, config.budgets.sessionIdleResetMinutes * 60_000)
@@ -1219,7 +1375,25 @@ gate
           : [...session.sessionSkips, componentId],
         pendingComponent:
           session.pendingComponent === componentId ? null : session.pendingComponent,
+        counters: { ...session.counters, skips: session.counters.skips + 1 },
       });
+      return {
+        sessionId: session.sessionId,
+        msSinceDeny: session.lastDenyAt
+          ? Math.max(0, Date.parse(now) - Date.parse(session.lastDenyAt))
+          : null,
+      };
+    });
+    appendTelemetry(dir, {
+      v: 1,
+      type: 'skip',
+      ts: now,
+      user: config.user,
+      sessionId: skipped?.sessionId ?? null,
+      component: componentId,
+      by: opts.by,
+      enforcement: config.gate.enforcement,
+      msSinceDeny: skipped?.msSinceDeny ?? null,
     });
     // Skipping is a decision about this territory; it stops being an open
     // to-do. The next deny re-adds it if the user comes back to it.
@@ -1979,6 +2153,7 @@ config
     // effective config back would freeze every default as an explicit override.
     // Legacy keys (condition.*, inflow.*) are migrated on the way through, so a
     // `set condition.timing inflow` still lands as the gate.* it means.
+    const before = loadEffectiveConfig(cwd, dir).config;
     const raw = readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' };
     const next = migrateLegacyConfig(setPath(raw, key, value)) as Record<string, unknown>;
     const policy = readPolicyRaw(cwd);
@@ -1986,12 +2161,105 @@ config
       resolveConfig(next, policy.parseError ? undefined : policy.raw); // validate effective
       writeUserConfigRaw(dir, next);
       const effective = loadEffectiveConfig(cwd, dir).config;
+      recordConfigDelta(dir, cwd, before, effective, 'cli', false);
       console.log(`scale: set ${key} → ${JSON.stringify(getPath(next, key) ?? getPath(effective, key))}`);
     } catch (err) {
       console.error(`scale: invalid config after set — ${(err as Error).message.split('\n')[0]}`);
       process.exitCode = 1;
     }
   });
+
+config
+  .command('unset')
+  .description(
+    'Remove a personal override so the team default (or schema default) applies ' +
+      'again. Logged as a reset in telemetry.',
+  )
+  .argument('<key>', 'dotted key path (e.g. gate.enforcement)')
+  .action((key: string) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    if (!configExists(dir)) {
+      console.error('scale: no config found — run `scale init` first.');
+      process.exitCode = 1;
+      return;
+    }
+    if (key === 'user') {
+      console.error('scale: `user` is your identity, not an override — set it instead.');
+      process.exitCode = 1;
+      return;
+    }
+    const before = loadEffectiveConfig(cwd, dir).config;
+    const raw = migrateLegacyConfig(
+      readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' },
+    ) as Record<string, unknown>;
+    if (getPath(raw, key) === undefined) {
+      console.log(`scale: ${key} is not overridden in your config — nothing to unset.`);
+      return;
+    }
+    const next = unsetPath(raw, key);
+    const policy = readPolicyRaw(cwd);
+    try {
+      resolveConfig(next, policy.parseError ? undefined : policy.raw);
+      writeUserConfigRaw(dir, next);
+      const effective = loadEffectiveConfig(cwd, dir).config;
+      recordConfigDelta(dir, cwd, before, effective, 'cli', true);
+      console.log(`scale: unset ${key} → now ${JSON.stringify(getPath(effective, key))} (team/schema default)`);
+    } catch (err) {
+      console.error(`scale: invalid config after unset — ${(err as Error).message.split('\n')[0]}`);
+      process.exitCode = 1;
+    }
+  });
+
+// ---------------------------------------------------------------------------
+// telemetry  (REAL) — the shippable study stream, local only for now
+// ---------------------------------------------------------------------------
+const telemetry = program
+  .command('telemetry')
+  .description(
+    'Study telemetry kept in ~/.scale/<repo-id>/telemetry.jsonl: config overrides, ' +
+      'gate denies, skips, redirects, out-of-band edits, unlocks, re-locks, session ' +
+      'tallies. Nothing leaves the machine; the collection path is a separate decision.',
+  );
+
+telemetry
+  .command('summary')
+  .description('Counts and the learning-vs-avoidance ratios over the whole log')
+  .option('--json', 'machine-readable', false)
+  .action((opts: { json?: boolean }) => {
+    const dir = stateDir(process.cwd());
+    const rows = readTelemetrySafe(dir);
+    const s = summarizeTelemetry(rows);
+    if (opts.json) {
+      console.log(JSON.stringify(s, null, 2));
+      return;
+    }
+    if (rows.length === 0) {
+      console.log(`scale: no telemetry yet (${paths.telemetry(dir)}).`);
+      return;
+    }
+    const pct = (x: number | null): string => (x === null ? '—' : `${Math.round(x * 100)}%`);
+    console.log(`telemetry: ${s.rows} rows, ${s.sessions} closed session(s) — ${paths.telemetry(dir)}`);
+    console.log(`  gate:      ${s.denies} deny, ${s.redenies} re-deny`);
+    console.log(`  learning:  ${s.unlocks} unlock (${s.recoveries} recovered after drift), ${s.relocks} re-lock`);
+    console.log(
+      `  avoidance: ${s.skips.user} skip (user) + ${s.skips.agent} (agent), ${s.redirects} redirect, ` +
+        `${s.outOfBand} out-of-band; ${pct(s.avoidanceRate)} of denied components never unlocked ` +
+        `(${s.deniedComponents - s.unlockedAfterDeny}/${s.deniedComponents})`,
+    );
+    console.log(
+      `  overrides: ${s.overrides.loosen} loosen, ${s.overrides.tighten} tighten, ` +
+        `${s.overrides.neutral} neutral, ${s.overrides.unknown} unclassified, ${s.overrides.resets} reset`,
+    );
+    if (s.medianOwedMs !== null) {
+      console.log(`  owed checks cleared after a median of ${Math.round(s.medianOwedMs / 60000)} min`);
+    }
+  });
+
+telemetry
+  .command('path')
+  .description('Print the telemetry file path')
+  .action(() => console.log(paths.telemetry(stateDir(process.cwd()))));
 
 // ---------------------------------------------------------------------------
 // reset  (REAL) — clear the state dir, with a confirmation guard
