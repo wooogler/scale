@@ -5,9 +5,9 @@
  * Hooks only APPEND evidence on the hot path; coverage is (re)computed here at
  * natural points — `scale context` (SessionStart), `scale coverage recompute`,
  * `scale record`, and `scale serve` (on request when evidence is newer). This
- * module owns the impure edges (git, fs, clock); the actual fold is the PURE
- * `materializeCoverage` from `@scale/core`, so the same evidence + inputs always
- * produce a byte-identical `UserCoverage`.
+ * module owns the impure edges (git, fs, clock); the fold and the drift pass are
+ * the PURE `foldEvidence` / `recomputeDrift` from `@scale/core`, so the same
+ * evidence + inputs always produce a byte-identical `UserCoverage`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,7 +25,9 @@ import {
   loadScaleDir,
   computeLayout,
   componentSourcesIndex,
-  materializeCoverage,
+  foldEvidence,
+  recomputeDrift,
+  finalizeCoverage,
   unificationProgress,
 } from '@scale/core';
 
@@ -34,7 +36,6 @@ import {
   paths,
   ensureStateDir,
   readConfigSafe,
-  readCoverageSafe,
 } from './state.js';
 
 /** Best-effort short HEAD sha of the repo at `cwd`; '' when not a git repo. */
@@ -156,11 +157,10 @@ export interface RecomputeResult {
  *   1. load the .scale/ tree, the frozen map, config, and evidence,
  *   2. compute per-component `sizes` (line count of sources at HEAD) — always,
  *      since it is the loyalty denominator,
- *   3. compute per-component `churn` from the *previously persisted*
- *      coverage.json's `lastValidatedSha` (git diff <sha>..HEAD over its
- *      sources). First run (no prior coverage) → churn {} → nothing goes stale,
- *   4. fold via the pure `materializeCoverage`,
- *   5. write ~/.scale/<repo-id>/coverage.json (schema-validated by core).
+ *   3. FOLD the evidence (pure) to get this run's `lastValidatedSha` anchors,
+ *   4. compute per-component `churn` from THOSE anchors (git diff <sha>..HEAD
+ *      over its sources) — never validated → no churn entry → cannot drift,
+ *   5. apply drift, stamp, and write ~/.scale/<repo-id>/coverage.json.
  */
 export function recomputeCoverageFromDisk(cwd: string = process.cwd()): RecomputeResult {
   const dir = stateDir(cwd);
@@ -181,29 +181,28 @@ export function recomputeCoverageFromDisk(cwd: string = process.cwd()): Recomput
     sizes[id] = total;
   }
 
-  // churn: measured from the on-disk coverage.json's lastValidatedSha values, so
-  // the diff starts where the component was last confirmed (see handoff note on
-  // the two-phase churn dependency). Only components already stamped with a sha
-  // can drift; the rest need no churn entry.
-  const prev = readCoverageSafe(dir);
+  // TWO-PHASE, and the order is load-bearing. Fold first (pure, no I/O), then
+  // measure churn from the anchors THAT FOLD produced, then apply drift.
+  //
+  // Measuring from the previously-persisted coverage.json instead made recovery
+  // take two recomputes: a component re-validated after a rebellion still had
+  // its churn measured from the PRE-rebellion sha, so drift immediately flipped
+  // it back to `stale` in the same command that recorded the passing check.
+  // Harmless while staleness was only a map colour; with the edit gate re-locking
+  // on rebellion it would lock the junior out of territory they had just earned.
+  const folded = foldEvidence(evidence, { map, config, user: config.user, headSha: head });
+
   const churn: Record<string, number> = {};
-  if (prev) {
-    for (const [id, comp] of Object.entries(prev.components)) {
-      if (!comp.lastValidatedSha) continue;
-      const c = gitChurn(cwd, comp.lastValidatedSha, sourcesById.get(id) ?? []);
-      if (c > 0) churn[id] = c;
-    }
+  for (const [id, comp] of Object.entries(folded.components)) {
+    if (!comp.lastValidatedSha) continue; // never validated → cannot drift
+    const c = gitChurn(cwd, comp.lastValidatedSha, sourcesById.get(id) ?? []);
+    if (c > 0) churn[id] = c;
   }
 
-  const coverage = materializeCoverage(evidence, {
-    map,
-    config,
-    user: config.user,
-    headSha: head,
-    churn,
-    sizes,
-    now: new Date().toISOString(),
-  });
+  const coverage = finalizeCoverage(
+    recomputeDrift(folded, { churn, sizes, config }),
+    new Date().toISOString(),
+  );
 
   ensureStateDir(dir);
   fs.writeFileSync(paths.coverage(dir), JSON.stringify(coverage, null, 2) + '\n');

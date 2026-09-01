@@ -238,28 +238,30 @@ export interface MaterializeOpts {
 }
 
 /**
- * Deterministically fold raw evidence into a materialized UserCoverage (§5.1):
+ * PHASE 1 of materialization: seed every map node and fold the evidence, with
+ * NO drift applied. The result's `lastValidatedSha` values are the anchors the
+ * caller must measure churn from.
  *
- *   1. seed `emptyComponentCoverage()` for every map node id,
- *   2. sort evidence by `ts` ascending and fold through {@link applyEvidence}
- *      (threading `headSha` for lastValidatedSha stamping + a side
- *      activeValidations accumulator),
- *   3. apply {@link recomputeDrift} with the injected churn/sizes,
- *   4. stamp `updatedAt = opts.now ?? ''` (never reads the clock here),
- *   5. validate against UserCoverageSchema before returning.
+ * Split out of {@link materializeCoverage} because the two phases have a real
+ * data dependency the single-call form could not express: churn has to be
+ * measured from the anchor this fold PRODUCES, not from the one the previous
+ * run persisted. Measuring from the stale anchor made recovery take two
+ * recomputes — a component that had just been re-validated was still compared
+ * against the pre-rebellion sha, so it flipped straight back to `stale` (and,
+ * once the edit gate re-locks on rebellion, straight back to LOCKED) in the very
+ * same command that recorded the passing check.
  *
- * Same evidence + opts → identical UserCoverage.
+ * Deterministic: evidence is sorted by `ts` ascending, ties keeping input order.
  */
-export function materializeCoverage(
+export function foldEvidence(
   evidence: EvidenceEntry[],
-  opts: MaterializeOpts,
+  opts: Pick<MaterializeOpts, 'map' | 'config' | 'user' | 'headSha'>,
 ): UserCoverage {
   const components: Record<string, ComponentCoverage> = {};
   for (const node of opts.map.nodes) components[node.id] = emptyComponentCoverage();
 
   let cov: UserCoverage = { user: opts.user, updatedAt: '', components };
 
-  // Stable ascending sort by ISO-8601 timestamp; ties keep input order.
   const ordered = [...evidence].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
 
   const activeValidations: Record<string, number> = {};
@@ -271,15 +273,37 @@ export function materializeCoverage(
       lastActiveSha,
     });
   }
+  return cov;
+}
 
-  cov = recomputeDrift(cov, {
+/**
+ * Deterministically fold raw evidence into a materialized UserCoverage (§5.1):
+ *
+ *   1. {@link foldEvidence} — seed + fold,
+ *   2. apply {@link recomputeDrift} with the injected churn/sizes,
+ *   3. stamp `updatedAt = opts.now ?? ''` (never reads the clock here),
+ *   4. validate against UserCoverageSchema before returning.
+ *
+ * Same evidence + opts → identical UserCoverage. Callers that need churn
+ * measured from THIS run's anchors (the CLI does) should instead run the two
+ * phases themselves: `foldEvidence` → read anchors → measure → `recomputeDrift`
+ * → {@link finalizeCoverage}.
+ */
+export function materializeCoverage(
+  evidence: EvidenceEntry[],
+  opts: MaterializeOpts,
+): UserCoverage {
+  const cov = recomputeDrift(foldEvidence(evidence, opts), {
     churn: opts.churn ?? {},
     sizes: opts.sizes ?? {},
     config: opts.config,
   });
+  return finalizeCoverage(cov, opts.now);
+}
 
-  cov = { ...cov, updatedAt: opts.now ?? '' };
-  return UserCoverageSchema.parse(cov);
+/** Stamp `updatedAt` and validate — the tail both materialization paths share. */
+export function finalizeCoverage(coverage: UserCoverage, now?: string): UserCoverage {
+  return UserCoverageSchema.parse({ ...coverage, updatedAt: now ?? '' });
 }
 
 /** Raise a dim toward `cap` by `credit`, never lowering an already-higher value. */
