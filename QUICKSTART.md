@@ -250,14 +250,25 @@ scale serve --port 4318   # reads .scale/ from cwd + ~/.scale/<repo-id>/ state
 
 Serves the React map app (build it first with `npm run build -w @scale/web`) plus
 a JSON API (`/api/map`, `/api/coverage`, `/api/paper/:id`, `/api/quests`,
-`/api/settings`). Provinces are tinted regions; components are nodes sized by
-importance and colored by state (fog / explored / validated / stale). Click a node
-for its rendered paper, dev stats, and any quests. The quest runner completes
-quizzes fully locally; the socratic runner proxies the intervention model
-server-side (needs an API key — see below).
+`/api/locks`, `/api/settings`). Provinces are tinted regions; components are nodes
+sized by importance and colored by state (fog / explored / validated / 함락·재건).
+A 🔒 badge marks a territory that still **owes a check** from a denied edit; the
+header counts them. Click a node for its rendered paper, dev stats, and any quests.
+The quiz runner sends your picks to the server, which grades them and returns the
+reveal (the answer key never reaches the browser); the socratic runner proxies the
+intervention model server-side (needs an API key — see below). Passing either
+unlocks the component for editing.
 
-The server binds **loopback only**. It has no authentication and accepts API keys,
-so opening it to the network is an explicit `--host 0.0.0.0` opt-in.
+The server binds **loopback only** by default. To open the map on your phone:
+
+```bash
+scale serve --host 0.0.0.0
+```
+
+It prints a `http://<lan-ip>:4318/?token=…` URL — open that. Off loopback every
+API call needs the token (the page keeps it for the tab); the static bundle does
+not. Whoever has the URL can read your coverage and change your settings, so share
+it like a password. `--token <value>` pins your own.
 
 ### Settings (⚙ in the header)
 
@@ -326,12 +337,14 @@ like an in-chat check.
   deterministic fallback); web quest runner (quiz offline; socratic needs an API
   key). Both completion paths unlock territory.
 - Web map viewer + JSON API; coverage materialized from evidence.
+- Async completion: pending unlocks (SessionStart count, 🔒 in the viewer,
+  `/api/locks`), server-side quiz grading, LAN bearer token for a phone.
 
 **Not yet** (staged in PLAN-GATE §4)
 
-- **Async surfaces (S3)** — pending unlocks in the viewer, server-side quiz
-  grading (the answer key currently reaches the browser — it must move before
-  checks guard anything), LAN token for mobile.
+- **Settings provenance + telemetry (S4)** — the Settings modal does not yet say
+  "team default" vs "my override"; override deltas, skips and avoidance are not
+  logged.
 - **Mode A live co-construction** — building the memory alongside the junior in the
   flow (the hook infrastructure exists; the mode does not).
 - **`scale map drift`** — still a stub reporting SHAs only. Per-component staleness

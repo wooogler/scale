@@ -122,3 +122,33 @@ describe('deterministic socratic items (offline fallback)', () => {
     expect(parsed.prompt.length).toBeGreaterThan(10);
   });
 });
+
+describe('pickComponents — pending unlocks come first', () => {
+  const cfg = ScaleConfigSchema.parse({ user: 'u' });
+  const map: MapJson = {
+    version: 1,
+    builtFromSha: 'x',
+    provinces: [{ id: 'p', name: 'P' }],
+    nodes: ['a', 'b', 'c', 'd'].map((id, i) => ({ id, province: 'p', x: 0, y: 0, importance: 1 - i * 0.1 })),
+    edges: [],
+  };
+  const coverage: UserCoverage = { user: 'u', updatedAt: '', components: {} };
+
+  it('puts the denied territory ahead of anything touched or ranked', () => {
+    // A denied edit writes no `touch`, so `c` would otherwise be invisible here
+    // while `a` and `b` (touched, fog) took the slots.
+    const picked = pickComponents(coverage, map, new Set(['a', 'b']), cfg, 3, ['c']);
+    expect(picked[0]).toBe('c');
+    expect(picked).toHaveLength(3);
+    expect(new Set(picked).size).toBe(3); // no duplicates
+  });
+
+  it('caps at k and ignores ids the map does not know', () => {
+    const picked = pickComponents(coverage, map, new Set(), cfg, 2, ['ghost', 'd', 'c', 'b']);
+    expect(picked).toEqual(['d', 'c']);
+  });
+
+  it('with nothing pending, ranking is unchanged', () => {
+    expect(pickComponents(coverage, map, new Set(['a']), cfg, 1)).toEqual(['a']);
+  });
+});

@@ -6,7 +6,16 @@ import { QuestRunner } from './QuestRunner.js';
 import { Settings } from './Settings.js';
 import { SKIN } from './skin.js';
 import { LangContext, STRINGS } from './i18n.js';
-import { loadMap, loadCoverage, loadQuests, loadSettings, sampleDataActive } from './data.js';
+import {
+  loadMap,
+  loadCoverage,
+  loadQuests,
+  loadLocks,
+  loadSettings,
+  bootstrapToken,
+  sampleDataActive,
+  type LocksResponse,
+} from './data.js';
 import type {
   CoverageState,
   Language,
@@ -34,6 +43,8 @@ export function App(): JSX.Element {
   const [map, setMap] = useState<MapJson | null>(null);
   const [coverage, setCoverage] = useState<UserCoverage | null>(null);
   const [quests, setQuests] = useState<Quest[]>([]);
+  // The lock picture over coverage — see /api/locks. Empty until the server answers.
+  const [locks, setLocks] = useState<LocksResponse | null>(null);
   const [activeQuest, setActiveQuest] = useState<Quest | null>(null);
   // Component whose coverage just moved — drives a one-shot map "conquest" pulse.
   const [justUpdatedId, setJustUpdatedId] = useState<string | null>(null);
@@ -64,12 +75,16 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([loadMap(), loadCoverage(), loadQuests()]).then(([m, c, q]) => {
+    // Off-loopback `scale serve` hands the API token over in the URL exactly
+    // once; stash it before the first fetch or every call below 401s.
+    bootstrapToken();
+    void Promise.all([loadMap(), loadCoverage(), loadQuests(), loadLocks()]).then(([m, c, q, l]) => {
       setUsingSample(sampleDataActive());
       if (cancelled) return;
       setMap(m);
       setCoverage(c);
       setQuests(q);
+      setLocks(l);
     });
     // Language rides along with the other settings. loadSettings has no sample
     // fallback (unlike map/coverage), so swallow the failure — offline vite dev
@@ -108,13 +123,22 @@ export function App(): JSX.Element {
   // quests (§7.3 "re-fetch /api/coverage so the header + node states update"),
   // then fire the node's conquest animation.
   const onQuestCompleted = useCallback((componentId: string) => {
-    void Promise.all([loadCoverage(), loadQuests()]).then(([c, q]) => {
+    void Promise.all([loadCoverage(), loadQuests(), loadLocks()]).then(([c, q, l]) => {
       setCoverage(c);
       setQuests(q);
+      setLocks(l); // a passed check clears its pending-unlock badge
       setJustUpdatedId(componentId);
       window.setTimeout(() => setJustUpdatedId((cur) => (cur === componentId ? null : cur)), 1600);
     });
   }, []);
+
+  // Territories a denied edit still owes a check on (async assessment). These
+  // are the async user's to-do list, so they get a badge on the map and a chip
+  // in the header — otherwise the promise "unlock it later, here" had no here.
+  const owedUnlocks = useMemo(
+    () => new Set(Object.keys(locks?.pendingUnlocks ?? {})),
+    [locks],
+  );
 
   // §5.1 / §2: weighted total coverage = "unification progress". Computed
   // client-side with @scale/core's pure function (it imports fine in the browser).
@@ -182,6 +206,12 @@ export function App(): JSX.Element {
                 <span className="legend-count">{counts[st]}</span>
               </button>
             ))}
+            {owedUnlocks.size > 0 && (
+              <span className="legend-item legend-owed" title={S.owedUnlockNote}>
+                <span className="legend-ko">🔒 {S.owedUnlock}</span>
+                <span className="legend-count">{owedUnlocks.size}</span>
+              </span>
+            )}
           </div>
 
           <button
@@ -205,6 +235,7 @@ export function App(): JSX.Element {
               selectedId={selectedId}
               onSelect={setSelectedId}
               pendingByComponent={pendingByComponent}
+              owedUnlocks={owedUnlocks}
               justUpdatedId={justUpdatedId}
               onStartQuest={startQuest}
               highlightState={highlightState}
@@ -215,6 +246,7 @@ export function App(): JSX.Element {
               componentId={selectedId}
               coverage={selectedCoverage}
               quests={pendingByComponent.get(selectedId) ?? []}
+              owed={owedUnlocks.has(selectedId)}
               onStartQuest={startQuest}
               onClose={() => setSelectedId(null)}
             />

@@ -208,13 +208,24 @@ Then work normally in Claude Code:
 | `scale map layout` | Compute/extend the frozen spatial layout → `.scale/map.json`. | ⚡ |
 | `scale map index` | Build the file→component reverse index → `.scale/index.json`. | ⚡ |
 | `scale map drift` | Flag components whose sources changed since the build SHA (minimal stub). | ⚡ |
-| `scale serve [-p 4318] [--host <addr>]` | Serve the local web map viewer + JSON API. | ⚡/🧠 |
+| `scale serve [-p 4318] [--host <addr>] [--token <t>]` | Serve the local web map viewer + JSON API. | ⚡/🧠 |
 | `scale reset [-y]` | Delete the `~/.scale/<repo-id>/` state dir (demo/pilot reset). | ⚡ |
 
 `scale serve` itself is pure Node; only its Socratic runner (`/api/socratic/:id/message`)
-proxies the intervention model. It binds **loopback only** by default: the server has no
-authentication and accepts API keys, so `--host` is an explicit opt-in (e.g. to open the
-map on a phone over a trusted LAN).
+proxies the intervention model. It binds **loopback only** by default, where the only
+guard is a same-origin check. Passing `--host` (e.g. `0.0.0.0` to reach the map from a
+phone over a trusted LAN) makes the server **generate a bearer token** and print a
+`http://<lan-ip>:4318/?token=…` URL: every `/api/*` request must carry it (`Authorization:
+Bearer` or `?token=`), the page keeps it for the tab, and the static bundle stays public.
+Anyone holding the URL can read your coverage and write your settings — treat it like a
+password. `--token` pins a value of your own.
+
+**Owed checks.** When an async user is denied an edit, the component is written to
+`pendingUnlocks` in `locks.json`. The next `SessionStart` says how many territories still
+owe a check (`Unlocked for editing: 3/37. 1 territory still owes a check…`), SessionEnd
+quest generation targets those first, the viewer shows a 🔒 badge on the node and a
+count in the header (`GET /api/locks`), and the panel points at the quiz or socratic
+runner. Passing there — graded server-side — unlocks the edit for the next session.
 
 ---
 
@@ -315,14 +326,16 @@ map layout`/`index` → coverage materialized from evidence → the deterministi
 (locks + budget + session-scoped `gate defer`, team-policy defaults with per-user
 overrides) → quiz + Socratic checks in chat that durably **unlock** territory → `scale
 status` → post-session `scale quest generate`/`list`/`complete` (CLI and web share one
-completion path, both unlock) → web map viewer + JSON API.
+completion path, both unlock) → pending-unlock surfacing (SessionStart count, 🔒 in the
+viewer, `/api/locks`) → server-side quiz grading → LAN bearer token for a phone → web map
+viewer + JSON API.
 
 **Not yet** (see PLAN-GATE §4 for the staged plan)
 
-- **Async completion surfaces (S3)** — deny-time teaching works, but pending unlocks are
-  not yet surfaced in the viewer, quiz grading still happens client-side (the answer key
-  reaches the browser — must move server-side before checks guard anything), and there is
-  no LAN token for a phone.
+- **Settings provenance (S4)** — the Settings modal does not yet show whether a knob is
+  the team default or your override, and there is no one-click "back to team default".
+- **Telemetry (S4)** — override deltas, skips and avoidance (working around a locked
+  territory) are not logged yet; that is the learning-vs-avoidance measurement.
 - **Mode A live co-construction** — building the memory alongside the junior in-flow (hook
   infrastructure exists; the mode does not).
 - **`scale map drift`** — still a stub that reports SHAs only. Per-component staleness

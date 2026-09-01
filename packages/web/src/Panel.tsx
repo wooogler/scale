@@ -9,6 +9,8 @@ interface Props {
   componentId: string;
   coverage: ComponentCoverage | undefined;
   quests: Quest[];
+  /** A denied edit here still owes a check (async assessment). */
+  owed?: boolean;
   onStartQuest: (quest: Quest) => void;
   onClose: () => void;
 }
@@ -30,7 +32,7 @@ function DevStat({ label, value, color }: { label: string; value: number; color:
   );
 }
 
-export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: Props): JSX.Element {
+export function Panel({ componentId, coverage, quests, owed = false, onStartQuest, onClose }: Props): JSX.Element {
   const S = useStrings();
   const lang = useLang();
   // Papers are fetched lazily per selected node (GET /api/paper/:id) with a
@@ -109,6 +111,8 @@ export function Panel({ componentId, coverage, quests, onStartQuest, onClose }: 
           {DRIFT_SKIN.foreign.icon} {coverage!.driftAuthors.join(', ')}
         </p>
       )}
+
+      {owed && <p className="state-blurb owed-note">🔒 {S.owedUnlockNote}</p>}
 
       <section className="panel-section">
         <h4>{S.devStats}</h4>

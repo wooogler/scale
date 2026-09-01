@@ -36,8 +36,42 @@ export interface PaperResponse {
   body: string;
 }
 
+/**
+ * Bearer token for the API, when `scale serve` was started off loopback.
+ *
+ * It arrives once, in the URL the server printed (`?token=…`), is moved into
+ * sessionStorage on first load and stripped from the address bar, and then
+ * rides on every API call as a header. sessionStorage, not localStorage: the
+ * token is a per-run secret for a server that stores API keys, and it should
+ * die with the tab rather than outlive the process that minted it.
+ */
+const TOKEN_KEY = 'scale.apiToken';
+
+export function bootstrapToken(): void {
+  try {
+    const url = new URL(window.location.href);
+    const fromUrl = url.searchParams.get('token');
+    if (fromUrl) {
+      sessionStorage.setItem(TOKEN_KEY, fromUrl);
+      url.searchParams.delete('token');
+      window.history.replaceState(null, '', url.toString());
+    }
+  } catch {
+    /* no window, or storage blocked — tokenless loopback still works */
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  try {
+    const t = sessionStorage.getItem(TOKEN_KEY);
+    return t ? { authorization: `Bearer ${t}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: { accept: 'application/json' } });
+  const res = await fetch(path, { headers: { accept: 'application/json', ...authHeaders() } });
   if (!res.ok) {
     throw new Error(`GET ${path} -> ${res.status}`);
   }
@@ -47,7 +81,7 @@ async function getJson<T>(path: string): Promise<T> {
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: { 'content-type': 'application/json', accept: 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -127,6 +161,28 @@ export async function loadCoverage(): Promise<UserCoverage> {
       err,
       async () => (await import('./sample/coverage.js')).sampleCoverage,
     );
+  }
+}
+
+/** The lock picture drawn over coverage — see GET /api/locks in serve.ts. */
+export interface LocksResponse {
+  unlocked: string[];
+  drifted: Record<
+    string,
+    { at: string; sinceSha: string; foreignAuthors: string[]; cause: 'foreign' | 'self' }
+  >;
+  pendingUnlocks: Record<string, { at: string; sessionId: string }>;
+}
+
+/**
+ * GET /api/locks. No sample fallback and no throw: a missing server means an
+ * empty lock picture, which draws the map exactly as it did before locks existed.
+ */
+export async function loadLocks(): Promise<LocksResponse> {
+  try {
+    return await getJson<LocksResponse>('/api/locks');
+  } catch {
+    return { unlocked: [], drifted: {}, pendingUnlocks: {} };
   }
 }
 

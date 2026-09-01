@@ -46,6 +46,10 @@ export interface Strings {
   mapHint: string;
   /** aria-label prefix for a pending-quest badge; caller appends `(node-id)`. */
   questOffer: string;
+  /** header chip + node badge: territories a denied edit still owes a check on */
+  owedUnlock: string;
+  /** panel note under the state chip for such a territory */
+  owedUnlockNote: string;
 
   /* ---- shared quest / dimension vocabulary ---- */
   devStats: string;
@@ -183,6 +187,9 @@ export const STRINGS: Record<Language, Strings> = {
     resetView: 'Reset view',
     mapHint: 'Scroll or pinch to zoom into a territory · drag to pan',
     questOffer: QUEST_SKIN.offerEn,
+    owedUnlock: 'awaiting your check',
+    owedUnlockNote:
+      'An edit here was held back. Pass this check to unlock the territory — or use /scale-study in Claude Code.',
 
     devStats: DEV_STATS_LABEL_EN,
     dim: { structure: 'Structure', concepts: 'Concepts', rationale: 'Rationale' },
@@ -316,6 +323,9 @@ export const STRINGS: Record<Language, Strings> = {
     resetView: '전체 보기',
     mapHint: '스크롤/핀치로 영지를 확대 · 드래그로 이동',
     questOffer: QUEST_SKIN.offerKo,
+    owedUnlock: '확인 대기',
+    owedUnlockNote:
+      '이 영토에서 편집이 보류됐습니다. 체크를 통과하면 열립니다 — Claude Code의 /scale-study로도 가능합니다.',
 
     devStats: DEV_STATS_LABEL_KO,
     dim: { structure: '구조', concepts: '개념', rationale: '설계 근거' },

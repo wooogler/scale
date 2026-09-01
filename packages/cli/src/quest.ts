@@ -57,6 +57,7 @@ import {
   loadEffectiveConfig,
   noteCheckOutcome,
   readCoverageSafe,
+  readLocksSafe,
   readQuestsSafe,
   readSessionSafe,
 } from './state.js';
@@ -160,9 +161,32 @@ export function pickComponents(
   touched: Set<string>,
   config: ScaleConfig,
   k: number,
+  /**
+   * Components the edit gate denied under async assessment and the user still
+   * owes a check for. They come FIRST, ahead of any ranking: a denied edit
+   * leaves no `touch` evidence, so before this the one component the user had
+   * actually been locked out of was the one this picker could never see.
+   */
+  pending: string[] = [],
 ): string[] {
   const validateDim = config.thresholds.validateDim;
-  const scored: Scored[] = map.nodes.map((n) => {
+  const known = new Set(map.nodes.map((n) => n.id));
+  const owed = pending.filter((id) => known.has(id)).slice(0, k);
+  if (owed.length >= k) return owed;
+  const rest = pickRanked(coverage, map, touched, validateDim, k - owed.length, new Set(owed));
+  return [...owed, ...rest];
+}
+
+function pickRanked(
+  coverage: UserCoverage,
+  map: MapJson,
+  touched: Set<string>,
+  validateDim: number,
+  k: number,
+  exclude: Set<string>,
+): string[] {
+  if (k <= 0) return [];
+  const scored: Scored[] = map.nodes.filter((n) => !exclude.has(n.id)).map((n) => {
     const comp = coverage.components[n.id] ?? emptyComponentCoverage();
     const mean = meanDims(comp.dims);
     const lowCoverage =
@@ -676,7 +700,14 @@ export async function generateQuests(
   const session = readSessionSafe(dir);
   const touched = touchedComponentsSince(dir, session?.startedAt ?? '');
   const k = opts.topK ?? DEFAULT_TOP_K;
-  const picked = pickComponents(coverage, map, touched, config, k);
+  const picked = pickComponents(
+    coverage,
+    map,
+    touched,
+    config,
+    k,
+    Object.keys(readLocksSafe(dir).pendingUnlocks),
+  );
   const modality = config.gate.modality;
   // Measured dependencies, empty when no graphify extraction has been distilled.
   const neighbours = neighbourIndex(map);

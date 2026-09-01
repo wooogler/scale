@@ -8,6 +8,7 @@
  * from `src/` or `node` from `dist/`: <this>/../../web/dist → packages/web/dist.
  */
 import http from 'node:http';
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -48,6 +49,7 @@ import {
   readPolicyRaw,
   loadEffectiveConfig,
   noteCheckOutcome,
+  readLocksSafe,
   ensureStateDir,
   appendEvidence,
 } from './state.js';
@@ -331,17 +333,57 @@ function serveStatic(res: http.ServerResponse, urlPath: string): void {
   res.end(body);
 }
 
+/**
+ * Did this request present the configured bearer token? Accepted as
+ * `Authorization: Bearer <t>` (what the SPA sends on every API call) or as a
+ * `?token=<t>` query parameter (what the printed URL carries, so the very first
+ * page load on a phone can bootstrap it). Constant-time compare — the token is
+ * the only thing standing between a LAN and a server that stores API keys.
+ */
+function presentsToken(req: http.IncomingMessage, url: string, token: string): boolean {
+  const header = req.headers.authorization ?? '';
+  const fromHeader = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  let fromQuery = '';
+  try {
+    fromQuery = new URL(url, 'http://x').searchParams.get('token') ?? '';
+  } catch {
+    /* malformed url → no token */
+  }
+  const eq = (a: string): boolean => {
+    if (a.length !== token.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(token));
+  };
+  return (fromHeader !== '' && eq(fromHeader)) || (fromQuery !== '' && eq(fromQuery));
+}
+
 async function handle(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   cwd: string,
+  token: string | null,
 ): Promise<void> {
   const dir = stateDir(cwd);
   const url = req.url ?? '/';
   const pathname = url.split('?')[0] ?? '/';
+  const isApi = pathname === '/api' || pathname.startsWith('/api/');
+
+  // Token first. The static SPA bundle is public code and is served to anyone
+  // who can reach the port; the API — which reads coverage, writes config, and
+  // stores API keys — is what the token guards. A request that presents the
+  // token has authenticated itself, so the same-origin rule below (a defence
+  // for the TOKENLESS loopback case against other local pages) does not apply.
+  const authed = token !== null && presentsToken(req, url, token);
+  if (isApi && token !== null && !authed && req.method !== 'OPTIONS') {
+    res.writeHead(401, {
+      'content-type': 'application/json; charset=utf-8',
+      'www-authenticate': 'Bearer realm="scale"',
+    });
+    res.end(JSON.stringify({ error: 'token required', hint: 'open the URL scale serve printed' }));
+    return;
+  }
 
   const origin = req.headers.origin;
-  const originAllowed = isAllowedOrigin(origin);
+  const originAllowed = authed || isAllowedOrigin(origin);
   // Refuse a cross-origin request outright rather than merely withholding the
   // response headers: a simple POST is delivered and its side effect happens
   // before the browser ever inspects them.
@@ -394,6 +436,19 @@ async function handle(
   }
 
   // --- API ---
+  // The lock picture the map draws on top of coverage: what this user may edit,
+  // what drifted out from under them, and — for an async user — which denied
+  // territories still owe a check. Read-only.
+  if (pathname === '/api/locks') {
+    const locks = readLocksSafe(dir);
+    sendJson(res, 200, {
+      unlocked: Object.keys(locks.components).sort(),
+      drifted: locks.drifted,
+      pendingUnlocks: locks.pendingUnlocks,
+    });
+    return;
+  }
+
   if (pathname === '/api/map') {
     const map = readMapJson(cwd);
     if (!map) {
@@ -984,6 +1039,12 @@ export interface ServeOptions {
   cwd?: string;
   /** Bind address. Defaults to loopback — see the note in `startServer`. */
   host?: string;
+  /**
+   * Bearer token the API requires. Off loopback one is generated when none is
+   * given, because this server writes config and accepts API keys with no other
+   * authentication — see `startServer`.
+   */
+  token?: string;
 }
 
 export function startServer(opts: ServeOptions): http.Server {
@@ -994,8 +1055,13 @@ export function startServer(opts: ServeOptions): http.Server {
   // single-user local tool, so it must not be reachable off-box. `--host` is an
   // explicit opt-in for e.g. viewing the map from a phone on a trusted LAN.
   const host = opts.host ?? '127.0.0.1';
+  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  // Off loopback the API MUST be token-guarded; a token given explicitly is
+  // honoured anywhere. Generated tokens are printed once, in the URL.
+  const token: string | null =
+    opts.token?.trim() || (loopback ? null : crypto.randomBytes(18).toString('base64url'));
   const server = http.createServer((req, res) => {
-    handle(req, res, cwd).catch((err) => {
+    handle(req, res, cwd, token).catch((err) => {
       sendJson(res, 500, { error: (err as Error).message });
     });
   });
@@ -1020,8 +1086,26 @@ export function startServer(opts: ServeOptions): http.Server {
   });
   server.listen(opts.port, host, () => {
     const scalePresent = fs.existsSync(path.join(cwd, '.scale'));
-    const shown = host === '127.0.0.1' ? 'localhost' : host;
-    console.log(`scale: serving http://${shown}:${opts.port}`);
+    const q = token ? `/?token=${token}` : '';
+    if (loopback) {
+      console.log(`scale: serving http://localhost:${opts.port}${q}`);
+    } else {
+      // Bound to every interface (or one): list the addresses a phone on the
+      // same network can actually type, each carrying the token.
+      const addrs =
+        host === '0.0.0.0' || host === '::'
+          ? Object.values(os.networkInterfaces())
+              .flat()
+              .filter((a): a is os.NetworkInterfaceInfo => !!a && !a.internal && a.family === 'IPv4')
+              .map((a) => a.address)
+          : [host];
+      console.log(`scale: serving on ${host}:${opts.port} — open on your phone:`);
+      for (const a of addrs) console.log(`    http://${a}:${opts.port}${q}`);
+      console.log(
+        '  The API requires this token; the page keeps it for the tab. Anyone with the',
+        '\n  URL can read your coverage and write your settings — share it like a password.',
+      );
+    }
     console.log(`  repo-id:  ${repoId}`);
     console.log(`  memory:   ${path.join(cwd, '.scale')}${scalePresent ? '' : '  (missing!)'}`);
     console.log(`  state:    ${stateDir(cwd)}`);

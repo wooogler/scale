@@ -80,6 +80,8 @@ import {
   syncLocksWithDrift,
   pendingDigest,
   markDigestShown,
+  notePendingUnlock,
+  clearPendingUnlock,
   appendEvidence,
   readQuestsSafe,
   type SessionRecord,
@@ -354,6 +356,27 @@ function contextSummary(res: RecomputeResult, config: ScaleConfig, dir: string):
     lines.push(
       `${stale.length} territory needs re-validation (stale): ${stale.join(', ')}.`,
     );
+  }
+
+  // The lock picture, for the AGENT: how much of the map this user may edit,
+  // and — for an async user — which denied territories still owe a check. This
+  // is the reminder the async design promised ("later") and never delivered;
+  // without it a denied component was forgotten the moment the session ended.
+  const locks = readLocksSafe(dir);
+  const unlockedSet = new Set(Object.keys(locks.components));
+  const unlockedCount = map.nodes.filter(
+    (n) => unlockedSet.has(n.id) || (coverage.components[n.id]?.state ?? 'fog') === 'validated',
+  ).length;
+  const owed = Object.keys(locks.pendingUnlocks).sort();
+  if (owed.length > 0) {
+    lines.push(
+      `Unlocked for editing: ${unlockedCount}/${map.nodes.length}. ` +
+        `${owed.length} territory still owes a check from an earlier denied edit: ` +
+        `${owed.slice(0, 5).join(', ')}${owed.length > 5 ? ` +${owed.length - 5} more` : ''}. ` +
+        `The junior can pass it with /scale-study <id> here, or in the map viewer (scale serve).`,
+    );
+  } else if (config.gate.enabled) {
+    lines.push(`Unlocked for editing: ${unlockedCount}/${map.nodes.length}.`);
   }
 
   if (language === 'ko') {
@@ -1124,6 +1147,15 @@ gate
     } catch {
       /* keep going — the deny is what matters to the hook */
     }
+    // Under ASYNC assessment the check is owed LATER, so the deny must leave a
+    // trace something can act on: SessionEnd generates the quest for it, the
+    // viewer marks it, and SessionStart reminds. A sync deny is resolved in
+    // chat right now and leaves none. (A denied edit writes no `touch`, so
+    // without this the component the user was actually blocked on was
+    // invisible to every downstream picker.)
+    if (config.gate.assessment === 'async') {
+      notePendingUnlock(dir, decided.component, sessionId, decided.now);
+    }
     emit(false, decided.component, decided.reason);
   });
 
@@ -1189,6 +1221,9 @@ gate
           session.pendingComponent === componentId ? null : session.pendingComponent,
       });
     });
+    // Skipping is a decision about this territory; it stops being an open
+    // to-do. The next deny re-adds it if the user comes back to it.
+    clearPendingUnlock(dir, componentId);
 
     console.log(
       `scale: skipped '${componentId}' (by ${opts.by}) — unlocked for THIS session only; ` +
@@ -1588,7 +1623,10 @@ quest
     try {
       const res = await generateQuests(cwd, { topK });
       if (res.via === 'skip') {
-        console.log('scale: quest generate — no-op (in-flow condition or no coverage memory).');
+        console.log(
+          'scale: quest generate — no-op (sync assessment, or no coverage memory). ' +
+            'Quests are generated for async users, whose checks are owed later.',
+        );
         return;
       }
       console.log(
@@ -1827,18 +1865,24 @@ program
   .option('-p, --port <number>', 'port', '4318')
   .option(
     '--host <addr>',
-    'bind address; defaults to loopback. The server has no auth and accepts API ' +
-      'keys, so only widen this on a trusted network',
+    'bind address; defaults to loopback. Off loopback the API requires a bearer ' +
+      'token (see --token), because this server writes config and accepts API keys',
     '127.0.0.1',
   )
-  .action((opts: { port: string; host: string }) => {
+  .option(
+    '--token <secret>',
+    'bearer token the API requires (Authorization: Bearer … or ?token=…). ' +
+      'Generated for you when --host is not loopback and none is given; the ' +
+      'printed URL carries it, so open THAT on the phone',
+  )
+  .action((opts: { port: string; host: string; token?: string }) => {
     const port = Number(opts.port);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) {
       console.error(`scale: invalid port "${opts.port}".`);
       process.exitCode = 1;
       return;
     }
-    startServer({ port, host: opts.host, cwd: process.cwd() });
+    startServer({ port, host: opts.host, cwd: process.cwd(), token: opts.token });
   });
 
 // ---------------------------------------------------------------------------

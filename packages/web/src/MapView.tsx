@@ -57,6 +57,8 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   pendingByComponent: Map<string, Quest[]>;
+  /** Components a denied edit still owes a check on — drawn with a lock badge. */
+  owedUnlocks: Set<string>;
   justUpdatedId: string | null;
   onStartQuest: (quest: Quest) => void;
   /** Coverage state currently hovered/focused in the legend, or null. */
@@ -191,6 +193,7 @@ export function MapView({
   selectedId,
   onSelect,
   pendingByComponent,
+  owedUnlocks,
   justUpdatedId,
   onStartQuest,
   highlightState,
@@ -638,6 +641,22 @@ export function MapView({
                         className={`node-label${fog ? ' node-label-fog' : ''}`}
                       >
                         {n.id}
+                      </text>
+                    </g>
+                  )}
+
+                  {/* owed-check badge — an async deny the user has not yet
+                      resolved. Not interactive: the Challenge button in the
+                      panel is the action; this only says "here, this one". */}
+                  {owedUnlocks.has(n.id) && (
+                    <g
+                      className="owed-badge"
+                      transform={`translate(${-r * 0.72} ${-r * 0.72})`}
+                      aria-label={`${S.owedUnlock} (${n.id})`}
+                    >
+                      <circle r={11} className="owed-badge-bg" />
+                      <text className="owed-badge-icon" textAnchor="middle" dy={4}>
+                        🔒
                       </text>
                     </g>
                   )}

@@ -158,11 +158,10 @@ SessionStart/record가 계속 갱신한다.
 ### ✅ S2 — 반란 v2 (메커니즘) — 완료. **결과는 §11 참조.**
 - authorship 필터 ✅ · 원장 재잠금 ✅ · 일일 다이제스트 ✅ · 반란 인지 deny 문구 ✅
 - ✅ **S2b — diff grounding** — 완료. **결과는 §13 참조.**
-### S3 — async 완성
-- deny 시 pending-unlock 기록 → 웹 뷰어 표면화, 다음 세션 /scale-study 안내
-- **서버 채점**: /api/quests에서 정답 제거, 채점을 serve로 이동 —
-  퀴즈가 권한이 된 순간부터 클라이언트 채점은 락 해제 수단이 된다 (전제 조건)
-- LAN + bearer token (모바일), SessionStart에 잠김/대기 카운트
+### ✅ S3 — async 완성 — 완료. **결과는 §14 참조.**
+- deny 시 pending-unlock 기록 → 웹 뷰어 표면화, 다음 세션 /scale-study 안내 ✅
+- **서버 채점**: /api/quests에서 정답 제거, 채점을 serve로 이동 ✅ (S2b 중 선행)
+- LAN + bearer token (모바일) ✅, SessionStart에 잠김/대기 카운트 ✅
 ### S4 — UI 마감 + 텔레메트리 (별도 결정 후)
 - Settings에 policy 출처 표시(“팀 기본값/내 override”) + override 해제 affordance
 - override delta·skip·회피(잠긴 영토 우회) 로깅 — **학습 vs 회피**가 핵심 측정
@@ -356,3 +355,47 @@ S2b를 커밋한 뒤 공격 리뷰를 돌렸다. **읽어서가 아니라 실제
 **남은 것 (미수정, 의도)**: paper 본문도 저장소 콘텐츠라 같은 논리로는 fence 대상이다.
 동료가 PR로 `.scale/`을 고칠 수 있다. diff와 달리 senior가 큐레이트해 커밋하는
 산출물이라 신뢰 등급이 다르지만, **비대칭인 건 사실이다.** S4에서 다룬다.
+
+## 14. S3 실행 결과 — async 완성 (2026-09-01)
+
+### 14.1 owed check 원장 (`locks.json.pendingUnlocks`)
+- `gate edit`가 **async** 사용자를 deny할 때 `{component: {at, sessionId}}`를 기록한다.
+  sync 사용자는 기록하지 않는다 — 그 자리에서 퀴즈를 보므로 "빚"이 아니다.
+- 첫 기록의 타임스탬프를 유지한다(재시도가 덮어쓰지 않음). 어긋난 항목은 읽을 때 버린다.
+- 지워지는 경로는 둘: `noteCheckOutcome`이 **언락**할 때(=사용자가 통과), `gate defer`(세션 skip).
+  실패한 체크·agent가 답한 체크는 그대로 남는다.
+- **소비자 셋**: (1) `scale context`(SessionStart) — `Unlocked for editing: X/N. M territory
+  still owes a check from an earlier denied edit: … /scale-study <id> here, or in the map
+  viewer`. (2) `quest generate`의 `pickComponents(…, pending)` — owed component가 touched·
+  ranked보다 **먼저**. deny된 edit은 `touch` evidence를 남기지 않으므로 이게 없으면 그 component는
+  SessionEnd 퀘스트에서 보이지 않았다. (3) `GET /api/locks` → 뷰어 헤더 카운트 + 노드 🔒 배지 +
+  패널 문구.
+
+### 14.2 LAN + bearer token
+- `--host`가 loopback이 아니면 서버가 `randomBytes(18)` base64url 토큰을 만들고
+  `http://<lan-ip>:<port>/?token=…`를 찍는다(모든 non-internal IPv4). `--token`으로 고정 가능.
+- 토큰이 설정되면 **모든 `/api/*`**는 `Authorization: Bearer` 또는 `?token=`을 요구 — 401 +
+  `WWW-Authenticate`. 비교는 `timingSafeEqual`(길이 다르면 즉시 false).
+- 토큰을 제시한 요청은 **same-origin 검사를 건너뛴다** — LAN에서는 페이지 origin이
+  `http://192.168.x.x:4318`이라 loopback 허용목록에 걸리기 때문. 토큰이 곧 인증이다.
+- 정적 번들은 토큰 없이 서빙(공개 코드). 웹은 `?token=`을 sessionStorage에 옮기고 URL에서 지운다.
+- 토큰 없는 loopback은 이전과 같다: API 열림, cross-origin 403.
+- 배너에 명시: "Anyone with the URL can read your coverage and write your settings —
+  share it like a password."
+
+### 14.3 검증
+- 단위: locks(pending 생명주기 6), quest(pending-first 3), **serve-token 5** — 실제 서버를
+  ephemeral 포트에 띄워 HTTP로: 무토큰 401 / 오답·근접 토큰 401 / 헤더·쿼리 200 / 토큰+외부 origin 200
+  / 정적 `/` 200 / 무토큰 loopback API 200 + cross-origin 403. 전체 **254 passed**.
+- E2E(빌드된 CLI, 실제 git 픽스처): async deny → `pendingUnlocks.widget` → 다음 SessionStart
+  "1 territory still owes a check … widget" → `quest generate`가 `components: widget` →
+  `record --score 1` → pending 비고 `components: [widget]` → 재잠금 후 재deny → `gate defer` →
+  비움.
+- E2E(`serve --host 0.0.0.0`): 배너 URL의 토큰으로 401/200/200/200, POST 무토큰 401,
+  `/api/locks` 바디 `{unlocked, drifted, pendingUnlocks}`.
+
+### 14.4 남은 것
+- 토큰은 **프로세스 수명**이다: 서버를 다시 띄우면 폰의 sessionStorage 토큰이 무효 → 401.
+  뷰어는 이때 빈 화면 대신 "토큰이 만료됐다, 새 URL을 열어라"를 보여야 한다 (S4 UI 마감).
+- pending 항목은 컴포넌트가 map에서 사라져도 남는다. `readLocksSafe`가 아니라 `syncLocksWithDrift`
+  옆에서 정리해야 한다 — 지금은 뷰어·SessionStart 문구에 유령 id가 뜰 수 있다 (S4).

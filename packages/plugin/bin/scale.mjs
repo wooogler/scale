@@ -10396,13 +10396,13 @@ var uuid4;
 var init_uuid = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs"() {
     uuid4 = function() {
-      const { crypto: crypto6 } = globalThis;
-      if (crypto6?.randomUUID) {
-        uuid4 = crypto6.randomUUID.bind(crypto6);
-        return crypto6.randomUUID();
+      const { crypto: crypto7 } = globalThis;
+      if (crypto7?.randomUUID) {
+        uuid4 = crypto7.randomUUID.bind(crypto7);
+        return crypto7.randomUUID();
       }
       const u8 = new Uint8Array(1);
-      const randomByte = crypto6 ? () => crypto6.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
+      const randomByte = crypto7 ? () => crypto7.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
       return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (+c ^ randomByte() & 15 >> +c / 4).toString(16));
     };
   }
@@ -11812,8 +11812,8 @@ var init_credentials = __esm({
       if (configDir) {
         return configDir;
       }
-      const os3 = getPlatformHeaders()["X-Stainless-OS"];
-      if (os3 === "Windows") {
+      const os4 = getPlatformHeaders()["X-Stainless-OS"];
+      if (os4 === "Windows") {
         const appData = readEnv("APPDATA");
         if (appData) {
           return path12.join(appData, "Anthropic");
@@ -22495,7 +22495,7 @@ var init_sdk = __esm({
 import path11 from "node:path";
 import fs11 from "node:fs";
 import readline2 from "node:readline";
-import crypto5 from "node:crypto";
+import crypto6 from "node:crypto";
 import { execFileSync as execFileSync6 } from "node:child_process";
 
 // node_modules/commander/esm.mjs
@@ -28078,8 +28078,10 @@ function estimateBuild(loc) {
 
 // packages/cli/src/serve.ts
 import http from "node:http";
+import os3 from "node:os";
 import fs9 from "node:fs";
 import path9 from "node:path";
+import crypto5 from "node:crypto";
 import { execFileSync as execFileSync5 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -28336,7 +28338,7 @@ function writePendingEdits(dir, pending) {
   }
 }
 function emptyLocks() {
-  return { version: 1, components: {}, progress: {}, drifted: {} };
+  return { version: 1, components: {}, progress: {}, drifted: {}, pendingUnlocks: {} };
 }
 function readLocksSafe(dir) {
   let raw;
@@ -28377,8 +28379,34 @@ function readLocksSafe(dir) {
       };
     }
   }
+  if (r.pendingUnlocks && typeof r.pendingUnlocks === "object" && !Array.isArray(r.pendingUnlocks)) {
+    for (const [id, v] of Object.entries(r.pendingUnlocks)) {
+      if (!v || typeof v !== "object") continue;
+      const e = v;
+      out.pendingUnlocks[id] = {
+        at: typeof e.at === "string" ? e.at : "",
+        sessionId: typeof e.sessionId === "string" ? e.sessionId : ""
+      };
+    }
+  }
   if (typeof r.digestShownAt === "string") out.digestShownAt = r.digestShownAt;
   return out;
+}
+function notePendingUnlock(dir, componentId, sessionId, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    if (locks.pendingUnlocks[componentId]) return;
+    locks.pendingUnlocks[componentId] = { at: now, sessionId };
+    writeLocks(dir, locks);
+  });
+}
+function clearPendingUnlock(dir, componentId) {
+  withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    if (!locks.pendingUnlocks[componentId]) return;
+    delete locks.pendingUnlocks[componentId];
+    writeLocks(dir, locks);
+  });
 }
 function writeLocks(dir, locks) {
   ensureStateDir(dir);
@@ -28413,6 +28441,7 @@ function noteCheckOutcome(cwd, dir, componentId, meanScore, by, headSha2, now = 
     if (checks >= config2.unlock.checksRequired) {
       delete locks.progress[componentId];
       delete locks.drifted[componentId];
+      delete locks.pendingUnlocks[componentId];
       locks.components[componentId] = { unlockedAt: now, sha: headSha2, checks, via: "check" };
       writeLocks(dir, locks);
       return { unlocked: true, alreadyUnlocked: false, checks };
@@ -28994,9 +29023,17 @@ function touchedComponentsSince(dir, sinceIso) {
   }
   return out;
 }
-function pickComponents(coverage2, map2, touched, config2, k) {
+function pickComponents(coverage2, map2, touched, config2, k, pending = []) {
   const validateDim = config2.thresholds.validateDim;
-  const scored = map2.nodes.map((n) => {
+  const known = new Set(map2.nodes.map((n) => n.id));
+  const owed = pending.filter((id) => known.has(id)).slice(0, k);
+  if (owed.length >= k) return owed;
+  const rest = pickRanked(coverage2, map2, touched, validateDim, k - owed.length, new Set(owed));
+  return [...owed, ...rest];
+}
+function pickRanked(coverage2, map2, touched, validateDim, k, exclude) {
+  if (k <= 0) return [];
+  const scored = map2.nodes.filter((n) => !exclude.has(n.id)).map((n) => {
     const comp = coverage2.components[n.id] ?? emptyComponentCoverage();
     const mean = meanDims(comp.dims);
     const lowCoverage = comp.state === "fog" || comp.state === "explored" || comp.state === "stale" || mean < validateDim;
@@ -29265,7 +29302,14 @@ async function generateQuests(cwd, opts = {}) {
   const session2 = readSessionSafe(dir);
   const touched = touchedComponentsSince(dir, session2?.startedAt ?? "");
   const k = opts.topK ?? DEFAULT_TOP_K;
-  const picked = pickComponents(coverage2, map2, touched, config2, k);
+  const picked = pickComponents(
+    coverage2,
+    map2,
+    touched,
+    config2,
+    k,
+    Object.keys(readLocksSafe(dir).pendingUnlocks)
+  );
   const modality = config2.gate.modality;
   const neighbours = neighbourIndex(map2);
   let llmDisabled = false;
@@ -29665,12 +29709,36 @@ function serveStatic(res, urlPath) {
   });
   res.end(body);
 }
-async function handle(req, res, cwd) {
+function presentsToken(req, url, token) {
+  const header = req.headers.authorization ?? "";
+  const fromHeader = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  let fromQuery = "";
+  try {
+    fromQuery = new URL(url, "http://x").searchParams.get("token") ?? "";
+  } catch {
+  }
+  const eq = (a) => {
+    if (a.length !== token.length) return false;
+    return crypto5.timingSafeEqual(Buffer.from(a), Buffer.from(token));
+  };
+  return fromHeader !== "" && eq(fromHeader) || fromQuery !== "" && eq(fromQuery);
+}
+async function handle(req, res, cwd, token) {
   const dir = stateDir(cwd);
   const url = req.url ?? "/";
   const pathname = url.split("?")[0] ?? "/";
+  const isApi = pathname === "/api" || pathname.startsWith("/api/");
+  const authed = token !== null && presentsToken(req, url, token);
+  if (isApi && token !== null && !authed && req.method !== "OPTIONS") {
+    res.writeHead(401, {
+      "content-type": "application/json; charset=utf-8",
+      "www-authenticate": 'Bearer realm="scale"'
+    });
+    res.end(JSON.stringify({ error: "token required", hint: "open the URL scale serve printed" }));
+    return;
+  }
   const origin = req.headers.origin;
-  const originAllowed = isAllowedOrigin(origin);
+  const originAllowed = authed || isAllowedOrigin(origin);
   if (!originAllowed) {
     res.writeHead(403, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify({ error: "cross-origin request refused" }));
@@ -29710,6 +29778,15 @@ async function handle(req, res, cwd) {
   }
   if (req.method !== "GET") {
     sendJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+  if (pathname === "/api/locks") {
+    const locks = readLocksSafe(dir);
+    sendJson(res, 200, {
+      unlocked: Object.keys(locks.components).sort(),
+      drifted: locks.drifted,
+      pendingUnlocks: locks.pendingUnlocks
+    });
     return;
   }
   if (pathname === "/api/map") {
@@ -30081,8 +30158,10 @@ function startServer(opts) {
   const cwd = opts.cwd ?? process.cwd();
   const repoId = resolveRepoId(cwd);
   const host = opts.host ?? "127.0.0.1";
+  const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const token = opts.token?.trim() || (loopback ? null : crypto5.randomBytes(18).toString("base64url"));
   const server = http.createServer((req, res) => {
-    handle(req, res, cwd).catch((err) => {
+    handle(req, res, cwd, token).catch((err) => {
       sendJson(res, 500, { error: err.message });
     });
   });
@@ -30102,8 +30181,18 @@ function startServer(opts) {
   });
   server.listen(opts.port, host, () => {
     const scalePresent = fs9.existsSync(path9.join(cwd, ".scale"));
-    const shown = host === "127.0.0.1" ? "localhost" : host;
-    console.log(`scale: serving http://${shown}:${opts.port}`);
+    const q = token ? `/?token=${token}` : "";
+    if (loopback) {
+      console.log(`scale: serving http://localhost:${opts.port}${q}`);
+    } else {
+      const addrs = host === "0.0.0.0" || host === "::" ? Object.values(os3.networkInterfaces()).flat().filter((a) => !!a && !a.internal && a.family === "IPv4").map((a) => a.address) : [host];
+      console.log(`scale: serving on ${host}:${opts.port} \u2014 open on your phone:`);
+      for (const a of addrs) console.log(`    http://${a}:${opts.port}${q}`);
+      console.log(
+        "  The API requires this token; the page keeps it for the tab. Anyone with the",
+        "\n  URL can read your coverage and write your settings \u2014 share it like a password."
+      );
+    }
     console.log(`  repo-id:  ${repoId}`);
     console.log(`  memory:   ${path9.join(cwd, ".scale")}${scalePresent ? "" : "  (missing!)"}`);
     console.log(`  state:    ${stateDir(cwd)}`);
@@ -30377,6 +30466,19 @@ function contextSummary(res, config2, dir) {
       `${stale.length} territory needs re-validation (stale): ${stale.join(", ")}.`
     );
   }
+  const locks = readLocksSafe(dir);
+  const unlockedSet = new Set(Object.keys(locks.components));
+  const unlockedCount = map2.nodes.filter(
+    (n) => unlockedSet.has(n.id) || (coverage2.components[n.id]?.state ?? "fog") === "validated"
+  ).length;
+  const owed = Object.keys(locks.pendingUnlocks).sort();
+  if (owed.length > 0) {
+    lines.push(
+      `Unlocked for editing: ${unlockedCount}/${map2.nodes.length}. ${owed.length} territory still owes a check from an earlier denied edit: ${owed.slice(0, 5).join(", ")}${owed.length > 5 ? ` +${owed.length - 5} more` : ""}. The junior can pass it with /scale-study <id> here, or in the map viewer (scale serve).`
+    );
+  } else if (config2.gate.enabled) {
+    lines.push(`Unlocked for editing: ${unlockedCount}/${map2.nodes.length}.`);
+  }
   if (language === "ko") {
     lines.push(
       "interaction language: ko \u2014 run comprehension checks in Korean (keep code identifiers in English)"
@@ -30405,7 +30507,7 @@ program2.command("context").description("Print the SessionStart coverage summary
   const cwd = process.cwd();
   const dir = stateDir(cwd);
   ensureStateDir(dir);
-  const sessionId = sessionIdOf(await readHookPayload()) || crypto5.randomUUID();
+  const sessionId = sessionIdOf(await readHookPayload()) || crypto6.randomUUID();
   const contextConfig = loadEffectiveConfig(cwd, dir).config;
   const backstopMs = contextConfig.budgets.sessionIdleResetMinutes * 6e4;
   withSessionLock(dir, () => {
@@ -30741,7 +30843,7 @@ gate.command("edit").description(
   const locks = readLocksSafe(dir);
   const decided = withSessionLock(dir, () => {
     const stored = readSessionSafe(dir);
-    const session2 = stored && isSessionAdoptable(stored, config2.budgets.sessionIdleResetMinutes * 6e4) ? stored : defaultSession(sessionId || crypto5.randomUUID(), nowIso());
+    const session2 = stored && isSessionAdoptable(stored, config2.budgets.sessionIdleResetMinutes * 6e4) ? stored : defaultSession(sessionId || crypto6.randomUUID(), nowIso());
     const now = nowIso();
     const recentlyAddressed = recentlyAddressedComponents(
       dir,
@@ -30837,6 +30939,9 @@ gate.command("edit").description(
     });
   } catch {
   }
+  if (config2.gate.assessment === "async") {
+    notePendingUnlock(dir, decided.component, sessionId, decided.now);
+  }
   emit(false, decided.component, decided.reason);
 });
 gate.command("defer").description(
@@ -30868,13 +30973,14 @@ gate.command("defer").description(
   });
   withSessionLock(dir, () => {
     const stored = readSessionSafe(dir);
-    const session2 = stored && isSessionAdoptable(stored, config2.budgets.sessionIdleResetMinutes * 6e4) ? stored : defaultSession(crypto5.randomUUID(), now);
+    const session2 = stored && isSessionAdoptable(stored, config2.budgets.sessionIdleResetMinutes * 6e4) ? stored : defaultSession(crypto6.randomUUID(), now);
     writeSession(dir, {
       ...session2,
       sessionSkips: session2.sessionSkips.includes(componentId) ? session2.sessionSkips : [...session2.sessionSkips, componentId],
       pendingComponent: session2.pendingComponent === componentId ? null : session2.pendingComponent
     });
   });
+  clearPendingUnlock(dir, componentId);
   console.log(
     `scale: skipped '${componentId}' (by ${opts.by}) \u2014 unlocked for THIS session only; retry the edit. It locks again next session.`
   );
@@ -31173,7 +31279,9 @@ quest.command("generate").description("Generate quests for low-coverage touched 
   try {
     const res = await generateQuests(cwd, { topK });
     if (res.via === "skip") {
-      console.log("scale: quest generate \u2014 no-op (in-flow condition or no coverage memory).");
+      console.log(
+        "scale: quest generate \u2014 no-op (sync assessment, or no coverage memory). Quests are generated for async users, whose checks are owed later."
+      );
       return;
     }
     console.log(
@@ -31347,8 +31455,11 @@ map.command("index").description("Build the file\u2192component reverse index \u
 });
 program2.command("serve").description("Serve the local web map app (pure Node; reads .scale/ from cwd)").option("-p, --port <number>", "port", "4318").option(
   "--host <addr>",
-  "bind address; defaults to loopback. The server has no auth and accepts API keys, so only widen this on a trusted network",
+  "bind address; defaults to loopback. Off loopback the API requires a bearer token (see --token), because this server writes config and accepts API keys",
   "127.0.0.1"
+).option(
+  "--token <secret>",
+  "bearer token the API requires (Authorization: Bearer \u2026 or ?token=\u2026). Generated for you when --host is not loopback and none is given; the printed URL carries it, so open THAT on the phone"
 ).action((opts) => {
   const port = Number(opts.port);
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
@@ -31356,7 +31467,7 @@ program2.command("serve").description("Serve the local web map app (pure Node; r
     process.exitCode = 1;
     return;
   }
-  startServer({ port, host: opts.host, cwd: process.cwd() });
+  startServer({ port, host: opts.host, cwd: process.cwd(), token: opts.token });
 });
 var config = program2.command("config").description(
   "Read/write the user config (gate, budgets, thresholds). `get` shows the EFFECTIVE config (schema defaults < team policy < your overrides); `set` writes a personal override into your sparse config.json."

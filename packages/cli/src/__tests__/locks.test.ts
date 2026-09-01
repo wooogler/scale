@@ -20,6 +20,8 @@ import {
   syncLocksWithDrift,
   pendingDigest,
   markDigestShown,
+  notePendingUnlock,
+  clearPendingUnlock,
 } from '../state.js';
 
 let dir: string; // fake ~/.scale/<repo-id>
@@ -230,5 +232,48 @@ describe('drift digest cadence', () => {
 
   it('nothing to say when nothing rebelled', () => {
     expect(pendingDigest(dir, 'session')).toHaveLength(0);
+  });
+});
+
+describe('pending unlocks — the async user\'s to-do list (PLAN-GATE S3)', () => {
+  it('records a denied territory once, keeping the first timestamp', () => {
+    notePendingUnlock(dir, 'auth', 'sess-1', '2026-09-01T09:00:00Z');
+    notePendingUnlock(dir, 'auth', 'sess-2', '2026-09-01T10:00:00Z');
+    const locks = readLocksSafe(dir);
+    expect(Object.keys(locks.pendingUnlocks)).toEqual(['auth']);
+    expect(locks.pendingUnlocks['auth']).toEqual({ at: '2026-09-01T09:00:00Z', sessionId: 'sess-1' });
+  });
+
+  it('a passed check clears it along with the lock', () => {
+    notePendingUnlock(dir, 'auth', 's');
+    expect(noteCheckOutcome(cwd, dir, 'auth', 0.9, 'user', 'sha').unlocked).toBe(true);
+    expect(readLocksSafe(dir).pendingUnlocks['auth']).toBeUndefined();
+  });
+
+  it('a FAILED check leaves it owed', () => {
+    notePendingUnlock(dir, 'auth', 's');
+    noteCheckOutcome(cwd, dir, 'auth', 0.2, 'user', 'sha');
+    expect(readLocksSafe(dir).pendingUnlocks['auth']).toBeDefined();
+  });
+
+  it('an agent-answered check cannot clear it', () => {
+    notePendingUnlock(dir, 'auth', 's');
+    noteCheckOutcome(cwd, dir, 'auth', 1, 'agent', 'sha');
+    expect(readLocksSafe(dir).pendingUnlocks['auth']).toBeDefined();
+  });
+
+  it('a skip settles it for now', () => {
+    notePendingUnlock(dir, 'auth', 's');
+    clearPendingUnlock(dir, 'auth');
+    expect(readLocksSafe(dir).pendingUnlocks).toEqual({});
+    clearPendingUnlock(dir, 'never-there'); // idempotent, no throw
+  });
+
+  it('survives a round-trip and tolerates garbage entries', () => {
+    notePendingUnlock(dir, 'auth', 's', 't');
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, 'locks.json'), 'utf8'));
+    raw.pendingUnlocks.junk = 42;
+    fs.writeFileSync(path.join(dir, 'locks.json'), JSON.stringify(raw));
+    expect(Object.keys(readLocksSafe(dir).pendingUnlocks)).toEqual(['auth']);
   });
 });

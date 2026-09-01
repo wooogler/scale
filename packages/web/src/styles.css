@@ -1358,3 +1358,14 @@ body {
   padding: 0.05rem 0.3rem;
   border-radius: 3px;
 }
+
+/* ---- owed-check badge: an async deny awaiting the user's check ---- */
+.owed-badge { pointer-events: none; }
+.owed-badge-bg {
+  fill: var(--panel, #1c2130);
+  stroke: var(--warn, #e0803a);
+  stroke-width: 1.5;
+}
+.owed-badge-icon { font-size: 11px; }
+.legend-owed { cursor: default; }
+.owed-note { color: var(--warn, #e0803a); }

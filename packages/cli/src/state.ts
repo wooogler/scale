@@ -577,6 +577,21 @@ export interface DriftEntry {
   cause: 'foreign' | 'self';
 }
 
+/**
+ * A territory the gate denied under ASYNC assessment and the user has not yet
+ * dealt with (PLAN-GATE §4 S3). This is the async user's to-do list: the edit
+ * was blocked, the agent taught instead of quizzing, and the check is owed
+ * later — in the map viewer or via /scale-study. It exists because a DENIED edit
+ * leaves no `touch` evidence (the PostToolUse hook never fires), so without it
+ * nothing downstream knew which component the user had actually been locked out
+ * of: SessionEnd quest generation picked from "touched" components, and the
+ * one that mattered was never among them.
+ */
+export interface PendingUnlock {
+  at: string;
+  sessionId: string;
+}
+
 export interface LocksRecord {
   version: 1;
   components: Record<string, LockEntry>;
@@ -584,12 +599,14 @@ export interface LocksRecord {
   progress: Record<string, number>;
   /** Territories re-locked by drift, keyed by component id. */
   drifted: Record<string, DriftEntry>;
+  /** Async denies awaiting the user's check, keyed by component id. */
+  pendingUnlocks: Record<string, PendingUnlock>;
   /** Last time the SessionStart drift digest was shown (ISO). */
   digestShownAt?: string;
 }
 
 export function emptyLocks(): LocksRecord {
-  return { version: 1, components: {}, progress: {}, drifted: {} };
+  return { version: 1, components: {}, progress: {}, drifted: {}, pendingUnlocks: {} };
 }
 
 /** Read locks.json, defaulting structure; malformed entries are dropped. */
@@ -634,8 +651,43 @@ export function readLocksSafe(dir: string): LocksRecord {
       };
     }
   }
+  if (r.pendingUnlocks && typeof r.pendingUnlocks === 'object' && !Array.isArray(r.pendingUnlocks)) {
+    for (const [id, v] of Object.entries(r.pendingUnlocks as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const e = v as Record<string, unknown>;
+      out.pendingUnlocks[id] = {
+        at: typeof e.at === 'string' ? e.at : '',
+        sessionId: typeof e.sessionId === 'string' ? e.sessionId : '',
+      };
+    }
+  }
   if (typeof r.digestShownAt === 'string') out.digestShownAt = r.digestShownAt;
   return out;
+}
+
+/** Record an async deny the user still owes a check for. Idempotent per id. */
+export function notePendingUnlock(
+  dir: string,
+  componentId: string,
+  sessionId: string,
+  now: string = new Date().toISOString(),
+): void {
+  withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    if (locks.pendingUnlocks[componentId]) return; // keep the first deny's timestamp
+    locks.pendingUnlocks[componentId] = { at: now, sessionId };
+    writeLocks(dir, locks);
+  });
+}
+
+/** The user dealt with it — unlocked, or skipped for the session. */
+export function clearPendingUnlock(dir: string, componentId: string): void {
+  withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    if (!locks.pendingUnlocks[componentId]) return;
+    delete locks.pendingUnlocks[componentId];
+    writeLocks(dir, locks);
+  });
 }
 
 /**
@@ -706,10 +758,11 @@ export function noteCheckOutcome(
     const checks = (locks.progress[componentId] ?? 0) + 1;
     if (checks >= config.unlock.checksRequired) {
       delete locks.progress[componentId];
-      // Recovering from a rebellion clears the rebellion note along with the
-      // lock — otherwise the digest would keep announcing a territory the user
-      // has already won back.
+      // Recovering clears the drift note and the async to-do along with the
+      // lock — otherwise the digest and the viewer would keep announcing a
+      // territory the user has already won back.
       delete locks.drifted[componentId];
+      delete locks.pendingUnlocks[componentId];
       locks.components[componentId] = { unlockedAt: now, sha: headSha, checks, via: 'check' };
       writeLocks(dir, locks);
       return { unlocked: true, alreadyUnlocked: false, checks };
