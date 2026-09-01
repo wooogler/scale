@@ -9,8 +9,6 @@ export interface CoverageConstants {
   validateDim: number;
   /** Minimum number of active validations before a component can be validated. */
   minActiveValidations: number;
-  /** Loyalty below this flips a previously-validated component to `stale`. */
-  staleLoyalty: number;
   /** Relative weights of the three dims in the weighted mean. */
   dimWeights: Record<keyof Dimensions, number>;
 }
@@ -23,7 +21,6 @@ export const DEFAULT_CONSTANTS: CoverageConstants = {
   emaAlpha: 0.5,
   validateDim: 0.6,
   minActiveValidations: 2,
-  staleLoyalty: 0.5,
   dimWeights: { structure: 1, concepts: 1, rationale: 1 },
 };
 
@@ -80,18 +77,22 @@ export interface ClassifyOpts {
  * Classify a component's coverage state from its (already-updated) record.
  *
  *  - `validated` when weighted dims ≥ validateDim AND ≥ minActiveValidations.
- *  - `stale` when it was previously validated but loyalty < staleLoyalty.
  *  - `explored` once any passive signal has landed (or it was already beyond fog).
  *  - `fog` otherwise.
+ *
+ * `stale` is deliberately NOT decided here. Rebellion needs authorship-split
+ * churn, which only {@link recomputeDrift} is given, and this function used to
+ * derive it a second way (from `loyalty`) — two rules for one state, able to
+ * disagree. It never actually fired, because inside the evidence fold loyalty is
+ * always 1 and drift runs afterwards, so the branch was dead code pretending to
+ * be policy. Drift is now the single authority, and because the fold rebuilds
+ * state from scratch every run, `stale` is never sticky: a recovered component
+ * comes out of the fold `validated` and drift decides again.
  */
 export function classifyState(prev: ComponentCoverage, opts: ClassifyOpts = {}): CoverageState {
   const k = { ...DEFAULT_CONSTANTS, ...opts.constants };
   const activeValidations = opts.activeValidations ?? 0;
   const weighted = meanDims(prev.dims, k.dimWeights);
-
-  // Rebellion: a previously-validated component whose code drifted away.
-  const wasValidated = prev.state === 'validated' || prev.lastValidatedSha !== null;
-  if (wasValidated && prev.loyalty < k.staleLoyalty) return 'stale';
 
   // Conquest: enough weighted comprehension plus enough active validations.
   if (weighted >= k.validateDim && activeValidations >= k.minActiveValidations) {
@@ -99,7 +100,13 @@ export function classifyState(prev: ComponentCoverage, opts: ClassifyOpts = {}):
   }
 
   // Scouted: any passive contact, or already past fog.
-  if (opts.hadPassiveSignal || prev.state === 'explored' || prev.state === 'validated' || weighted > 0) {
+  if (
+    opts.hadPassiveSignal ||
+    prev.state === 'explored' ||
+    prev.state === 'validated' ||
+    prev.state === 'stale' ||
+    weighted > 0
+  ) {
     return 'explored';
   }
 

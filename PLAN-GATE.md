@@ -155,13 +155,13 @@ SessionStart/record가 계속 갱신한다.
 - web: Settings(assessment/enforcement/gate.enabled, perCommit·minChangedLines
   제거), i18n, data.ts
 - 테스트: gate-edit 판정 · 레이어링/마이그레이션 · locks · defer/unlock 경로
-### S2 — 반란 v2
-- authorship 필터: `lastValidatedSha..HEAD`에서 **git author ≠ 나**인 커밋의
-  churn만 반란 트리거로 (자기 churn은 기존 loyalty 유지, 더 높은 임계).
-  임계 knob: `rebellion.trigger: 'foreign-commit' | { churnRatio }`.
-- 반란 → 원장에서 재잠금. 회복 퀴즈는 foreign diff를 grounding에 포함
-  (P2의 neighbours 블록 옆에 diff 블록 추가).
-- 알림은 일일 다이제스트 (SessionStart 문구).
+### ✅ S2 — 반란 v2 (메커니즘) — 완료. **결과는 §11 참조.**
+- authorship 필터 ✅ · 원장 재잠금 ✅ · 일일 다이제스트 ✅ · 반란 인지 deny 문구 ✅
+- ⏸ **S2b — diff grounding**: 회복 퀴즈에 foreign diff 블록. 측정 결과 반란을
+  일으킬 만한 diff는 최소 8.5k / 중앙값 19k / 최대 78k자라 **통째로 못 넣는다.**
+  → 결정론적 skeleton(sha·author·subject·numstat·hunk 함수명) + churn 순위로 자른
+  발췌 + 신뢰 경계 래핑 + anti-lookup 지시. 프롬프트 인젝션 표면이므로 S3의
+  서버 채점과 함께 간다.
 ### S3 — async 완성
 - deny 시 pending-unlock 기록 → 웹 뷰어 표면화, 다음 세션 /scale-study 안내
 - **서버 채점**: /api/quests에서 정답 제거, 채점을 serve로 이동 —
@@ -187,3 +187,67 @@ SessionStart/record가 계속 갱신한다.
 - 정책 변조 방지/탐지 — override가 정당하므로 무의미.
 - 절대 잠금 — hard도 개인 enforcement override로 풀 수 있다 (결정 §0-6의 귀결).
 - Claude Code 밖 편집(vim 등)의 게이트 — 불가능하고, 우회 신호는 측정 대상.
+
+## 11. S2 실행 결과 (2026-09-01)
+
+### 11.1 측정이 기본값을 바꾼 지점
+
+`trigger: 'any-foreign-commit'`을 **기본값으로 쓰면 안 된다**는 것이 측정으로 확정됐다.
+이 리포에서 커밋 1개가 평균 **7.9 / 37개 component**를 건드리고, 상위 component는
+커밋의 **56–60%**가 건드린다. 팀이 하루 몇 개의 PR만 머지해도 같은 영토에서 매일
+쫓겨난다 — 게이트가 러닝머신이 된다. 모드는 남겼지만 문서에 이 숫자를 박아뒀다.
+
+누적 churn/size 분포 (실측, 창=커밋 수):
+
+| 창 | 변경된 comp | ≥0.10 | ≥0.25 | ≥0.50 | ≥1.0 |
+|---|---|---|---|---|---|
+| 1 | 2 | 2 | 1 | 0 | 0 |
+| 3 | 22 | 14 | 8 | 3 | 0 |
+| 5 | 22 | 17 | 8 | 3 | 0 |
+| 10 | 24 | 19 | 12 | 3 | 0 |
+
+→ `foreignRatio: 0.25`, `selfRatio: 0.8`.
+
+**핵심 논거:** 재잠금 자체는 방해가 아니다. 그 영토를 *실제로 편집할 때만* deny가
+되고 그건 `maxPerSession`에 이미 걸린다. 과발화 비용이 유계이므로 foreign 쪽은
+민감하게 잡아도 된다. 반대로 self 쪽은 **edit gate가 쓰기 전에 이미 통과시킨**
+코드라 재잠금이 측정하는 게 타이핑량뿐 — 그래서 훨씬 높은 바.
+
+### 11.2 git 의미론 — 전부 실측
+
+| 항목 | 결과 |
+|---|---|
+| 머지 귀속 | 기본 `git log --numstat`은 머지 커밋을 건너뛰어 **원저자에게** 귀속. 내가 머지해도 동료 churn으로 잡힘 ✅ |
+| author vs committer | `%aE`(mailmap 정규화). rebase/squash는 committer를 덮어쓰므로 author만 살아남음. mailmap 없으면 `%ae`와 바이트 동일 |
+| rename | pathspec이 rename 이전 이력을 못 봄 + 전체 add로 계상. 그대로 둠 — 동료가 앵커된 파일을 옮겼으면 그 paper의 앵커도 stale이라 플래그가 맞는 답 |
+| per-commit vs net | 3커밋 구간에서 **+26%** (332 vs 264). 임계는 이 숫자 기준으로 새로 골랐지 물려받지 않음 |
+| conflict 머지 | 머저의 충돌 해소 라인은 안 보임 → **과소** 계상 (안전 방향) |
+| 로컬 `merge --squash` | author가 머저가 되어 동료 작업이 self로 읽힘 → 반란 미발화 (안전 방향) |
+
+### 11.3 구현 중 잡은 결함 3건
+
+1. **회복이 1회 체크로 안 됐다** (커밋 `9a8c438`). churn을 *직전* coverage.json의
+   앵커에서 재고 있어서, 방금 재검증된 component가 반란 이전 sha와 비교돼 같은
+   명령 안에서 다시 stale이 됐다. 재잠금을 붙이면 **통과한 체크가 방금 준 언락을
+   스스로 회수**한다. fold를 먼저 돌려 이번 회차 앵커에서 재도록 2단계로 분리.
+2. **NUL 바이트 2개가 소스 파일을 바이너리로 만들고 있었다.**
+   `quest-items.test.ts`(1개) / `distill-graph.mjs`(3개). git이 `-\t-`로 보고해
+   **churn 측정에서 영구히 안 보였다.** 이스케이프 시퀀스로 교체 + 측정 불가
+   foreign 변경은 그 자체를 사유로 처리(`unmeasurableForeign`).
+3. **churn 사전 필터가 틀렸다.** `git diff --name-only`(net)로 상위집합을 만들면
+   바뀌었다 되돌려진 파일이 빠진다 — 24개 앵커 깊이 중 **17개에서 위반**.
+   커밋 합집합(`git log --name-only`)으로 교체 후 위반 0.
+
+### 11.4 지연
+
+`scale context`(SessionStart 훅) — 37개 전부 앵커됨 + 15커밋 드리프트: **330ms**
+(훅 백스톱 1500ms). 사전 필터가 조용한 리포에서 37번의 git 워크를 1번으로 접는다.
+`gate edit`은 **git을 전혀 쓰지 않는다** (스냅샷 + 파일 I/O만).
+
+### 11.5 알려진 틈 (문서화하고 수용)
+
+- **스냅샷 지연**: 게이트는 마지막 recompute만큼만 최신이다. 동료 커밋을 pull한
+  직후~다음 SessionStart 사이에는 게이트가 모른다.
+- **10분 유예**: `recentlyAddressed`가 상태 검사보다 먼저라, 마지막 체크 후 10분
+  안에 도착한 반란은 그 창 동안 강제되지 않는다.
+- **로컬 squash-merge**: 동료 작업이 self로 읽힌다 (위 표). 안전 방향.

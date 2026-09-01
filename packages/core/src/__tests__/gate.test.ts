@@ -273,6 +273,58 @@ describe('gateDenyReason — the agent instruction', () => {
   });
 });
 
+describe('gateDenyReason — a rebellion is not a failure', () => {
+  it('names the collaborator and says the junior DID demonstrate it', () => {
+    const r = gateDenyReason('auth', cfg(), {
+      cause: 'foreign',
+      authors: ['ada@example.com'],
+    });
+    expect(r).toContain('REBELLED');
+    expect(r).toContain('DID demonstrate');
+    expect(r).toContain('ada@example.com');
+    expect(r).toContain('not a failure on their part');
+    // The whole point: it must NOT accuse them of never having understood it.
+    expect(r).not.toContain('comprehension not yet demonstrated');
+  });
+
+  it('a self rebellion says so, without naming anyone', () => {
+    const r = gateDenyReason('auth', cfg(), { cause: 'self', authors: [] });
+    expect(r).toContain('their own work');
+    expect(r).toContain('DID demonstrate');
+    expect(r).not.toContain('REBELLED');
+  });
+
+  it('steers the check at what changed, not a re-ask', () => {
+    const r = gateDenyReason('auth', cfg(), { cause: 'foreign', authors: ['x@y.z'] });
+    expect(r).toContain('WHAT CHANGED');
+    expect(r).toContain('rather than re-asking');
+  });
+
+  it('with no rebellion note it is the plain never-demonstrated wording', () => {
+    const r = gateDenyReason('auth', cfg());
+    expect(r).toContain('comprehension not yet demonstrated');
+    expect(r).not.toContain('DID demonstrate');
+  });
+
+  it('an unnamed foreign author still reads sensibly', () => {
+    const r = gateDenyReason('auth', cfg(), { cause: 'foreign', authors: [] });
+    expect(r).toContain('someone else');
+  });
+});
+
+describe('gateEditDecision — rebellion notes reach the deny text', () => {
+  it('a re-locked component denies with its rebellion wording', () => {
+    const d = gateEditDecision(
+      input({
+        coverage: coverageOf({ a: comp({ state: 'stale', lastValidatedSha: 'abc' }) }),
+        rebellions: { a: { cause: 'foreign', authors: ['ada@example.com'] } },
+      }),
+    );
+    expect(d.action).toBe('deny');
+    expect(d.reason).toContain('ada@example.com');
+  });
+});
+
 describe('resolveConfig — the policy layer', () => {
   it('precedence: schema defaults < policy < user', () => {
     const policy = { budgets: { maxPerSession: 5 }, gate: { modality: 'socratic' } };

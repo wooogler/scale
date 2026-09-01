@@ -57,6 +57,63 @@ export const UnlockConfigSchema = z
 export type UnlockConfig = z.infer<typeof UnlockConfigSchema>;
 
 /**
+ * How rebellion fires — the re-lock trigger (PLAN-GATE §4 S2).
+ *
+ * `ratio` (default) compares churn since the component's `lastValidatedSha`
+ * against its size. `any-foreign-commit` re-locks on a single foreign commit,
+ * which sounds principled and is a trap: measured on this repo, one commit
+ * touches a mean of 7.9 of 37 components and the busiest are touched by ~60% of
+ * commits, so on a team merging a few PRs a day it would re-lock the same
+ * territory daily forever. It stays available for a lead who wants maximum
+ * strictness on a small, well-partitioned codebase.
+ */
+export const RebellionTriggerSchema = z.enum(['ratio', 'any-foreign-commit']);
+export type RebellionTrigger = z.infer<typeof RebellionTriggerSchema>;
+
+export const RebellionConfigSchema = z
+  .object({
+    trigger: RebellionTriggerSchema.default('ratio'),
+    /**
+     * Foreign churn ÷ component size at or above which the territory re-locks.
+     *
+     * Deliberately LOWER than `selfRatio`: a teammate's change is code the user
+     * has never seen, so a quarter of the component being rewritten by someone
+     * else is already reason to re-check. Over-firing is cheap — re-locking is
+     * not itself an interruption, it only becomes one if the user edits that
+     * territory, and the deny budget still caps that at `maxPerSession`.
+     */
+    foreignRatio: z.number().min(0).max(1).default(0.25),
+    /**
+     * Self churn ÷ size. Much higher, because the edit gate already cleared the
+     * user BEFORE they wrote this code — re-locking them on their own work
+     * mostly measures how much they typed. It is not zero, though: it closes
+     * the one real hole, where a user unlocks a component with a single check
+     * and then rewrites it wholesale over weeks with the agent.
+     */
+    selfRatio: z.number().min(0).max(1).default(0.8),
+    /** How often SessionStart mentions rebellions. `off` never mentions them. */
+    digest: z.enum(['daily', 'session', 'off']).default('daily'),
+  })
+  .default({});
+export type RebellionConfig = z.infer<typeof RebellionConfigSchema>;
+
+/**
+ * Who the user is IN GIT — the identity rebellion attribution compares against.
+ * Personal, never team policy.
+ *
+ * `git config user.email` is the base answer; `emails` adds the other addresses
+ * that are also this person (a work address, a GitHub `users.noreply` address).
+ * When NO identity can be resolved at all, attribution fails toward SELF, so a
+ * misconfigured git never locks anyone out of their own codebase.
+ */
+export const IdentityConfigSchema = z
+  .object({
+    emails: z.array(z.string()).default([]),
+  })
+  .default({});
+export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
+
+/**
  * Files the gate never fires on, as globish patterns over repo-relative paths
  * (`*` = within a segment, `**` = across segments). New files are ALREADY
  * exempt by construction — the gate maps files to components through the exact
@@ -221,8 +278,6 @@ export const ThresholdsSchema = z.object({
   emaAlpha: z.number().min(0).max(1).default(0.5),
   /** Weighted-dims bar for `validated`. */
   validateDim: z.number().default(0.6),
-  /** Loyalty below this → `stale` (rebellion). */
-  staleLoyalty: z.number().default(0.5),
   /** Cap on structure credit from passive touch/prompt alone. */
   passiveStructureCap: z.number().default(0.3),
   /** Cap on structure credit from paper_read. */
@@ -279,9 +334,11 @@ export const ScaleConfigSchema = z.preprocess(
   z.object({
     user: z.string(),
     language: LanguageSchema.default('en'),
+    identity: IdentityConfigSchema,
     gate: GateConfigSchema,
     unlock: UnlockConfigSchema,
     exempt: ExemptConfigSchema,
+    rebellion: RebellionConfigSchema,
     budgets: BudgetsSchema.default({}),
     thresholds: ThresholdsSchema.default({}),
     models: ModelsConfigSchema,

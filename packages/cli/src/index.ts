@@ -22,6 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { Command } from 'commander';
 import {
   type Language,
+  type ScaleConfig,
   type EvidenceEntry,
   type MapJson,
   type LoadedScale,
@@ -37,6 +38,7 @@ import {
   emptyComponentCoverage,
   meanDims,
   gateEditDecision,
+  rebellionCause,
   pathMatchesAny,
   migrateLegacyConfig,
   resolveConfig,
@@ -56,6 +58,7 @@ import {
 import { loadDependsOnEdges, DEPS_MIN_COUNT } from './deps.js';
 import {
   recomputeCoverageFromDisk,
+  myIdentities,
   coverageCounts,
   type RecomputeResult,
 } from './coverage.js';
@@ -74,6 +77,9 @@ import {
   loadEffectiveConfig,
   readLocksSafe,
   noteCheckOutcome,
+  syncLocksWithRebellion,
+  pendingDigest,
+  markDigestShown,
   appendEvidence,
   readQuestsSafe,
   type SessionRecord,
@@ -293,7 +299,8 @@ function fmt(n: number): string {
  * When the junior's interaction language is 'ko', one extra line tells the agent
  * to deliver comprehension checks in Korean; 'en' adds nothing.
  */
-function contextSummary(res: RecomputeResult, language: Language = 'en'): string {
+function contextSummary(res: RecomputeResult, config: ScaleConfig, dir: string): string {
+  const language: Language = config.language;
   const { coverage, map } = res;
   const counts = coverageCounts(coverage, map);
   const scored = map.nodes.map((n) => {
@@ -305,7 +312,10 @@ function contextSummary(res: RecomputeResult, language: Language = 'en'): string
   lines.push(
     `SCALE: ${counts.total} territories, unification ${Math.round(
       counts.progress * 100,
-    )}% (${counts.validated} validated, ${counts.explored} explored, ${counts.fog} fog).`,
+    )}% (${counts.validated} validated, ${counts.explored} explored, ${counts.fog} fog` +
+      // `stale` was omitted, so a rebellion made the breakdown stop summing to
+      // the total — "1 territories … (0 validated, 0 explored, 0 fog)".
+      `${counts.stale > 0 ? `, ${counts.stale} stale` : ''}).`,
   );
 
   const weak = scored
@@ -314,6 +324,30 @@ function contextSummary(res: RecomputeResult, language: Language = 'en'): string
     .slice(0, 3)
     .map((s) => (s.state === 'fog' ? `${s.id} (fog)` : `${s.id} (explored ${fmt(s.mean)})`));
   if (weak.length > 0) lines.push(`You're weak on: ${weak.join(', ')}.`);
+
+  // Rebellion digest. Cadence-limited (default daily) because on a real team
+  // these arrive with every merged PR, and a notice repeated every session is a
+  // notice nobody reads. It names WHO changed the territory — that is the whole
+  // point of the authorship split, and it is what makes the re-lock legible
+  // rather than arbitrary.
+  const digest = pendingDigest(dir, config.rebellion.digest);
+  if (digest.length > 0) {
+    const shown = digest.slice(0, 3).map(({ id, entry }) => {
+      const who =
+        entry.cause === 'self'
+          ? 'your own rewrite'
+          : entry.foreignAuthors.length > 0
+            ? entry.foreignAuthors.join(', ')
+            : 'someone else';
+      return `${id} (${who})`;
+    });
+    const more = digest.length > shown.length ? ` +${digest.length - shown.length} more` : '';
+    lines.push(
+      `Rebellion — ${digest.length} territory you had earned changed and is locked again: ` +
+        `${shown.join('; ')}${more}. Pass its check (/scale-study <id>) to unlock it.`,
+    );
+    markDigestShown(dir);
+  }
 
   const stale = scored.filter((s) => s.state === 'stale').map((s) => s.id);
   if (stale.length > 0) {
@@ -412,8 +446,26 @@ program
       console.log(`SCALE: coverage unavailable (${(err as Error).message}).`);
       return;
     }
+    // Rebellion: this is the moment fresh git-measured drift exists, so it is
+    // where re-locking happens (PLAN-GATE §4 S2). Territory the user had earned
+    // and whose code has since moved goes back behind the gate.
+    const detail: Record<
+      string,
+      { sinceSha?: string | null; foreignAuthors?: string[]; cause?: 'foreign' | 'self' }
+    > = {};
+    for (const [id, comp] of Object.entries(res.coverage.components)) {
+      if (comp.state !== 'stale') continue;
+      const c = res.churn[id];
+      detail[id] = {
+        sinceSha: comp.lastValidatedSha,
+        foreignAuthors: c?.foreignAuthors ?? [],
+        cause: rebellionCause(c ?? { foreign: 0, self: 0 }, res.sizes[id] ?? 0, res.config) ?? 'foreign',
+      };
+    }
+    syncLocksWithRebellion(dir, res.coverage.components, detail);
+
     // Per-user interaction language (config is optional pre-`init` → 'en').
-    console.log(contextSummary(res, contextConfig.language));
+    console.log(contextSummary(res, contextConfig, dir));
   });
 
 // ---------------------------------------------------------------------------
@@ -475,6 +527,26 @@ interface StatusProvince {
 }
 
 /** Assemble the structured status view for the repo at `cwd`. */
+/**
+ * Who git thinks this user is, plus how much of the recent history that claim
+ * actually matches. The ratio is the diagnostic: a participant whose laptop is
+ * configured with a different address than their commits carry would otherwise
+ * have every one of their own commits read as a collaborator's, re-locking the
+ * whole map with nothing on screen to explain it.
+ */
+function resolveIdentityStatus(
+  cwd: string,
+  config: ScaleConfig,
+): { emails: string[]; recentCommits: number; mineOfRecent: number } {
+  const emails = [...myIdentities(cwd, config)].sort();
+  const authors = git(cwd, ['log', '--format=%aE', '-50'])
+    .split('\n')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const mine = emails.length === 0 ? 0 : authors.filter((a) => emails.includes(a)).length;
+  return { emails, recentCommits: authors.length, mineOfRecent: mine };
+}
+
 function buildStatus(cwd: string, res: RecomputeResult, dir: string) {
   const { coverage, map } = res;
   const counts = coverageCounts(coverage, map);
@@ -523,6 +595,8 @@ function buildStatus(cwd: string, res: RecomputeResult, dir: string) {
       error: eff.policyError,
     },
     locks: { unlocked: unlockedCount, locked: map.nodes.length - unlockedCount },
+    rebellions: Object.keys(locks.rebellions).sort(),
+    identity: resolveIdentityStatus(cwd, config),
     models: config.models,
     progress: counts.progress,
     counts: {
@@ -560,6 +634,22 @@ function renderStatus(s: StatusView): string {
     `  policy: ${policyLabel}   territories unlocked for editing: ` +
       `${s.locks.unlocked}/${s.locks.unlocked + s.locks.locked}`,
   );
+  // Identity is load-bearing and silently wrong is its worst failure: every
+  // commit read as a stranger's re-locks the whole map, every commit read as
+  // yours means rebellion never fires. Neither is visible anywhere else, so it
+  // is stated here with the evidence — how much of the recent history it
+  // actually matched.
+  const idLabel =
+    s.identity.emails.length > 0 ? s.identity.emails.join(', ') : '(none — all churn reads as yours)';
+  lines.push(
+    `  git identity: ${idLabel}` +
+      (s.identity.recentCommits > 0
+        ? `   (${s.identity.mineOfRecent}/${s.identity.recentCommits} of recent commits read as yours)`
+        : ''),
+  );
+  if (s.rebellions.length > 0) {
+    lines.push(`  re-locked by rebellion: ${s.rebellions.join(', ')}`);
+  }
   lines.push('');
 
   if (s.counts.total === 0) {
@@ -901,6 +991,12 @@ gate
     const map = readMapJsonSafe(cwd);
     const importance: Record<string, number> = {};
     if (map) for (const n of map.nodes) importance[n.id] = n.importance;
+
+    // Apply any rebellion the snapshot already knows about before reading the
+    // ledger. Pure file work, no git — the drift itself was measured by
+    // whichever recompute ran last, and this only makes it bite. Without it a
+    // rebellion noticed mid-session would not gate until the next SessionStart.
+    syncLocksWithRebellion(dir, coverage.components);
     const locks = readLocksSafe(dir);
 
     // Budget accounting is a read-decide-write; take the session lock for the
@@ -931,6 +1027,12 @@ gate
         },
         unlocked: Object.keys(locks.components),
         sessionSkips: session.sessionSkips,
+        rebellions: Object.fromEntries(
+          Object.entries(locks.rebellions).map(([id, r]) => [
+            id,
+            { cause: r.cause, authors: r.foreignAuthors },
+          ]),
+        ),
         recentlyAddressed,
         now,
         importance,

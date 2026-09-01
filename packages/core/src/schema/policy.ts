@@ -11,6 +11,10 @@ import { ScaleConfigSchema, migrateLegacyConfig, type ScaleConfig } from './conf
  * is nothing to tamper with, only defaults to differ from, and the differing
  * itself is study data.
  *
+ * `identity` is deliberately NOT policy-settable: which git addresses are ME is
+ * a personal fact, and a policy that could set it could hand one member another
+ * member's attribution.
+ *
  * Precedence, leaf-key deep merge:
  *
  *   schema defaults  <  .scale/policy.json  <  user config.json
@@ -21,7 +25,14 @@ import { ScaleConfigSchema, migrateLegacyConfig, type ScaleConfig } from './conf
  */
 
 /** The config sections a team policy may default. Everything else is personal. */
-export const POLICY_SECTIONS = ['gate', 'unlock', 'exempt', 'budgets', 'thresholds'] as const;
+export const POLICY_SECTIONS = [
+  'gate',
+  'unlock',
+  'exempt',
+  'rebellion',
+  'budgets',
+  'thresholds',
+] as const;
 export type PolicySection = (typeof POLICY_SECTIONS)[number];
 
 export interface ResolvedConfig {

@@ -182,3 +182,158 @@ describe('rebellion — drift against a real repo', () => {
     expect(comp.loyalty).toBeGreaterThan(0.9);
   });
 });
+
+describe('rebellion — authorship (PLAN-GATE S2)', () => {
+  /** Commit as someone else, then restore the local identity. */
+  function commitAs(email: string, name: string, message: string): void {
+    git(['add', '-A']);
+    git(['commit', '-qm', message], {
+      GIT_AUTHOR_EMAIL: email,
+      GIT_AUTHOR_NAME: name,
+      GIT_COMMITTER_EMAIL: email,
+      GIT_COMMITTER_NAME: name,
+    });
+  }
+
+  /** Bring `widget` to validated, then return its state after `mutate` + recompute. */
+  function afterChange(mutate: () => void): string {
+    seedComponent('widget', 40);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    recordChecks('widget', 4, Date.parse('2026-09-01T00:00:00Z'));
+    expect(recomputeCoverageFromDisk(repo).coverage.components['widget']!.state).toBe('validated');
+    mutate();
+    return recomputeCoverageFromDisk(repo).coverage.components['widget']!.state;
+  }
+
+  it('a MODERATE change by a collaborator re-locks the territory', () => {
+    const state = afterChange(() => {
+      fs.appendFileSync(
+        path.join(repo, 'src', 'widget.ts'),
+        Array.from({ length: 14 }, (_, i) => `// colleague ${i}`).join('\n') + '\n',
+      );
+      commitAs('colleague@example.com', 'Colleague', 'colleague edit');
+    });
+    expect(state).toBe('stale');
+  });
+
+  it('the SAME change made by the user does not', () => {
+    // The asymmetry, end to end and against real git: identical churn, opposite
+    // verdicts, decided only by who authored the commit.
+    const state = afterChange(() => {
+      fs.appendFileSync(
+        path.join(repo, 'src', 'widget.ts'),
+        Array.from({ length: 14 }, (_, i) => `// mine ${i}`).join('\n') + '\n',
+      );
+      git(['add', '-A']);
+      git(['commit', '-qm', 'my edit']);
+    });
+    expect(state).toBe('validated');
+  });
+
+  it('a total self-rewrite still rebels — the one hole self-churn closes', () => {
+    const state = afterChange(() => {
+      writeSource('widget', 40, 'my total rewrite');
+      git(['add', '-A']);
+      git(['commit', '-qm', 'my rewrite']);
+    });
+    expect(state).toBe('stale');
+  });
+
+  it('merging a collaborator PR attributes the churn to THEM, not the merger', () => {
+    // Default `git log --numstat` skips merge commits, so the work stays on the
+    // commit its author wrote. Without that, every reviewer who merges would
+    // absorb their teammates' churn as self churn and never rebel.
+    const state = afterChange(() => {
+      const main = git(['rev-parse', '--abbrev-ref', 'HEAD']); // init.defaultBranch varies
+      git(['checkout', '-qb', 'feature']);
+      fs.appendFileSync(
+        path.join(repo, 'src', 'widget.ts'),
+        Array.from({ length: 20 }, (_, i) => `// from the PR ${i}`).join('\n') + '\n',
+      );
+      commitAs('colleague@example.com', 'Colleague', 'PR work');
+      git(['checkout', '-q', main]);
+      git(['merge', '-q', '--no-ff', 'feature', '-m', 'Merge PR']); // merged BY me
+    });
+    expect(state).toBe('stale');
+  });
+
+  it('with NO resolvable git identity, everything reads as self (fails safe)', () => {
+    // A laptop with no `user.email` must not turn every teammate — and every
+    // one of the user's OWN commits — into a stranger, which would re-lock the
+    // whole map with nothing on screen to explain it. The safe direction is the
+    // opposite one: attribute everything to self, where only the high bar
+    // applies. `scale status` reports the identity so this stays visible.
+    seedComponent('widget', 40);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    recordChecks('widget', 4, Date.parse('2026-09-01T00:00:00Z'));
+    recomputeCoverageFromDisk(repo);
+
+    git(['config', '--unset', 'user.email']);
+    fs.appendFileSync(
+      path.join(repo, 'src', 'widget.ts'),
+      Array.from({ length: 14 }, (_, i) => `// colleague ${i}`).join('\n') + '\n',
+    );
+    commitAs('colleague@example.com', 'Colleague', 'colleague edit');
+
+    const res = recomputeCoverageFromDisk(repo);
+    // The very change that re-locked in the first test of this block is now
+    // scored entirely as self, and stays below the self bar.
+    expect(res.churn['widget']?.foreign).toBe(0);
+    expect(res.churn['widget']!.self).toBeGreaterThan(0);
+    expect(res.coverage.components['widget']!.state).toBe('validated');
+  });
+});
+
+describe('rebellion — the churn pre-filter must never skip a real change', () => {
+  it('sees churn on a file that was changed and then reverted', () => {
+    // The pre-filter asks git which files moved since the OLDEST anchor, to skip
+    // per-component walks. Using `git diff --name-only` there was wrong: a net
+    // diff omits a file changed and then reverted inside the range, while a
+    // nearer anchor still sees it as changed. Measured on the real repo, that
+    // broke the superset property for 17 of 24 anchor depths — each one a
+    // component whose rebellion would have been silently skipped.
+    seedComponent('widget', 40);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'initial']);
+    const original = fs.readFileSync(path.join(repo, 'src', 'widget.ts'), 'utf8');
+
+    // A second, older-anchored component so the oldest anchor predates the churn.
+    seedComponent('other', 40);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'add other']);
+    recordChecks('other', 4, Date.parse('2026-09-01T00:00:00Z'));
+    recomputeCoverageFromDisk(repo);
+
+    // widget validated LATER, so its anchor is nearer than other's.
+    writeSource('widget', 40, 'v2');
+    git(['add', '-A']);
+    git(['commit', '-qm', 'widget v2']);
+    recordChecks('widget', 4, Date.parse('2026-09-02T00:00:00Z'));
+    recomputeCoverageFromDisk(repo);
+
+    // A colleague rewrites widget, then reverts it exactly. Net diff from the
+    // OLD anchor: unchanged. Real churn since widget's anchor: substantial.
+    writeSource('widget', 40, 'colleague churn');
+    git(['add', '-A']);
+    git(['commit', '-qm', 'colleague rewrite'], {
+      GIT_AUTHOR_EMAIL: 'colleague@example.com',
+      GIT_AUTHOR_NAME: 'Colleague',
+      GIT_COMMITTER_EMAIL: 'colleague@example.com',
+      GIT_COMMITTER_NAME: 'Colleague',
+    });
+    fs.writeFileSync(path.join(repo, 'src', 'widget.ts'), original);
+    git(['add', '-A']);
+    git(['commit', '-qm', 'revert'], {
+      GIT_AUTHOR_EMAIL: 'colleague@example.com',
+      GIT_AUTHOR_NAME: 'Colleague',
+      GIT_COMMITTER_EMAIL: 'colleague@example.com',
+      GIT_COMMITTER_NAME: 'Colleague',
+    });
+
+    const res = recomputeCoverageFromDisk(repo);
+    expect(res.churn['widget']?.foreign ?? 0).toBeGreaterThan(0);
+    expect(res.coverage.components['widget']!.state).toBe('stale');
+  });
+});

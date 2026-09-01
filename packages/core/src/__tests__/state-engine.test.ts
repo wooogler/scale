@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyEvidence,
   recomputeDrift,
+  rebellionCause,
   materializeCoverage,
   emptyComponentCoverage,
   ScaleConfigSchema,
@@ -185,14 +186,14 @@ describe('recomputeDrift', () => {
       [socratic('s1', 'a', 1), socratic('s2', 'a', 1), socratic('s3', 'a', 1)],
       { map, config, user: 'u', headSha: HEAD, now: 'T' },
     );
-    const drifted = recomputeDrift(validated, { churn: { a: 200 }, sizes: { a: 100 }, config });
+    const drifted = recomputeDrift(validated, { churn: { a: { foreign: 200, self: 0 } }, sizes: { a: 100 }, config });
     expect(drifted.components.a?.loyalty).toBe(0);
     expect(drifted.components.a?.state).toBe('stale');
   });
 
   it('never touches components that were never validated', () => {
     const cov = applyEvidence(seed(), touch('t1', ['a']), config);
-    const drifted = recomputeDrift(cov, { churn: { a: 999 }, sizes: { a: 1 }, config });
+    const drifted = recomputeDrift(cov, { churn: { a: { foreign: 999, self: 0 } }, sizes: { a: 1 }, config });
     expect(drifted.components.a?.loyalty).toBe(1);
     expect(drifted.components.a?.state).toBe('explored');
   });
@@ -264,7 +265,7 @@ describe('materializeCoverage', () => {
       config,
       user: 'u',
       headSha: 'ZZZ',
-      churn: { a: 200 },
+      churn: { a: { foreign: 200, self: 0 } },
       sizes: { a: 100 },
       now: 'T',
     } as const;
@@ -287,5 +288,91 @@ describe('materializeCoverage', () => {
     const a = materializeCoverage(inOrder, { map, config, user: 'u', headSha: HEAD, now: 'T' });
     const b = materializeCoverage(shuffled, { map, config, user: 'u', headSha: HEAD, now: 'T' });
     expect(a).toEqual(b);
+  });
+});
+
+describe('rebellionCause — the single rebellion rule (PLAN-GATE S2)', () => {
+  const cfg = (rebellion: Record<string, unknown> = {}): ScaleConfig =>
+    ScaleConfigSchema.parse({ user: 'u', rebellion });
+
+  it('foreign churn fires at the (lower) foreign bar', () => {
+    // 30/100 = 0.30 ≥ foreignRatio 0.25
+    expect(rebellionCause({ foreign: 30, self: 0 }, 100, cfg())).toBe('foreign');
+    expect(rebellionCause({ foreign: 20, self: 0 }, 100, cfg())).toBeNull();
+  });
+
+  it('the SAME churn from the user themselves does not fire', () => {
+    // This asymmetry is the design: the edit gate cleared them before they wrote
+    // it, so their own work is not evidence their understanding lapsed.
+    expect(rebellionCause({ foreign: 0, self: 30 }, 100, cfg())).toBeNull();
+    expect(rebellionCause({ foreign: 0, self: 85 }, 100, cfg())).toBe('self');
+  });
+
+  it('foreign wins when both bars are crossed — it is the more informative cause', () => {
+    expect(rebellionCause({ foreign: 50, self: 90 }, 100, cfg())).toBe('foreign');
+  });
+
+  it('an unmeasurable foreign change (binary-classified file) fires on its own', () => {
+    expect(
+      rebellionCause({ foreign: 0, self: 0, unmeasurableForeign: true }, 100, cfg()),
+    ).toBe('foreign');
+    // A binary change the USER made is not a rebellion.
+    expect(rebellionCause({ foreign: 0, self: 0 }, 100, cfg())).toBeNull();
+  });
+
+  it('unknown size treats any churn as total, erring toward re-checking', () => {
+    expect(rebellionCause({ foreign: 1, self: 0 }, 0, cfg())).toBe('foreign');
+    expect(rebellionCause({ foreign: 0, self: 0 }, 0, cfg())).toBeNull();
+  });
+
+  it('any-foreign-commit mode fires on a single commit, whatever its size', () => {
+    const c = cfg({ trigger: 'any-foreign-commit' });
+    expect(rebellionCause({ foreign: 1, self: 0, foreignCommits: 1 }, 100000, c)).toBe('foreign');
+    expect(rebellionCause({ foreign: 0, self: 9999, foreignCommits: 0 }, 100, c)).toBeNull();
+  });
+
+  it('thresholds are policy-settable', () => {
+    const strict = cfg({ foreignRatio: 0.01 });
+    expect(rebellionCause({ foreign: 2, self: 0 }, 100, strict)).toBe('foreign');
+    const loose = cfg({ foreignRatio: 1 });
+    expect(rebellionCause({ foreign: 99, self: 0 }, 100, loose)).toBeNull();
+  });
+});
+
+describe('recomputeDrift — split churn', () => {
+  const cfg = ScaleConfigSchema.parse({ user: 'u' });
+  const validated = (): UserCoverage => ({
+    user: 'u',
+    updatedAt: '',
+    components: {
+      a: {
+        state: 'validated',
+        dims: { structure: 0.9, concepts: 0.9, rationale: 0.9 },
+        lastValidatedSha: 'abc',
+        loyalty: 1,
+      },
+    },
+  });
+
+  it('loyalty reflects TOTAL churn while the trigger reads only the split', () => {
+    const d = recomputeDrift(validated(), {
+      churn: { a: { foreign: 10, self: 40 } },
+      sizes: { a: 100 },
+      config: cfg,
+    });
+    // 50/100 churned → loyalty 0.5, but neither bar (foreign 0.10, self 0.40) is met.
+    expect(d.components.a?.loyalty).toBeCloseTo(0.5);
+    expect(d.components.a?.state).toBe('validated');
+  });
+
+  it('a component that is not validated is never re-locked by drift', () => {
+    const cov = validated();
+    cov.components.a!.state = 'explored';
+    const d = recomputeDrift(cov, {
+      churn: { a: { foreign: 999, self: 0 } },
+      sizes: { a: 1 },
+      config: cfg,
+    });
+    expect(d.components.a?.state).toBe('explored');
   });
 });

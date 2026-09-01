@@ -95,15 +95,31 @@ describe('classifyState', () => {
     const c: ComponentCoverage = { ...base, dims: { structure: 0.7, concepts: 0.7, rationale: 0.7 } };
     expect(classifyState(c, { activeValidations: 1 })).toBe('explored');
   });
-  it('flips a previously-validated component to stale when loyalty drops', () => {
+  it('does NOT decide stale — rebellion belongs to recomputeDrift alone', () => {
+    // classifyState used to flip a low-loyalty component to `stale` too, which
+    // meant two rules for one state. Rebellion needs authorship-split churn that
+    // only drift is given, and this branch never actually fired (loyalty is
+    // always 1 inside the fold, and drift runs after), so it was dead code
+    // masquerading as policy. Pinned so it does not grow back.
     const c: ComponentCoverage = {
       ...base,
       state: 'validated',
       dims: { structure: 0.7, concepts: 0.7, rationale: 0.7 },
       lastValidatedSha: 'abc',
-      loyalty: 0.4,
+      loyalty: 0,
     };
-    expect(classifyState(c, { activeValidations: 2 })).toBe('stale');
+    expect(classifyState(c, { activeValidations: 2 })).toBe('validated');
+  });
+
+  it('a stale component with fresh passive contact reads as explored', () => {
+    const c: ComponentCoverage = {
+      ...base,
+      state: 'stale',
+      dims: { structure: 0.7, concepts: 0.7, rationale: 0.7 },
+      lastValidatedSha: 'abc',
+      loyalty: 0.1,
+    };
+    expect(classifyState(c, { activeValidations: 1 })).toBe('explored');
   });
 });
 

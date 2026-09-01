@@ -17,6 +17,9 @@ import {
   loadEffectiveConfig,
   readUserConfigRaw,
   writeUserConfigRaw,
+  syncLocksWithRebellion,
+  pendingDigest,
+  markDigestShown,
 } from '../state.js';
 
 let dir: string; // fake ~/.scale/<repo-id>
@@ -147,5 +150,85 @@ describe('loadEffectiveConfig — layering on disk', () => {
     const eff = loadEffectiveConfig(cwd, dir);
     expect(eff.config.gate.assessment).toBe('async');
     expect(eff.config.gate.modality).toBe('socratic');
+  });
+});
+
+describe('syncLocksWithRebellion — re-locking (PLAN-GATE S2)', () => {
+  const unlock = (id: string): void => {
+    noteCheckOutcome(cwd, dir, id, 1, 'user', 'sha1');
+  };
+
+  it('re-locks an unlocked territory that has gone stale, and records why', () => {
+    unlock('auth');
+    const relocked = syncLocksWithRebellion(
+      dir,
+      { auth: { state: 'stale' } },
+      { auth: { sinceSha: 'abc123', foreignAuthors: ['ada@example.com'], cause: 'foreign' } },
+    );
+    expect(relocked).toEqual(['auth']);
+    const locks = readLocksSafe(dir);
+    expect(locks.components['auth']).toBeUndefined();
+    expect(locks.rebellions['auth']?.foreignAuthors).toEqual(['ada@example.com']);
+    expect(locks.rebellions['auth']?.sinceSha).toBe('abc123');
+  });
+
+  it('leaves validated and explored territory alone', () => {
+    unlock('auth');
+    expect(syncLocksWithRebellion(dir, { auth: { state: 'validated' } })).toEqual([]);
+    expect(syncLocksWithRebellion(dir, { auth: { state: 'explored' } })).toEqual([]);
+    expect(readLocksSafe(dir).components['auth']).toBeDefined();
+  });
+
+  it('is idempotent — a second sync re-locks nothing', () => {
+    unlock('auth');
+    expect(syncLocksWithRebellion(dir, { auth: { state: 'stale' } })).toEqual(['auth']);
+    expect(syncLocksWithRebellion(dir, { auth: { state: 'stale' } })).toEqual([]);
+  });
+
+  it('a passing check clears both the lock and the rebellion note', () => {
+    unlock('auth');
+    syncLocksWithRebellion(dir, { auth: { state: 'stale' } });
+    expect(readLocksSafe(dir).rebellions['auth']).toBeDefined();
+
+    const r = noteCheckOutcome(cwd, dir, 'auth', 0.9, 'user', 'sha2');
+    expect(r.unlocked).toBe(true);
+    const locks = readLocksSafe(dir);
+    expect(locks.components['auth']).toBeDefined();
+    expect(locks.rebellions['auth']).toBeUndefined();
+  });
+
+  it('an agent-answered check cannot recover a rebelled territory', () => {
+    unlock('auth');
+    syncLocksWithRebellion(dir, { auth: { state: 'stale' } });
+    expect(noteCheckOutcome(cwd, dir, 'auth', 1, 'agent', 'sha2').unlocked).toBe(false);
+    expect(readLocksSafe(dir).components['auth']).toBeUndefined();
+  });
+});
+
+describe('rebellion digest cadence', () => {
+  const rebel = (id: string): void => {
+    noteCheckOutcome(cwd, dir, id, 1, 'user', 's');
+    syncLocksWithRebellion(dir, { [id]: { state: 'stale' } });
+  };
+
+  it('daily shows once per day, then goes quiet', () => {
+    rebel('auth');
+    const day1 = new Date('2026-09-01T09:00:00Z');
+    expect(pendingDigest(dir, 'daily', day1)).toHaveLength(1);
+    markDigestShown(dir, day1.toISOString());
+    expect(pendingDigest(dir, 'daily', new Date('2026-09-01T23:00:00Z'))).toHaveLength(0);
+    // …and speaks again the next day.
+    expect(pendingDigest(dir, 'daily', new Date('2026-09-02T09:00:00Z'))).toHaveLength(1);
+  });
+
+  it('session ignores the stamp; off says nothing at all', () => {
+    rebel('auth');
+    markDigestShown(dir, '2026-09-01T09:00:00Z');
+    expect(pendingDigest(dir, 'session', new Date('2026-09-01T10:00:00Z'))).toHaveLength(1);
+    expect(pendingDigest(dir, 'off', new Date('2026-09-01T10:00:00Z'))).toHaveLength(0);
+  });
+
+  it('nothing to say when nothing rebelled', () => {
+    expect(pendingDigest(dir, 'session')).toHaveLength(0);
   });
 });

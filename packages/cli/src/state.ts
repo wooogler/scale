@@ -557,15 +557,39 @@ export interface LockEntry {
   via: 'check';
 }
 
+/**
+ * A territory that rebelled — re-locked because its code moved after the user
+ * had earned it (PLAN-GATE §4 S2).
+ *
+ * Informational: the RE-LOCK itself is simply the component's absence from
+ * `components`. This record exists so the SessionStart digest can say who
+ * changed it and the recovery check can be grounded in the right range, and it
+ * is cleared when the component is unlocked again.
+ */
+export interface RebellionEntry {
+  /** When we noticed. */
+  at: string;
+  /** Anchor the user had validated at — the recovery diff starts here. */
+  sinceSha: string;
+  /** Author emails of the foreign commits, sorted. Empty for a self rebellion. */
+  foreignAuthors: string[];
+  /** Which side of the split tripped the threshold. */
+  cause: 'foreign' | 'self';
+}
+
 export interface LocksRecord {
   version: 1;
   components: Record<string, LockEntry>;
   /** Passed-check counts still below `unlock.checksRequired`. */
   progress: Record<string, number>;
+  /** Territories re-locked by rebellion, keyed by component id. */
+  rebellions: Record<string, RebellionEntry>;
+  /** Last time the SessionStart rebellion digest was shown (ISO). */
+  digestShownAt?: string;
 }
 
 export function emptyLocks(): LocksRecord {
-  return { version: 1, components: {}, progress: {} };
+  return { version: 1, components: {}, progress: {}, rebellions: {} };
 }
 
 /** Read locks.json, defaulting structure; malformed entries are dropped. */
@@ -596,6 +620,21 @@ export function readLocksSafe(dir: string): LocksRecord {
       if (typeof v === 'number' && Number.isFinite(v) && v > 0) out.progress[id] = Math.trunc(v);
     }
   }
+  if (r.rebellions && typeof r.rebellions === 'object' && !Array.isArray(r.rebellions)) {
+    for (const [id, v] of Object.entries(r.rebellions as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const e = v as Record<string, unknown>;
+      out.rebellions[id] = {
+        at: typeof e.at === 'string' ? e.at : '',
+        sinceSha: typeof e.sinceSha === 'string' ? e.sinceSha : '',
+        foreignAuthors: Array.isArray(e.foreignAuthors)
+          ? e.foreignAuthors.filter((a): a is string => typeof a === 'string')
+          : [],
+        cause: e.cause === 'self' ? 'self' : 'foreign',
+      };
+    }
+  }
+  if (typeof r.digestShownAt === 'string') out.digestShownAt = r.digestShownAt;
   return out;
 }
 
@@ -645,6 +684,10 @@ export function noteCheckOutcome(
     const checks = (locks.progress[componentId] ?? 0) + 1;
     if (checks >= config.unlock.checksRequired) {
       delete locks.progress[componentId];
+      // Recovering from a rebellion clears the rebellion note along with the
+      // lock — otherwise the digest would keep announcing a territory the user
+      // has already won back.
+      delete locks.rebellions[componentId];
       locks.components[componentId] = { unlockedAt: now, sha: headSha, checks, via: 'check' };
       writeLocks(dir, locks);
       return { unlocked: true, alreadyUnlocked: false, checks };
@@ -656,6 +699,93 @@ export function noteCheckOutcome(
   // Lock contention: fail toward not-unlocking now — the next passed check (or
   // a retry) gets it. Never toward a phantom unlock.
   return result ?? { unlocked: false, alreadyUnlocked: false, checks: 0 };
+}
+
+/**
+ * Re-lock every unlocked territory that coverage now reports as `stale`
+ * (PLAN-GATE §4 S2). Returns the component ids newly re-locked.
+ *
+ * WHY IT IS ITS OWN STEP, not part of `recomputeCoverageFromDisk`: recompute is
+ * called from eight places, including `scale serve`'s GET /api/coverage — a read
+ * endpoint that must not quietly revoke a permission — and from quest
+ * generation. Re-locking is a deliberate act, so its callers name themselves:
+ * `scale context` (SessionStart, where fresh git-measured drift lands) and
+ * `scale gate edit` (so a rebellion any recompute noticed takes effect on the
+ * very next edit, without the gate ever running git).
+ *
+ * Pure file work — the caller supplies the already-computed states, and the
+ * optional `detail` only enriches the note. Fails toward NOT re-locking: if the
+ * lock is contended, nothing changes and the next caller tries again.
+ */
+export function syncLocksWithRebellion(
+  dir: string,
+  stateOf: Record<string, { state: string }>,
+  detail: Record<string, { sinceSha?: string | null; foreignAuthors?: string[]; cause?: 'foreign' | 'self' }> = {},
+  now: string = new Date().toISOString(),
+): string[] {
+  const current = readLocksSafe(dir);
+  const toRelock = Object.keys(current.components).filter(
+    (id) => stateOf[id]?.state === 'stale',
+  );
+  if (toRelock.length === 0) return [];
+
+  const done = withSessionLock(dir, () => {
+    // Re-read under the lock: a concurrent check may have just unlocked
+    // something, and re-locking a component someone passed a check on a
+    // millisecond ago would be exactly the wrong outcome.
+    const locks = readLocksSafe(dir);
+    const relocked: string[] = [];
+    for (const id of toRelock) {
+      if (!locks.components[id]) continue; // already gone
+      delete locks.components[id];
+      delete locks.progress[id];
+      const d = detail[id] ?? {};
+      locks.rebellions[id] = {
+        at: now,
+        sinceSha: d.sinceSha ?? '',
+        foreignAuthors: d.foreignAuthors ?? [],
+        cause: d.cause ?? 'foreign',
+      };
+      relocked.push(id);
+    }
+    if (relocked.length > 0) writeLocks(dir, locks);
+    return relocked;
+  });
+  return done ?? [];
+}
+
+/**
+ * Rebellions the SessionStart digest should mention, honoring the cadence knob.
+ * `daily` shows at most once per calendar day (UTC), `session` every session,
+ * `off` never. Marking is the caller's job via {@link markDigestShown}, so a
+ * failed render does not consume the day's notice.
+ */
+export function pendingDigest(
+  dir: string,
+  cadence: 'daily' | 'session' | 'off',
+  now: Date = new Date(),
+): { id: string; entry: RebellionEntry }[] {
+  if (cadence === 'off') return [];
+  const locks = readLocksSafe(dir);
+  const ids = Object.keys(locks.rebellions).sort();
+  if (ids.length === 0) return [];
+  if (cadence === 'daily' && locks.digestShownAt) {
+    const shown = new Date(locks.digestShownAt);
+    if (!Number.isNaN(shown.getTime()) &&
+        shown.toISOString().slice(0, 10) === now.toISOString().slice(0, 10)) {
+      return [];
+    }
+  }
+  return ids.map((id) => ({ id, entry: locks.rebellions[id]! }));
+}
+
+/** Stamp the digest as shown (best-effort — a lost stamp only repeats a notice). */
+export function markDigestShown(dir: string, now: string = new Date().toISOString()): void {
+  withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    locks.digestShownAt = now;
+    writeLocks(dir, locks);
+  });
 }
 
 // ---------------------------------------------------------------------------

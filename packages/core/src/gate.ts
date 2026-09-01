@@ -61,6 +61,11 @@ export interface GateEditInput {
   /** Components the user deferred THIS budget period (skip = session unlock). */
   sessionSkips: string[];
   /**
+   * componentId → why it was re-locked, for components locked by rebellion.
+   * Only shapes the deny wording; absence just means "never demonstrated".
+   */
+  rebellions?: Record<string, RebellionNote>;
+  /**
    * Components handled within the marker TTL — a fresh check result or a
    * deferred/completed intervention. This is what makes the retried edit pass
    * right after the tutor records, before the ledger read would even matter.
@@ -89,6 +94,17 @@ export interface GateDecision {
    * CLI records it (rate-limited via recentlyAddressed) but never blocks.
    */
   advisory?: boolean;
+}
+
+/**
+ * Why a locked component is locked, when it is locked because it REBELLED
+ * rather than because it was never checked. Supplied by the CLI from the lock
+ * ledger's rebellion notes.
+ */
+export interface RebellionNote {
+  cause: 'foreign' | 'self';
+  /** Author emails of the foreign commits; empty for a self rebellion. */
+  authors: string[];
 }
 
 /** A locked, touched component. */
@@ -156,21 +172,43 @@ function topCandidate(cands: Candidate[], importance?: Record<string, number>): 
  * the junior's `language` is 'ko' one extra sentence tells the agent to DELIVER
  * everything junior-facing in Korean (code identifiers stay English).
  */
-export function gateDenyReason(component: string, config: ScaleConfig): string {
+export function gateDenyReason(
+  component: string,
+  config: ScaleConfig,
+  rebellion?: RebellionNote,
+): string {
   const { modality, assessment, enforcement } = config.gate;
   const language: Language = config.language;
 
-  const head =
-    `SCALE edit gate — the '${component}' territory is LOCKED for this user ` +
-    `(comprehension not yet demonstrated), and this edit reaches into it. ` +
-    `This moment is for the JUNIOR, not for you to resolve.`;
+  // A rebellion is NOT "you never understood this". The junior demonstrated it;
+  // the code moved underneath them. Saying otherwise would be both false and
+  // demoralizing, and it would corrupt what the study is measuring — so the
+  // deny names the cause and, when someone else caused it, names them.
+  const head = rebellion
+    ? rebellion.cause === 'self'
+      ? `SCALE edit gate — the '${component}' territory is locked again. The junior ` +
+        `DID demonstrate this component before; since then it has been rewritten ` +
+        `far enough (by their own work) that the old check no longer covers it. ` +
+        `This moment is for the JUNIOR, not for you to resolve.`
+      : `SCALE edit gate — the '${component}' territory REBELLED and is locked again. ` +
+        `The junior DID demonstrate this component before; ` +
+        `${rebellion.authors.length > 0 ? rebellion.authors.join(', ') : 'someone else'} ` +
+        `has changed it since, so their understanding is out of date — this is not a ` +
+        `failure on their part. This moment is for the JUNIOR, not for you to resolve.`
+    : `SCALE edit gate — the '${component}' territory is LOCKED for this user ` +
+      `(comprehension not yet demonstrated), and this edit reaches into it. ` +
+      `This moment is for the JUNIOR, not for you to resolve.`;
 
   const body =
     assessment === 'sync'
       ? `Run the ${modality} comprehension check on '${component}' using the ` +
-        `scale-tutor skill and put it in front of them now. After they complete ` +
-        `it (scale record), retry the edit — a passing check unlocks this ` +
-        `territory durably.`
+        `scale-tutor skill and put it in front of them now` +
+        (rebellion
+          ? `, focused on WHAT CHANGED since they last validated it rather than ` +
+            `re-asking what they already answered`
+          : '') +
+        `. After they complete it (scale record), retry the edit — a passing ` +
+        `check unlocks this territory durably.`
       : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH ` +
         `instead — explain what '${component}' does and why, grounded in its ` +
         `paper under .scale/ and in what this edit is trying to change. Then ` +
@@ -255,7 +293,7 @@ export function gateEditDecision(input: GateEditInput): GateDecision {
     return {
       action: 'deny',
       component: pending,
-      reason: gateDenyReason(pending, config),
+      reason: gateDenyReason(pending, config, input.rebellions?.[pending]),
     };
   }
 
@@ -277,7 +315,7 @@ export function gateEditDecision(input: GateEditInput): GateDecision {
   return {
     action: 'deny',
     component: target.id,
-    reason: gateDenyReason(target.id, config),
+    reason: gateDenyReason(target.id, config, input.rebellions?.[target.id]),
     spendBudget: true,
   };
 }

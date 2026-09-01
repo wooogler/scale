@@ -155,10 +155,7 @@ export function applyEvidence(
     const state = classifyState(candidate, {
       hadPassiveSignal: isPassive,
       activeValidations: av[id] ?? 0,
-      constants: {
-        validateDim: config.thresholds.validateDim,
-        staleLoyalty: config.thresholds.staleLoyalty,
-      },
+      constants: { validateDim: config.thresholds.validateDim },
     });
 
     // Being `validated` anchors `lastValidatedSha` to the component's most recent
@@ -178,24 +175,82 @@ export function applyEvidence(
   return next;
 }
 
+/**
+ * Churn on one component since its `lastValidatedSha`, SPLIT BY AUTHORSHIP.
+ *
+ * The split is the whole point of rebellion v2: a teammate's change is code this
+ * user has never read, while their own change was already gated before they
+ * wrote it. Measured by the CLI (git); injected here so this stays pure.
+ */
+export interface ComponentChurn {
+  /** Lines (added + deleted) from commits authored by someone else. */
+  foreign: number;
+  /** Lines from commits authored by this user. */
+  self: number;
+  /** Distinct foreign author identities, sorted — for the digest and grounding. */
+  foreignAuthors?: string[];
+  /** How many foreign commits touched it (drives `any-foreign-commit`). */
+  foreignCommits?: number;
+  /**
+   * A foreign commit changed a file git reports no line counts for (it decided
+   * the file is binary — a single stray NUL byte in a source file is enough).
+   * The change is real but unmeasurable, so the ratio can never see it; treated
+   * as cause on its own rather than silently scoring zero.
+   */
+  unmeasurableForeign?: boolean;
+}
+
+const NO_CHURN: ComponentChurn = { foreign: 0, self: 0 };
+
 /** Options for {@link recomputeDrift}: injected churn/size per component. */
 export interface DriftOpts {
-  /** componentId → churned lines since its lastValidatedSha (default 0). */
-  churn: Record<string, number>;
+  /** componentId → authorship-split churn since its lastValidatedSha. */
+  churn: Record<string, ComponentChurn>;
   /** componentId → component size in lines (default 0 → unknown). */
   sizes: Record<string, number>;
   config: ScaleConfig;
 }
 
+/** Why a component rebelled, or null when it did not. */
+export type RebellionCause = 'foreign' | 'self' | null;
+
+/**
+ * Decide whether a component has rebelled. The SINGLE rebellion rule — see the
+ * note on {@link classifyState} for why it is not also derived from loyalty.
+ *
+ * `ratio` mode compares each side's churn against the component's size, with a
+ * deliberately lower bar for foreign churn than for self churn. When the size is
+ * unknown (0) any churn at all counts as total, which errs toward re-checking
+ * rather than toward silently trusting an unmeasurable component.
+ */
+export function rebellionCause(
+  churn: ComponentChurn,
+  size: number,
+  config: ScaleConfig,
+): RebellionCause {
+  const reb = config.rebellion;
+  if (reb.trigger === 'any-foreign-commit') {
+    return (churn.foreignCommits ?? 0) > 0 ? 'foreign' : null;
+  }
+  // A foreign change we cannot measure counts on its own — otherwise a binary-
+  // classified source file is a permanent blind spot.
+  if (churn.unmeasurableForeign) return 'foreign';
+  const ratio = (lines: number): number => (lines <= 0 ? 0 : size > 0 ? lines / size : 1);
+  if (ratio(churn.foreign) >= reb.foreignRatio) return 'foreign';
+  if (ratio(churn.self) >= reb.selfRatio) return 'self';
+  return null;
+}
+
 /**
  * Recompute loyalty/staleness for every component from INJECTED churn/sizes
- * (PLAN §5.1). PURE — no git/fs. For each component with a `lastValidatedSha`:
+ * (PLAN §5.1, PLAN-GATE §4 S2). PURE — no git/fs. For each component with a
+ * `lastValidatedSha`:
  *
- *   loyalty = 1 − min(1, churn / size)
+ *   loyalty = 1 − min(1, (foreign + self) / size)      // display: how far it moved
+ *   stale   = it was `validated` AND {@link rebellionCause} fires
  *
- * and a previously-`validated` component whose loyalty drops below
- * `staleLoyalty` flips to `stale`. Components never validated (lastValidatedSha
- * null) keep loyalty 1 and their fog/explored state. With empty churn/sizes,
+ * Components never validated (lastValidatedSha null) keep loyalty 1 and their
+ * fog/explored state — you cannot lose ground you never held. With empty churn,
  * loyalty stays 1 and nothing goes stale.
  */
 export function recomputeDrift(coverage: UserCoverage, opts: DriftOpts): UserCoverage {
@@ -204,17 +259,18 @@ export function recomputeDrift(coverage: UserCoverage, opts: DriftOpts): UserCov
   for (const [id, comp] of Object.entries(coverage.components)) {
     if (comp.lastValidatedSha === null) continue; // never validated → untouched
 
-    const churn = opts.churn[id] ?? 0;
+    const churn = opts.churn[id] ?? NO_CHURN;
     const size = opts.sizes[id] ?? 0;
+    const total = churn.foreign + churn.self;
     // No churn measured → no drift (this is the empty-defaults path). Otherwise
     // fall back to "fully churned" when the size is unknown (0-safe): a real
     // caller always supplies sizes, so this only bites on malformed input.
-    const loyalty = churn <= 0 ? 1 : size > 0 ? computeLoyalty(churn, size) : 0;
+    const loyalty = total <= 0 ? 1 : size > 0 ? computeLoyalty(total, size) : 0;
 
-    let state = comp.state;
-    if (comp.state === 'validated' && loyalty < opts.config.thresholds.staleLoyalty) {
-      state = 'stale';
-    }
+    const state =
+      comp.state === 'validated' && rebellionCause(churn, size, opts.config) !== null
+        ? 'stale'
+        : comp.state;
     next.components[id] = { ...comp, loyalty, state };
   }
 
@@ -230,7 +286,7 @@ export interface MaterializeOpts {
   /** HEAD sha stamped onto components that reach `validated` this run. */
   headSha: string;
   /** componentId → churned lines since lastValidatedSha (default empty). */
-  churn?: Record<string, number>;
+  churn?: Record<string, ComponentChurn>;
   /** componentId → component size in lines (default empty). */
   sizes?: Record<string, number>;
   /** Timestamp for `updatedAt`; caller supplies it to keep this pure/testable. */

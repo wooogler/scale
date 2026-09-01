@@ -26780,6 +26780,33 @@ var UnlockConfigSchema = external_exports.object({
   /** Passed checks needed before the component unlocks. */
   checksRequired: external_exports.number().int().min(1).default(1)
 }).default({});
+var RebellionTriggerSchema = external_exports.enum(["ratio", "any-foreign-commit"]);
+var RebellionConfigSchema = external_exports.object({
+  trigger: RebellionTriggerSchema.default("ratio"),
+  /**
+   * Foreign churn ÷ component size at or above which the territory re-locks.
+   *
+   * Deliberately LOWER than `selfRatio`: a teammate's change is code the user
+   * has never seen, so a quarter of the component being rewritten by someone
+   * else is already reason to re-check. Over-firing is cheap — re-locking is
+   * not itself an interruption, it only becomes one if the user edits that
+   * territory, and the deny budget still caps that at `maxPerSession`.
+   */
+  foreignRatio: external_exports.number().min(0).max(1).default(0.25),
+  /**
+   * Self churn ÷ size. Much higher, because the edit gate already cleared the
+   * user BEFORE they wrote this code — re-locking them on their own work
+   * mostly measures how much they typed. It is not zero, though: it closes
+   * the one real hole, where a user unlocks a component with a single check
+   * and then rewrites it wholesale over weeks with the agent.
+   */
+  selfRatio: external_exports.number().min(0).max(1).default(0.8),
+  /** How often SessionStart mentions rebellions. `off` never mentions them. */
+  digest: external_exports.enum(["daily", "session", "off"]).default("daily")
+}).default({});
+var IdentityConfigSchema = external_exports.object({
+  emails: external_exports.array(external_exports.string()).default([])
+}).default({});
 var ExemptConfigSchema = external_exports.object({
   paths: external_exports.array(external_exports.string()).default([])
 }).default({});
@@ -26843,8 +26870,6 @@ var ThresholdsSchema = external_exports.object({
   emaAlpha: external_exports.number().min(0).max(1).default(0.5),
   /** Weighted-dims bar for `validated`. */
   validateDim: external_exports.number().default(0.6),
-  /** Loyalty below this → `stale` (rebellion). */
-  staleLoyalty: external_exports.number().default(0.5),
   /** Cap on structure credit from passive touch/prompt alone. */
   passiveStructureCap: external_exports.number().default(0.3),
   /** Cap on structure credit from paper_read. */
@@ -26878,16 +26903,25 @@ function migrateLegacyConfig(raw) {
 var ScaleConfigSchema = external_exports.preprocess(migrateLegacyConfig, external_exports.object({
   user: external_exports.string(),
   language: LanguageSchema.default("en"),
+  identity: IdentityConfigSchema,
   gate: GateConfigSchema,
   unlock: UnlockConfigSchema,
   exempt: ExemptConfigSchema,
+  rebellion: RebellionConfigSchema,
   budgets: BudgetsSchema.default({}),
   thresholds: ThresholdsSchema.default({}),
   models: ModelsConfigSchema
 }));
 
 // packages/core/dist/schema/policy.js
-var POLICY_SECTIONS = ["gate", "unlock", "exempt", "budgets", "thresholds"];
+var POLICY_SECTIONS = [
+  "gate",
+  "unlock",
+  "exempt",
+  "rebellion",
+  "budgets",
+  "thresholds"
+];
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -26951,7 +26985,6 @@ var DEFAULT_CONSTANTS = {
   emaAlpha: 0.5,
   validateDim: 0.6,
   minActiveValidations: 2,
-  staleLoyalty: 0.5,
   dimWeights: { structure: 1, concepts: 1, rationale: 1 }
 };
 function emaUpdate(prev, score, alpha = DEFAULT_CONSTANTS.emaAlpha) {
@@ -26985,13 +27018,10 @@ function classifyState(prev, opts = {}) {
   const k = { ...DEFAULT_CONSTANTS, ...opts.constants };
   const activeValidations = opts.activeValidations ?? 0;
   const weighted = meanDims(prev.dims, k.dimWeights);
-  const wasValidated = prev.state === "validated" || prev.lastValidatedSha !== null;
-  if (wasValidated && prev.loyalty < k.staleLoyalty)
-    return "stale";
   if (weighted >= k.validateDim && activeValidations >= k.minActiveValidations) {
     return "validated";
   }
-  if (opts.hadPassiveSignal || prev.state === "explored" || prev.state === "validated" || weighted > 0) {
+  if (opts.hadPassiveSignal || prev.state === "explored" || prev.state === "validated" || prev.state === "stale" || weighted > 0) {
     return "explored";
   }
   return "fog";
@@ -27651,10 +27681,7 @@ function applyEvidence(coverage2, entry, config2, ctx = {}) {
     const state = classifyState(candidate, {
       hadPassiveSignal: isPassive,
       activeValidations: av[id] ?? 0,
-      constants: {
-        validateDim: config2.thresholds.validateDim,
-        staleLoyalty: config2.thresholds.staleLoyalty
-      }
+      constants: { validateDim: config2.thresholds.validateDim }
     });
     if (state === "validated") {
       lastValidatedSha = las[id] ?? prev.lastValidatedSha;
@@ -27665,23 +27692,36 @@ function applyEvidence(coverage2, entry, config2, ctx = {}) {
   }
   return next;
 }
+var NO_CHURN = { foreign: 0, self: 0 };
+function rebellionCause(churn, size, config2) {
+  const reb = config2.rebellion;
+  if (reb.trigger === "any-foreign-commit") {
+    return (churn.foreignCommits ?? 0) > 0 ? "foreign" : null;
+  }
+  if (churn.unmeasurableForeign)
+    return "foreign";
+  const ratio = (lines) => lines <= 0 ? 0 : size > 0 ? lines / size : 1;
+  if (ratio(churn.foreign) >= reb.foreignRatio)
+    return "foreign";
+  if (ratio(churn.self) >= reb.selfRatio)
+    return "self";
+  return null;
+}
 function recomputeDrift(coverage2, opts) {
   const next = { ...coverage2, components: { ...coverage2.components } };
   for (const [id, comp] of Object.entries(coverage2.components)) {
     if (comp.lastValidatedSha === null)
       continue;
-    const churn = opts.churn[id] ?? 0;
+    const churn = opts.churn[id] ?? NO_CHURN;
     const size = opts.sizes[id] ?? 0;
-    const loyalty = churn <= 0 ? 1 : size > 0 ? computeLoyalty(churn, size) : 0;
-    let state = comp.state;
-    if (comp.state === "validated" && loyalty < opts.config.thresholds.staleLoyalty) {
-      state = "stale";
-    }
+    const total = churn.foreign + churn.self;
+    const loyalty = total <= 0 ? 1 : size > 0 ? computeLoyalty(total, size) : 0;
+    const state = comp.state === "validated" && rebellionCause(churn, size, opts.config) !== null ? "stale" : comp.state;
     next.components[id] = { ...comp, loyalty, state };
   }
   return next;
 }
-function materializeCoverage(evidence, opts) {
+function foldEvidence(evidence, opts) {
   const components = {};
   for (const node of opts.map.nodes)
     components[node.id] = emptyComponentCoverage();
@@ -27696,13 +27736,10 @@ function materializeCoverage(evidence, opts) {
       lastActiveSha
     });
   }
-  cov = recomputeDrift(cov, {
-    churn: opts.churn ?? {},
-    sizes: opts.sizes ?? {},
-    config: opts.config
-  });
-  cov = { ...cov, updatedAt: opts.now ?? "" };
-  return UserCoverageSchema.parse(cov);
+  return cov;
+}
+function finalizeCoverage(coverage2, now) {
+  return UserCoverageSchema.parse({ ...coverage2, updatedAt: now ?? "" });
 }
 function passiveBump(current, credit, cap) {
   if (current >= cap)
@@ -27753,11 +27790,11 @@ function topCandidate(cands, importance) {
   });
   return sorted[0];
 }
-function gateDenyReason(component, config2) {
+function gateDenyReason(component, config2, rebellion) {
   const { modality, assessment, enforcement } = config2.gate;
   const language = config2.language;
-  const head = `SCALE edit gate \u2014 the '${component}' territory is LOCKED for this user (comprehension not yet demonstrated), and this edit reaches into it. This moment is for the JUNIOR, not for you to resolve.`;
-  const body = assessment === "sync" ? `Run the ${modality} comprehension check on '${component}' using the scale-tutor skill and put it in front of them now. After they complete it (scale record), retry the edit \u2014 a passing check unlocks this territory durably.` : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH instead \u2014 explain what '${component}' does and why, grounded in its paper under .scale/ and in what this edit is trying to change. Then tell the junior the territory stays locked until they pass its check later (in the SCALE map viewer, or with /scale-study ${component} in a coming session). The edit itself stays blocked for now.`;
+  const head = rebellion ? rebellion.cause === "self" ? `SCALE edit gate \u2014 the '${component}' territory is locked again. The junior DID demonstrate this component before; since then it has been rewritten far enough (by their own work) that the old check no longer covers it. This moment is for the JUNIOR, not for you to resolve.` : `SCALE edit gate \u2014 the '${component}' territory REBELLED and is locked again. The junior DID demonstrate this component before; ${rebellion.authors.length > 0 ? rebellion.authors.join(", ") : "someone else"} has changed it since, so their understanding is out of date \u2014 this is not a failure on their part. This moment is for the JUNIOR, not for you to resolve.` : `SCALE edit gate \u2014 the '${component}' territory is LOCKED for this user (comprehension not yet demonstrated), and this edit reaches into it. This moment is for the JUNIOR, not for you to resolve.`;
+  const body = assessment === "sync" ? `Run the ${modality} comprehension check on '${component}' using the scale-tutor skill and put it in front of them now` + (rebellion ? `, focused on WHAT CHANGED since they last validated it rather than re-asking what they already answered` : "") + `. After they complete it (scale record), retry the edit \u2014 a passing check unlocks this territory durably.` : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH instead \u2014 explain what '${component}' does and why, grounded in its paper under .scale/ and in what this edit is trying to change. Then tell the junior the territory stays locked until they pass its check later (in the SCALE map viewer, or with /scale-study ${component} in a coming session). The edit itself stays blocked for now.`;
   const skip = enforcement === "hard" ? `Skipping is disabled by team policy (enforcement: hard) \u2014 do not look for a way around the lock; work elsewhere or unlock it properly.` : `Do NOT skip on their behalf. If \u2014 and only if \u2014 the junior says to skip, run \`scale gate defer ${component}\` (this unlocks it for THIS SESSION only), then retry the edit. If you skip without asking (e.g. no junior is in the loop), you MUST run \`scale gate defer ${component} --by agent\` and say so in your reply.`;
   const ko = language === "ko" ? ` The junior's interaction language is KOREAN: deliver everything junior-facing entirely in Korean, keeping code identifiers and technical terms in English.` : "";
   return `${head}
@@ -27803,7 +27840,7 @@ function gateEditDecision(input) {
     return {
       action: "deny",
       component: pending,
-      reason: gateDenyReason(pending, config2)
+      reason: gateDenyReason(pending, config2, input.rebellions?.[pending])
     };
   }
   if (session2.interventionsThisSession >= config2.budgets.maxPerSession) {
@@ -27816,7 +27853,7 @@ function gateEditDecision(input) {
   return {
     action: "deny",
     component: target.id,
-    reason: gateDenyReason(target.id, config2),
+    reason: gateDenyReason(target.id, config2, input.rebellions?.[target.id]),
     spendBudget: true
   };
 }
@@ -27898,7 +27935,7 @@ function slugify(input) {
   return input.toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/\.git$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
 }
 function resolveRepoId(cwd = process.cwd()) {
-  const git = (args) => {
+  const git2 = (args) => {
     try {
       return execFileSync("git", args, {
         cwd,
@@ -27909,12 +27946,12 @@ function resolveRepoId(cwd = process.cwd()) {
       return null;
     }
   };
-  const remote = git(["remote", "get-url", "origin"]);
+  const remote = git2(["remote", "get-url", "origin"]);
   if (remote) {
     const normalized = remote.replace(/^git@([^:]+):/, "$1/");
     return slugify(normalized);
   }
-  const top = git(["rev-parse", "--show-toplevel"]);
+  const top = git2(["rev-parse", "--show-toplevel"]);
   if (top) return slugify(path2.basename(top));
   return slugify(path2.basename(cwd));
 }
@@ -28140,7 +28177,7 @@ function writePendingEdits(dir, pending) {
   }
 }
 function emptyLocks() {
-  return { version: 1, components: {}, progress: {} };
+  return { version: 1, components: {}, progress: {}, rebellions: {} };
 }
 function readLocksSafe(dir) {
   let raw;
@@ -28169,6 +28206,19 @@ function readLocksSafe(dir) {
       if (typeof v === "number" && Number.isFinite(v) && v > 0) out.progress[id] = Math.trunc(v);
     }
   }
+  if (r.rebellions && typeof r.rebellions === "object" && !Array.isArray(r.rebellions)) {
+    for (const [id, v] of Object.entries(r.rebellions)) {
+      if (!v || typeof v !== "object") continue;
+      const e = v;
+      out.rebellions[id] = {
+        at: typeof e.at === "string" ? e.at : "",
+        sinceSha: typeof e.sinceSha === "string" ? e.sinceSha : "",
+        foreignAuthors: Array.isArray(e.foreignAuthors) ? e.foreignAuthors.filter((a) => typeof a === "string") : [],
+        cause: e.cause === "self" ? "self" : "foreign"
+      };
+    }
+  }
+  if (typeof r.digestShownAt === "string") out.digestShownAt = r.digestShownAt;
   return out;
 }
 function writeLocks(dir, locks) {
@@ -28192,6 +28242,7 @@ function noteCheckOutcome(cwd, dir, componentId, meanScore, by, headSha2, now = 
     const checks = (locks.progress[componentId] ?? 0) + 1;
     if (checks >= config2.unlock.checksRequired) {
       delete locks.progress[componentId];
+      delete locks.rebellions[componentId];
       locks.components[componentId] = { unlockedAt: now, sha: headSha2, checks, via: "check" };
       writeLocks(dir, locks);
       return { unlocked: true, alreadyUnlocked: false, checks };
@@ -28201,6 +28252,53 @@ function noteCheckOutcome(cwd, dir, componentId, meanScore, by, headSha2, now = 
     return { unlocked: false, alreadyUnlocked: false, checks };
   });
   return result ?? { unlocked: false, alreadyUnlocked: false, checks: 0 };
+}
+function syncLocksWithRebellion(dir, stateOf, detail = {}, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  const current = readLocksSafe(dir);
+  const toRelock = Object.keys(current.components).filter(
+    (id) => stateOf[id]?.state === "stale"
+  );
+  if (toRelock.length === 0) return [];
+  const done = withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    const relocked = [];
+    for (const id of toRelock) {
+      if (!locks.components[id]) continue;
+      delete locks.components[id];
+      delete locks.progress[id];
+      const d = detail[id] ?? {};
+      locks.rebellions[id] = {
+        at: now,
+        sinceSha: d.sinceSha ?? "",
+        foreignAuthors: d.foreignAuthors ?? [],
+        cause: d.cause ?? "foreign"
+      };
+      relocked.push(id);
+    }
+    if (relocked.length > 0) writeLocks(dir, locks);
+    return relocked;
+  });
+  return done ?? [];
+}
+function pendingDigest(dir, cadence, now = /* @__PURE__ */ new Date()) {
+  if (cadence === "off") return [];
+  const locks = readLocksSafe(dir);
+  const ids = Object.keys(locks.rebellions).sort();
+  if (ids.length === 0) return [];
+  if (cadence === "daily" && locks.digestShownAt) {
+    const shown = new Date(locks.digestShownAt);
+    if (!Number.isNaN(shown.getTime()) && shown.toISOString().slice(0, 10) === now.toISOString().slice(0, 10)) {
+      return [];
+    }
+  }
+  return ids.map((id) => ({ id, entry: locks.rebellions[id] }));
+}
+function markDigestShown(dir, now = (/* @__PURE__ */ new Date()).toISOString()) {
+  withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    locks.digestShownAt = now;
+    writeLocks(dir, locks);
+  });
 }
 
 // packages/cli/src/coverage.ts
@@ -28262,28 +28360,115 @@ function fileLineCount(cwd, rel) {
     return 0;
   }
 }
-function gitChurn(cwd, sinceSha, sources) {
-  if (!sinceSha || sources.length === 0) return 0;
+function myIdentities(cwd, config2) {
+  const out = /* @__PURE__ */ new Set();
+  try {
+    const email = execFileSync2("git", ["config", "user.email"], {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+    if (email) out.add(email.toLowerCase());
+  } catch {
+  }
+  for (const e of config2.identity.emails) {
+    if (typeof e === "string" && e.trim()) out.add(e.trim().toLowerCase());
+  }
+  return out;
+}
+function changedFilesSince(cwd, anchors) {
+  const unique = [...new Set(anchors.filter(Boolean))];
+  if (unique.length === 0) return null;
+  let oldest;
+  try {
+    const out = execFileSync2("git", ["rev-list", "--no-walk=sorted", "--topo-order", ...unique], {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+    const lines = out.split("\n").filter(Boolean);
+    if (lines.length === 0) return null;
+    oldest = lines[lines.length - 1];
+  } catch {
+    return null;
+  }
+  try {
+    const out = execFileSync2("git", ["log", "--name-only", "--format=", `${oldest}..HEAD`], {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    });
+    return new Set(out.split("\n").map((s) => s.trim()).filter(Boolean));
+  } catch {
+    return null;
+  }
+}
+var COMMIT_HEADER = /^C([0-9a-f]{7,40})\t(.*)$/;
+function gitChurnByAuthor(cwd, sinceSha, sources, mine) {
+  const empty = {
+    foreign: 0,
+    self: 0,
+    foreignAuthors: [],
+    foreignCommits: 0,
+    unmeasurableForeign: false
+  };
+  if (!sinceSha || sources.length === 0) return empty;
   let out;
   try {
     out = execFileSync2(
       "git",
-      ["diff", "--numstat", `${sinceSha}..HEAD`, "--", ...sources],
+      // %aE, not %ae: the mailmap-canonical author address. `.mailmap` is git's
+      // own committed answer to one person having several addresses, and it
+      // costs nothing — with no .mailmap in the repo the two are byte-identical.
+      ["log", "--numstat", "--format=C%H%x09%aE", `${sinceSha}..HEAD`, "--", ...sources],
       { cwd, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" }
     );
   } catch {
-    return 0;
+    return empty;
   }
-  let total = 0;
+  let foreign = 0;
+  let self = 0;
+  const authors = /* @__PURE__ */ new Set();
+  const foreignShas = /* @__PURE__ */ new Set();
+  let currentSha = "";
+  let currentIsForeign = false;
+  let unmeasurableForeign = false;
   for (const line of out.split("\n")) {
+    const header = COMMIT_HEADER.exec(line);
+    if (header) {
+      currentSha = header[1];
+      const author = (header[2] ?? "").toLowerCase();
+      currentIsForeign = mine.size > 0 && author !== "" && !mine.has(author);
+      if (currentIsForeign) authors.add(author);
+      continue;
+    }
     const parts = line.split("	");
-    if (parts.length < 2) continue;
+    if (parts.length < 3 || !currentSha) continue;
     const added = Number(parts[0]);
     const deleted = Number(parts[1]);
-    if (Number.isFinite(added)) total += added;
-    if (Number.isFinite(deleted)) total += deleted;
+    if (!Number.isFinite(added) || !Number.isFinite(deleted)) {
+      if (currentIsForeign) {
+        unmeasurableForeign = true;
+        foreignShas.add(currentSha);
+      }
+      continue;
+    }
+    const lines = added + deleted;
+    if (lines <= 0) continue;
+    if (currentIsForeign) {
+      foreign += lines;
+      foreignShas.add(currentSha);
+    } else {
+      self += lines;
+    }
   }
-  return total;
+  return {
+    foreign,
+    self,
+    foreignAuthors: [...authors].sort(),
+    foreignCommits: foreignShas.size,
+    unmeasurableForeign
+  };
 }
 function recomputeCoverageFromDisk(cwd = process.cwd()) {
   const dir = stateDir(cwd);
@@ -28300,27 +28485,27 @@ function recomputeCoverageFromDisk(cwd = process.cwd()) {
     for (const s of sources) total += fileLineCount(cwd, s);
     sizes[id] = total;
   }
-  const prev = readCoverageSafe(dir);
+  const folded = foldEvidence(evidence, { map: map2, config: config2, user: config2.user, headSha: head });
+  const mine = myIdentities(cwd, config2);
+  const anchored = Object.entries(folded.components).filter(([, c]) => c.lastValidatedSha);
+  const touchedFiles = changedFilesSince(
+    cwd,
+    anchored.map(([, c]) => c.lastValidatedSha)
+  );
   const churn = {};
-  if (prev) {
-    for (const [id, comp] of Object.entries(prev.components)) {
-      if (!comp.lastValidatedSha) continue;
-      const c = gitChurn(cwd, comp.lastValidatedSha, sourcesById.get(id) ?? []);
-      if (c > 0) churn[id] = c;
-    }
+  for (const [id, comp] of anchored) {
+    const sources = sourcesById.get(id) ?? [];
+    if (touchedFiles && !sources.some((s) => touchedFiles.has(s))) continue;
+    const c = gitChurnByAuthor(cwd, comp.lastValidatedSha, sources, mine);
+    if (c.foreign > 0 || c.self > 0 || c.unmeasurableForeign) churn[id] = c;
   }
-  const coverage2 = materializeCoverage(evidence, {
-    map: map2,
-    config: config2,
-    user: config2.user,
-    headSha: head,
-    churn,
-    sizes,
-    now: (/* @__PURE__ */ new Date()).toISOString()
-  });
+  const coverage2 = finalizeCoverage(
+    recomputeDrift(folded, { churn, sizes, config: config2 }),
+    (/* @__PURE__ */ new Date()).toISOString()
+  );
   ensureStateDir(dir);
   fs3.writeFileSync(paths.coverage(dir), JSON.stringify(coverage2, null, 2) + "\n");
-  return { coverage: coverage2, map: map2, loaded, dir };
+  return { coverage: coverage2, map: map2, loaded, dir, churn, sizes, config: config2 };
 }
 function coverageCounts(coverage2, map2) {
   const counts = { total: 0, validated: 0, explored: 0, stale: 0, fog: 0 };
@@ -29675,6 +29860,17 @@ function headSha(cwd) {
     return "";
   }
 }
+function git(cwd, args) {
+  try {
+    return execFileSync5("git", args, {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+  } catch {
+    return "";
+  }
+}
 function recentlyAddressedComponents(dir, now, ttlMinutes) {
   let text;
   try {
@@ -29755,7 +29951,8 @@ function loadFileComponentIndex(cwd, loaded) {
 function fmt(n) {
   return n.toFixed(2).replace(/\.?0+$/, "") || "0";
 }
-function contextSummary(res, language = "en") {
+function contextSummary(res, config2, dir) {
+  const language = config2.language;
   const { coverage: coverage2, map: map2 } = res;
   const counts = coverageCounts(coverage2, map2);
   const scored = map2.nodes.map((n) => {
@@ -29766,10 +29963,22 @@ function contextSummary(res, language = "en") {
   lines.push(
     `SCALE: ${counts.total} territories, unification ${Math.round(
       counts.progress * 100
-    )}% (${counts.validated} validated, ${counts.explored} explored, ${counts.fog} fog).`
+    )}% (${counts.validated} validated, ${counts.explored} explored, ${counts.fog} fog${counts.stale > 0 ? `, ${counts.stale} stale` : ""}).`
   );
   const weak = scored.filter((s) => s.state === "fog" || s.state === "explored").sort((a, b) => a.mean - b.mean).slice(0, 3).map((s) => s.state === "fog" ? `${s.id} (fog)` : `${s.id} (explored ${fmt(s.mean)})`);
   if (weak.length > 0) lines.push(`You're weak on: ${weak.join(", ")}.`);
+  const digest = pendingDigest(dir, config2.rebellion.digest);
+  if (digest.length > 0) {
+    const shown = digest.slice(0, 3).map(({ id, entry }) => {
+      const who = entry.cause === "self" ? "your own rewrite" : entry.foreignAuthors.length > 0 ? entry.foreignAuthors.join(", ") : "someone else";
+      return `${id} (${who})`;
+    });
+    const more = digest.length > shown.length ? ` +${digest.length - shown.length} more` : "";
+    lines.push(
+      `Rebellion \u2014 ${digest.length} territory you had earned changed and is locked again: ${shown.join("; ")}${more}. Pass its check (/scale-study <id>) to unlock it.`
+    );
+    markDigestShown(dir);
+  }
   const stale = scored.filter((s) => s.state === "stale").map((s) => s.id);
   if (stale.length > 0) {
     lines.push(
@@ -29820,7 +30029,18 @@ program2.command("context").description("Print the SessionStart coverage summary
     console.log(`SCALE: coverage unavailable (${err.message}).`);
     return;
   }
-  console.log(contextSummary(res, contextConfig.language));
+  const detail = {};
+  for (const [id, comp] of Object.entries(res.coverage.components)) {
+    if (comp.state !== "stale") continue;
+    const c = res.churn[id];
+    detail[id] = {
+      sinceSha: comp.lastValidatedSha,
+      foreignAuthors: c?.foreignAuthors ?? [],
+      cause: rebellionCause(c ?? { foreign: 0, self: 0 }, res.sizes[id] ?? 0, res.config) ?? "foreign"
+    };
+  }
+  syncLocksWithRebellion(dir, res.coverage.components, detail);
+  console.log(contextSummary(res, contextConfig, dir));
 });
 var session = program2.command("session").description("Budget-period accounting for the interruption gate (PLAN \xA76.1)");
 session.command("end").description(
@@ -29841,6 +30061,12 @@ session.command("end").description(
     remaining === 0 ? "scale: budget period ended (last window closed)." : `scale: window released (${remaining} still open).`
   );
 });
+function resolveIdentityStatus(cwd, config2) {
+  const emails = [...myIdentities(cwd, config2)].sort();
+  const authors = git(cwd, ["log", "--format=%aE", "-50"]).split("\n").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const mine = emails.length === 0 ? 0 : authors.filter((a) => emails.includes(a)).length;
+  return { emails, recentCommits: authors.length, mineOfRecent: mine };
+}
 function buildStatus(cwd, res, dir) {
   const { coverage: coverage2, map: map2 } = res;
   const counts = coverageCounts(coverage2, map2);
@@ -29877,6 +30103,8 @@ function buildStatus(cwd, res, dir) {
       error: eff.policyError
     },
     locks: { unlocked: unlockedCount, locked: map2.nodes.length - unlockedCount },
+    rebellions: Object.keys(locks.rebellions).sort(),
+    identity: resolveIdentityStatus(cwd, config2),
     models: config2.models,
     progress: counts.progress,
     counts: {
@@ -29901,6 +30129,13 @@ function renderStatus(s) {
   lines.push(
     `  policy: ${policyLabel}   territories unlocked for editing: ${s.locks.unlocked}/${s.locks.unlocked + s.locks.locked}`
   );
+  const idLabel = s.identity.emails.length > 0 ? s.identity.emails.join(", ") : "(none \u2014 all churn reads as yours)";
+  lines.push(
+    `  git identity: ${idLabel}` + (s.identity.recentCommits > 0 ? `   (${s.identity.mineOfRecent}/${s.identity.recentCommits} of recent commits read as yours)` : "")
+  );
+  if (s.rebellions.length > 0) {
+    lines.push(`  re-locked by rebellion: ${s.rebellions.join(", ")}`);
+  }
   lines.push("");
   if (s.counts.total === 0) {
     lines.push("  No coverage memory found \u2014 run `/scale-map` to build .scale/, then `scale map layout`.");
@@ -30110,6 +30345,7 @@ gate.command("edit").description(
   const map2 = readMapJsonSafe2(cwd);
   const importance = {};
   if (map2) for (const n of map2.nodes) importance[n.id] = n.importance;
+  syncLocksWithRebellion(dir, coverage2.components);
   const locks = readLocksSafe(dir);
   const decided = withSessionLock(dir, () => {
     const stored = readSessionSafe(dir);
@@ -30131,6 +30367,12 @@ gate.command("edit").description(
       },
       unlocked: Object.keys(locks.components),
       sessionSkips: session2.sessionSkips,
+      rebellions: Object.fromEntries(
+        Object.entries(locks.rebellions).map(([id, r]) => [
+          id,
+          { cause: r.cause, authors: r.foreignAuthors }
+        ])
+      ),
       recentlyAddressed,
       now,
       importance
