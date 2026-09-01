@@ -1,6 +1,6 @@
 {
   "name": "scale",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SCALE — Scaffolded Coverage-Aware Learning Engine. Hooks that capture coverage evidence and gate commits, plus skills: scale-map (Mode B coverage-memory builder) and scale-tutor (junior-side quiz & Socratic learning). Ships a self-contained `scale` CLI on PATH via bin/.",
   "author": {
     "name": "SCALE"

@@ -1,11 +1,74 @@
 import { z } from 'zod';
 
-/** The manipulated 2×2 condition. */
-export const ConditionSchema = z.object({
-  timing: z.enum(['inflow', 'postsession']),
-  modality: z.enum(['quiz', 'socratic']),
-});
-export type Condition = z.infer<typeof ConditionSchema>;
+/** Comprehension-check modality. */
+export const ModalitySchema = z.enum(['quiz', 'socratic']);
+export type Modality = z.infer<typeof ModalitySchema>;
+
+/**
+ * WHEN the comprehension check happens once the edit gate denies (PLAN-GATE §1).
+ * Both values gate identically and both get the same teaching moment — the only
+ * difference is where the check itself runs:
+ *  - `sync`  — the tutor runs the check right there in chat; passing unlocks.
+ *  - `async` — the agent only TEACHES at deny time; the junior passes the check
+ *    later (map viewer, or /scale-study in a later session) to unlock.
+ */
+export const AssessmentSchema = z.enum(['sync', 'async']);
+export type Assessment = z.infer<typeof AssessmentSchema>;
+
+/**
+ * How hard the gate holds (PLAN-GATE §2.1). There is deliberately no absolute
+ * lock: `hard` removes the skip escape from the deny text, but a member may
+ * still override their own `gate.enforcement` — that override is the sanctioned
+ * pressure valve, and the override delta is study data, not a violation.
+ */
+export const EnforcementSchema = z.enum(['advisory', 'soft', 'hard']);
+export type Enforcement = z.infer<typeof EnforcementSchema>;
+
+/** The edit gate itself. Every field is team-policy-defaultable (PLAN-GATE §2). */
+export const GateConfigSchema = z
+  .object({
+    /**
+     * Master switch. A team lead who wants to exempt THEMSELVES sets this false
+     * in their own user config — there is no separate lead-exemption knob.
+     */
+    enabled: z.boolean().default(true),
+    modality: ModalitySchema.default('quiz'),
+    assessment: AssessmentSchema.default('sync'),
+    enforcement: EnforcementSchema.default('soft'),
+  })
+  .default({});
+export type GateConfig = z.infer<typeof GateConfigSchema>;
+
+/**
+ * What it takes to durably unlock a component (PLAN-GATE §3.1). Deliberately
+ * SEPARATE from thresholds.validateDim: the coverage model's `validated` bar is
+ * cumulative (EMA from zero cannot cross it in one sitting, by design), while a
+ * lock opens on passed CHECKS — the permission ledger and the comprehension
+ * model must not be entangled, or the study's DV inherits the IV's mechanics.
+ */
+export const UnlockConfigSchema = z
+  .object({
+    /** A single check's mean score must reach this to count as passed. */
+    passBar: z.number().min(0).max(1).default(0.6),
+    /** Passed checks needed before the component unlocks. */
+    checksRequired: z.number().int().min(1).default(1),
+  })
+  .default({});
+export type UnlockConfig = z.infer<typeof UnlockConfigSchema>;
+
+/**
+ * Files the gate never fires on, as globish patterns over repo-relative paths
+ * (`*` = within a segment, `**` = across segments). New files are ALREADY
+ * exempt by construction — the gate maps files to components through the exact
+ * index only (the nearest-directory fallback sprays a new file across every
+ * component in the directory, measured at up to 11 here — PLAN-GATE §3.2).
+ */
+export const ExemptConfigSchema = z
+  .object({
+    paths: z.array(z.string()).default([]),
+  })
+  .default({});
+export type ExemptConfig = z.infer<typeof ExemptConfigSchema>;
 
 /**
  * Interaction language — everything SCALE says TO the junior: the serve web UI,
@@ -20,27 +83,20 @@ export type Condition = z.infer<typeof ConditionSchema>;
 export const LanguageSchema = z.enum(['en', 'ko']);
 export type Language = z.infer<typeof LanguageSchema>;
 
-/** In-flow trigger kinds. The gate accepts new kinds without schema changes. */
-export const InflowTriggerSchema = z.enum(['pre-commit', 'post-task']);
-export type InflowTrigger = z.infer<typeof InflowTriggerSchema>;
-
-export const InflowConfigSchema = z.object({
-  triggers: z.array(InflowTriggerSchema).default(['pre-commit']),
-});
-export type InflowConfig = z.infer<typeof InflowConfigSchema>;
-
 /**
  * Interruption budget constants (all tunable). Every field is a non-negative
- * count: 0 is a meaningful "off" (never interrupt on commit, no cooldown,
- * interrupt on any change) but a negative value is nonsense the gate would
- * silently misread, so the schema rejects it — these are user-editable from the
- * settings modal, not just the CLI.
+ * count: 0 is a meaningful "off" (never deny, no cooldown) but a negative value
+ * is nonsense the gate would silently misread, so the schema rejects it — these
+ * are user-editable from the settings modal, not just the CLI.
+ *
+ * The commit-era knobs are gone: `maxPerCommit` was read by no decision code
+ * (the ≤1-per-commit guarantee came from the recentlyAddressed retry mechanic),
+ * and `minChangedLines` measured a staged diff the edit gate never has. Old
+ * configs carrying them parse fine — unknown keys are stripped.
  */
 export const BudgetsSchema = z.object({
-  maxPerCommit: z.number().int().min(0).default(1),
   maxPerSession: z.number().int().min(0).default(2),
   cooldownMinutes: z.number().min(0).default(15),
-  minChangedLines: z.number().int().min(0).default(20),
   /**
    * Backstop for deciding a budget period has ended, in minutes of no activity.
    *
@@ -174,13 +230,61 @@ export const ThresholdsSchema = z.object({
 });
 export type Thresholds = z.infer<typeof ThresholdsSchema>;
 
-export const ScaleConfigSchema = z.object({
-  user: z.string(),
-  language: LanguageSchema.default('en'),
-  condition: ConditionSchema.default({ timing: 'inflow', modality: 'quiz' }),
-  inflow: InflowConfigSchema.default({ triggers: ['pre-commit'] }),
-  budgets: BudgetsSchema.default({}),
-  thresholds: ThresholdsSchema.default({}),
-  models: ModelsConfigSchema,
-});
+/**
+ * Migrate a pre-edit-gate config in place (PLAN-GATE §2.1). Idempotent, and it
+ * never clobbers an explicit new-style key — a legacy `condition` was the
+ * user's explicit choice, so it becomes an explicit `gate.*` override, but only
+ * where `gate.*` doesn't already say otherwise.
+ *
+ *   condition.timing  inflow→gate.assessment 'sync', postsession→'async'
+ *   condition.modality → gate.modality
+ *   inflow.triggers    → gate.enabled (did they have pre-commit on at all?)
+ *
+ * A legacy `postsession` user therefore gains a gate they never had — intended:
+ * under the new design BOTH assessments gate, and only the check's venue
+ * differs. Dropped budget knobs (maxPerCommit, minChangedLines) need no
+ * handling — unknown object keys are stripped at parse.
+ */
+export function migrateLegacyConfig(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const cfg = raw as Record<string, unknown>;
+  if (cfg.condition === undefined && cfg.inflow === undefined) return raw;
+
+  const { condition, inflow, ...rest } = cfg;
+  const gate: Record<string, unknown> =
+    rest.gate && typeof rest.gate === 'object' && !Array.isArray(rest.gate)
+      ? { ...(rest.gate as Record<string, unknown>) }
+      : {};
+
+  if (condition && typeof condition === 'object' && !Array.isArray(condition)) {
+    const c = condition as Record<string, unknown>;
+    if (gate.assessment === undefined && (c.timing === 'inflow' || c.timing === 'postsession')) {
+      gate.assessment = c.timing === 'inflow' ? 'sync' : 'async';
+    }
+    if (gate.modality === undefined && (c.modality === 'quiz' || c.modality === 'socratic')) {
+      gate.modality = c.modality;
+    }
+  }
+  if (inflow && typeof inflow === 'object' && !Array.isArray(inflow)) {
+    const triggers = (inflow as Record<string, unknown>).triggers;
+    if (gate.enabled === undefined && Array.isArray(triggers)) {
+      gate.enabled = triggers.includes('pre-commit');
+    }
+  }
+  return { ...rest, gate };
+}
+
+export const ScaleConfigSchema = z.preprocess(
+  migrateLegacyConfig,
+  z.object({
+    user: z.string(),
+    language: LanguageSchema.default('en'),
+    gate: GateConfigSchema,
+    unlock: UnlockConfigSchema,
+    exempt: ExemptConfigSchema,
+    budgets: BudgetsSchema.default({}),
+    thresholds: ThresholdsSchema.default({}),
+    models: ModelsConfigSchema,
+  }),
+);
 export type ScaleConfig = z.infer<typeof ScaleConfigSchema>;

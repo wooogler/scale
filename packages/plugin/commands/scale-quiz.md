@@ -6,8 +6,9 @@ argument-hint: "[component-id]"
 # /scale-quiz
 
 Manually fire a comprehension check — a testing/dev shortcut into the same
-in-flow tutor path the pre-commit gate uses (PLAN §7.2), without waiting for a
-commit.
+tutor path the edit gate uses (PLAN-GATE §3), without waiting for an edit to be
+denied. A check passed here unlocks the territory exactly as a gate-path check
+would.
 
 Use the **scale-tutor** skill.
 

@@ -19,7 +19,9 @@ import {
   paperById,
   resolveInterventionModel,
   LlmProviderSchema,
-  ScaleConfigSchema,
+  migrateLegacyConfig,
+  resolveConfig,
+  type ResolvedConfig,
   UserCoverageSchema,
   emptyComponentCoverage,
   type ScaleConfig,
@@ -40,6 +42,9 @@ import {
   readCoverageSafe,
   readQuestsSafe,
   readConfigSafe,
+  readUserConfigRaw,
+  readPolicyRaw,
+  loadEffectiveConfig,
   ensureStateDir,
   appendEvidence,
 } from './state.js';
@@ -104,8 +109,9 @@ function shortHeadSha(cwd: string): string {
   }
 }
 
-function readConfigOrDefault(dir: string): ScaleConfig {
-  return readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
+/** The EFFECTIVE config: schema defaults < committed team policy < user file. */
+function readConfigOrDefault(cwd: string, dir: string): ScaleConfig {
+  return loadEffectiveConfig(cwd, dir).config;
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -353,7 +359,7 @@ async function handle(
       return;
     }
     if (pathname === '/api/settings' || pathname === '/api/settings/') {
-      await handleSettingsPatch(req, res, dir);
+      await handleSettingsPatch(req, res, cwd, dir);
       return;
     }
     if (pathname === '/api/keys' || pathname === '/api/keys/') {
@@ -424,11 +430,19 @@ async function handle(
     return;
   }
 
-  // Settings modal payload: the full config plus DISPLAY-SAFE key status
+  // Settings modal payload: the EFFECTIVE config plus DISPLAY-SAFE key status
   // (configured / source / masked tail). Never the keys themselves — see keys.ts.
+  // `policy` tells the UI whether team defaults are in play, so it can say that
+  // edits become personal overrides.
   if (pathname === '/api/settings' || pathname === '/api/settings/') {
+    const eff = loadEffectiveConfig(cwd, dir);
     sendJson(res, 200, {
-      config: readConfigOrDefault(dir),
+      config: eff.config,
+      policy: {
+        present: eff.policyPresent,
+        applied: eff.policyApplied,
+        error: eff.policyError,
+      },
       keys: keyStatus(),
       repoId: resolveRepoId(cwd),
       stateDir: dir,
@@ -538,36 +552,40 @@ function mergeSection(base: unknown, patch: unknown): unknown {
 }
 
 /**
- * Patch `config.json` from the settings modal. Body is a PARTIAL config; each
- * known section is shallow-merged over the current value and the whole result is
- * re-validated by ScaleConfigSchema, so a bad field is a 400 and never lands on
- * disk. Unknown top-level keys are dropped rather than persisted.
+ * Patch the user config from the settings modal. Body is a PARTIAL config; each
+ * patched section deep-merges into the user's SPARSE overrides file — never the
+ * materialized effective config, which would freeze every team-policy default
+ * as an explicit personal override (PLAN-GATE §2). The merged EFFECTIVE result
+ * is validated before anything lands on disk, so a bad field is a 400.
  */
 async function handleSettingsPatch(
   req: http.IncomingMessage,
   res: http.ServerResponse,
+  cwd: string,
   dir: string,
 ): Promise<void> {
   const patch = parseBody(await readBody(req));
-  const current = readConfigOrDefault(dir) as unknown as Record<string, unknown>;
-  const next: Record<string, unknown> = {
-    ...current,
-    user: typeof patch.user === 'string' && patch.user.trim() ? patch.user.trim() : current.user,
-    language: typeof patch.language === 'string' ? patch.language : current.language,
-    condition: mergeSection(current.condition, patch.condition),
-    inflow: mergeSection(current.inflow, patch.inflow),
-    budgets: mergeSection(current.budgets, patch.budgets),
-    thresholds: mergeSection(current.thresholds, patch.thresholds),
-    models: mergeSection(current.models, patch.models),
-  };
-  const parsed = ScaleConfigSchema.safeParse(next);
-  if (!parsed.success) {
-    sendJson(res, 400, { error: 'invalid settings', detail: parsed.error.issues });
+  const currentRaw = readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' };
+  const next: Record<string, unknown> = { ...currentRaw };
+  if (typeof patch.user === 'string' && patch.user.trim()) next.user = patch.user.trim();
+  if (typeof patch.language === 'string') next.language = patch.language;
+  for (const section of ['gate', 'unlock', 'exempt', 'budgets', 'thresholds', 'models'] as const) {
+    if (patch[section] !== undefined) {
+      next[section] = mergeSection(next[section], patch[section]);
+    }
+  }
+  const migrated = migrateLegacyConfig(next) as Record<string, unknown>;
+  const policy = readPolicyRaw(cwd);
+  let resolved: ResolvedConfig;
+  try {
+    resolved = resolveConfig(migrated, policy.parseError ? undefined : policy.raw);
+  } catch (err) {
+    sendJson(res, 400, { error: 'invalid settings', detail: (err as Error).message });
     return;
   }
   ensureStateDir(dir);
-  fs.writeFileSync(paths.config(dir), JSON.stringify(parsed.data, null, 2) + '\n');
-  sendJson(res, 200, { config: parsed.data, keys: keyStatus() });
+  fs.writeFileSync(paths.config(dir), JSON.stringify(migrated, null, 2) + '\n');
+  sendJson(res, 200, { config: resolved.config, keys: keyStatus() });
 }
 
 /**
@@ -767,7 +785,7 @@ async function handleSocraticMessage(
     return;
   }
 
-  const config = readConfigOrDefault(dir);
+  const config = readConfigOrDefault(cwd, dir);
   const provider = config.models.provider;
   const model = resolveInterventionModel(config.models);
   const paper = paperById(loadScaleDir(cwd), quest.componentId);

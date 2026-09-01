@@ -174,17 +174,25 @@ export type KeyStatusMap = Record<LlmProvider, ProviderKeyStatus>;
 /** GET /api/settings payload. */
 export interface SettingsResponse {
   config: ScaleConfig;
+  /** Whether a committed team policy (.scale/policy.json) is defaulting things. */
+  policy?: { present: boolean; applied: boolean; error: string | null };
   keys: KeyStatusMap;
   repoId: string;
   stateDir: string;
 }
 
-/** Partial config accepted by POST /api/settings (server merges + validates). */
+/**
+ * Partial config accepted by POST /api/settings. The server deep-merges each
+ * patched section into the user's SPARSE overrides file and validates the
+ * effective result — so every edit here becomes a personal override on top of
+ * any committed team policy (PLAN-GATE §2).
+ */
 export interface SettingsPatch {
   user?: string;
   language?: 'en' | 'ko';
-  condition?: Partial<ScaleConfig['condition']>;
-  inflow?: Partial<ScaleConfig['inflow']>;
+  gate?: Partial<ScaleConfig['gate']>;
+  unlock?: Partial<ScaleConfig['unlock']>;
+  exempt?: Partial<ScaleConfig['exempt']>;
   budgets?: Partial<ScaleConfig['budgets']>;
   thresholds?: Partial<ScaleConfig['thresholds']>;
   models?: Partial<ScaleConfig['models']>;

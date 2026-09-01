@@ -35,7 +35,6 @@ import {
   type QuestModality,
   type DimName,
   QuestSchema,
-  ScaleConfigSchema,
   loadScaleDir,
   paperById,
   emptyComponentCoverage,
@@ -53,6 +52,8 @@ import {
   ensureStateDir,
   appendEvidence,
   readConfigSafe,
+  loadEffectiveConfig,
+  noteCheckOutcome,
   readQuestsSafe,
   readSessionSafe,
 } from './state.js';
@@ -624,14 +625,16 @@ export async function generateQuests(
   opts: { topK?: number } = {},
 ): Promise<QuestGenResult> {
   const dir = stateDir(cwd);
-  const config: ScaleConfig =
-    readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
+  const config: ScaleConfig = loadEffectiveConfig(cwd, dir).config;
   const provider = config.models.provider;
   const model = resolveInterventionModel(config.models);
   const questsPath = paths.quests(dir);
 
-  // In-flow conditions never generate quests (PLAN §6.2).
-  if (config.condition.timing !== 'postsession') {
+  // Only async-assessment users get post-session quests: their deny-time
+  // teaching points at a check that must exist somewhere later (PLAN-GATE §4
+  // S3). A sync user's checks happen in chat, so generating here would only
+  // pile up pending quests nothing ever completes.
+  if (config.gate.assessment !== 'async') {
     return { via: 'skip', model, count: 0, path: questsPath, components: [] };
   }
 
@@ -645,7 +648,7 @@ export async function generateQuests(
   const touched = touchedComponentsSince(dir, session?.startedAt ?? '');
   const k = opts.topK ?? DEFAULT_TOP_K;
   const picked = pickComponents(coverage, map, touched, config, k);
-  const modality = config.condition.modality;
+  const modality = config.gate.modality;
   // Measured dependencies, empty when no graphify extraction has been distilled.
   const neighbours = neighbourIndex(map);
 
@@ -730,8 +733,7 @@ export async function generateVoluntaryQuest(
   componentId: string,
 ): Promise<{ quest: Quest; via: 'llm' | 'fallback'; model: string } | null> {
   const dir = stateDir(cwd);
-  const config: ScaleConfig =
-    readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
+  const config: ScaleConfig = loadEffectiveConfig(cwd, dir).config;
   const provider = config.models.provider;
   const model = resolveInterventionModel(config.models);
 
@@ -744,7 +746,7 @@ export async function generateVoluntaryQuest(
     ? neighbourIndex(readMapJsonSafe(cwd)!).get(componentId)
     : undefined;
 
-  const modality = config.condition.modality;
+  const modality = config.gate.modality;
   let items: QuestItem[] | null = null;
   let via: 'llm' | 'fallback' = 'fallback';
   try {
@@ -827,6 +829,7 @@ export async function completeQuizQuest(
   const arr = Array.isArray(results) ? (results as Record<string, unknown>[]) : [];
 
   let recorded = 0;
+  let scoreSum = 0;
   for (const r of arr) {
     const dim = r?.dim;
     const score = r?.score;
@@ -845,9 +848,17 @@ export async function completeQuizQuest(
         by,
       });
       recorded++;
+      scoreSum += score;
     } catch {
       /* skip a single invalid result; keep going */
     }
+  }
+
+  // The unlock ledger (PLAN-GATE §3.1): quest completion is one of the two
+  // check surfaces, and both funnel through noteCheckOutcome so the ledger
+  // cannot disagree with `scale record`.
+  if (recorded > 0) {
+    noteCheckOutcome(cwd, dir, quest.componentId, scoreSum / recorded, by, sha, now);
   }
 
   return finishCompletion(cwd, dir, quests, questId, quest.componentId, recorded);
@@ -883,20 +894,28 @@ export async function completeSocraticQuest(
 
   let recorded = 0;
   if (Object.keys(graded).length > 0) {
+    const sha = shortHeadSha(cwd);
+    const now = new Date().toISOString();
     try {
       await appendEvidence(dir, {
         type: 'socratic_result',
-        ts: new Date().toISOString(),
+        ts: now,
         user: completionUser(dir),
         componentId: quest.componentId,
         dims: graded,
-        sha: shortHeadSha(cwd),
+        sha,
         origin: 'session',
         by,
       });
       recorded = Object.keys(graded).length;
     } catch {
       /* recording is best-effort — still conclude the quest */
+    }
+    if (recorded > 0) {
+      const vals = Object.values(graded).filter((v): v is number => typeof v === 'number');
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      // Same single unlock funnel as `scale record` (PLAN-GATE §3.1).
+      noteCheckOutcome(cwd, dir, quest.componentId, mean, by, sha, now);
     }
   }
 

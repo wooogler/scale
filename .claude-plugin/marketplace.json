@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "SCALE — Scaffolded Coverage-Aware Learning Engine. A Claude Code plugin that helps a junior engineer build genuine comprehension of a codebase, guided by an LLM-built coverage memory and visualized as a territory map.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {

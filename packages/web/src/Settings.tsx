@@ -227,6 +227,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
   const S: Strings = useStrings();
   const [config, setConfig] = useState<ScaleConfig | null>(null);
   const [keys, setKeys] = useState<KeyStatusMap | null>(null);
+  const [policy, setPolicy] = useState<{ present: boolean; applied: boolean } | null>(null);
   const [where, setWhere] = useState<{ repoId: string; stateDir: string } | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
@@ -239,6 +240,7 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
         if (cancelled) return;
         setConfig(s.config);
         setKeys(s.keys);
+        setPolicy(s.policy ?? null);
         setWhere({ repoId: s.repoId, stateDir: s.stateDir });
       },
       (e: unknown) => {
@@ -307,11 +309,6 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
     if (!config || !keys) return <p className="set-note">{S.set.loadingSettings}</p>;
 
     const m = config.models;
-    const triggers = config.inflow.triggers;
-    const toggleTrigger = (t: 'pre-commit' | 'post-task'): void => {
-      const next = triggers.includes(t) ? triggers.filter((x) => x !== t) : [...triggers, t];
-      patch({ inflow: { triggers: next } }, (c) => ({ ...c, inflow: { ...c.inflow, triggers: next } }));
-    };
 
     return (
       <>
@@ -399,65 +396,69 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
         </section>
 
         <section className="set-section">
-          <h3 className="set-h">{S.set.conditionHeading}</h3>
+          <h3 className="set-h">{S.set.gateHeading}</h3>
           <ChoiceRow
-            label={S.set.timing}
-            value={config.condition.timing}
+            label={S.set.gateEnabled}
+            value={config.gate.enabled ? 'on' : 'off'}
             disabled={saving}
             options={[
-              { value: 'inflow' as const, label: S.set.inflow, hint: S.set.inflowHint },
-              { value: 'postsession' as const, label: S.set.postsession, hint: S.set.postsessionHint },
+              { value: 'on' as const, label: S.set.gateOn, hint: S.set.gateOnHint },
+              { value: 'off' as const, label: S.set.gateOff, hint: S.set.gateOffHint },
             ]}
-            onPick={(timing) =>
-              patch({ condition: { timing } }, (c) => ({
+            onPick={(v) =>
+              patch({ gate: { enabled: v === 'on' } }, (c) => ({
                 ...c,
-                condition: { ...c.condition, timing },
+                gate: { ...c.gate, enabled: v === 'on' },
+              }))
+            }
+          />
+          <ChoiceRow
+            label={S.set.assessment}
+            value={config.gate.assessment}
+            disabled={saving}
+            options={[
+              { value: 'sync' as const, label: S.set.assessSync, hint: S.set.assessSyncHint },
+              { value: 'async' as const, label: S.set.assessAsync, hint: S.set.assessAsyncHint },
+            ]}
+            onPick={(assessment) =>
+              patch({ gate: { assessment } }, (c) => ({
+                ...c,
+                gate: { ...c.gate, assessment },
               }))
             }
           />
           <ChoiceRow
             label={S.set.modality}
-            value={config.condition.modality}
+            value={config.gate.modality}
             disabled={saving}
             options={[
               { value: 'quiz' as const, label: S.quest.quiz, hint: S.set.quizHint },
               { value: 'socratic' as const, label: S.quest.socratic, hint: S.set.socraticHint },
             ]}
             onPick={(modality) =>
-              patch({ condition: { modality } }, (c) => ({
+              patch({ gate: { modality } }, (c) => ({
                 ...c,
-                condition: { ...c.condition, modality },
+                gate: { ...c.gate, modality },
               }))
             }
           />
-          <div className="set-row">
-            <div className="set-label">{S.set.triggers}</div>
-            <div className="set-choices">
-              {(['pre-commit', 'post-task'] as const).map((t) => {
-                // `post-task` is in the schema but has no implementation — there
-                // is no Stop hook, so the gate can never fire on it. Rendering it
-                // as an equal choice lets someone switch off pre-commit, keep a
-                // config that still reads `inflow`, and receive nothing at all.
-                // Until a Stop hook exists it stays visible but inert, so the
-                // deferred trigger is documented rather than silently missing.
-                const unimplemented = t === 'post-task';
-                return (
-                  <button
-                    key={t}
-                    type="button"
-                    className={`set-choice${triggers.includes(t) ? ' set-choice-on' : ''}`}
-                    aria-pressed={triggers.includes(t)}
-                    disabled={saving || unimplemented || config.condition.timing !== 'inflow'}
-                    title={unimplemented ? 'Not implemented yet — no Stop hook exists' : undefined}
-                    onClick={() => toggleTrigger(t)}
-                  >
-                    {t}
-                    {unimplemented ? ' (n/a)' : ''}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <ChoiceRow
+            label={S.set.enforcement}
+            value={config.gate.enforcement}
+            disabled={saving}
+            options={[
+              { value: 'advisory' as const, label: S.set.enfAdvisory, hint: S.set.enfAdvisoryHint },
+              { value: 'soft' as const, label: S.set.enfSoft, hint: S.set.enfSoftHint },
+              { value: 'hard' as const, label: S.set.enfHard, hint: S.set.enfHardHint },
+            ]}
+            onPick={(enforcement) =>
+              patch({ gate: { enforcement } }, (c) => ({
+                ...c,
+                gate: { ...c.gate, enforcement },
+              }))
+            }
+          />
+          {policy?.applied ? <p className="set-note">{S.set.policyNote}</p> : null}
         </section>
 
         <section className="set-section">
@@ -465,10 +466,8 @@ export function Settings({ onClose, focusProvider, onLanguageChange }: Props): J
           <div className="set-nums">
             {(
               [
-                ['maxPerCommit', S.set.perCommit],
                 ['maxPerSession', S.set.perSession],
                 ['cooldownMinutes', S.set.cooldownMin],
-                ['minChangedLines', S.set.minChangedLines],
               ] as const
             ).map(([key, label]) => (
               <label className="set-num" key={key}>

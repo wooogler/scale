@@ -21,7 +21,6 @@ import { execFileSync } from 'node:child_process';
 
 import { Command } from 'commander';
 import {
-  type ScaleConfig,
   type Language,
   type EvidenceEntry,
   type MapJson,
@@ -29,8 +28,6 @@ import {
   type DimName,
   type FileComponentIndex,
   type MapEdge,
-  type GateInput,
-  ScaleConfigSchema,
   buildFileComponentIndex,
   loadScaleDir,
   paperById,
@@ -39,7 +36,10 @@ import {
   computeLayout,
   emptyComponentCoverage,
   meanDims,
-  gateDecision,
+  gateEditDecision,
+  pathMatchesAny,
+  migrateLegacyConfig,
+  resolveConfig,
   estimateBuild,
   resolveInterventionModel,
   MODEL_RATES,
@@ -66,9 +66,14 @@ import {
   ensureStateDir,
   paths,
   configExists,
-  readConfig,
   readConfigSafe,
-  writeConfig,
+  readCoverageSafe,
+  readUserConfigRaw,
+  writeUserConfigRaw,
+  readPolicyRaw,
+  loadEffectiveConfig,
+  readLocksSafe,
+  noteCheckOutcome,
   appendEvidence,
   readQuestsSafe,
   type SessionRecord,
@@ -172,29 +177,6 @@ function git(cwd: string, args: string[]): string {
 }
 
 /** Staged file paths (repo-relative) from `git diff --cached --name-only`. */
-function stagedFiles(cwd: string): string[] {
-  const out = git(cwd, ['diff', '--cached', '--name-only']);
-  return out ? out.split('\n').map((s) => s.trim()).filter(Boolean) : [];
-}
-
-/**
- * Total changed lines in the staged diff = Σ(added + deleted) from
- * `git diff --cached --numstat`. Binary files ('-'\t'-') contribute 0.
- */
-function stagedChangedLines(cwd: string): number {
-  const out = git(cwd, ['diff', '--cached', '--numstat']);
-  if (!out) return 0;
-  let total = 0;
-  for (const line of out.split('\n')) {
-    const parts = line.split('\t');
-    if (parts.length < 2) continue;
-    const added = Number(parts[0]);
-    const deleted = Number(parts[1]);
-    if (Number.isFinite(added)) total += added;
-    if (Number.isFinite(deleted)) total += deleted;
-  }
-  return total;
-}
 
 /**
  * Component ids "recently addressed" within the marker TTL (PLAN §6.1): those
@@ -366,17 +348,20 @@ program
       return;
     }
 
-    // ScaleConfigSchema fills every field but `user` from its defaults.
-    const config = writeConfig(dir, {
-      user: opts.user ?? process.env.USER ?? 'user',
-    });
+    // SPARSE on purpose (PLAN-GATE §2): only the user label is an explicit
+    // choice here. Everything else resolves at read time from schema defaults
+    // and the repo's committed team policy, so a later policy change actually
+    // reaches this user instead of being shadowed by materialized defaults.
+    writeUserConfigRaw(dir, { user: opts.user ?? process.env.USER ?? 'user' });
+    const eff = loadEffectiveConfig(process.cwd(), dir);
 
     console.log(`scale: initialized state for repo-id "${resolveRepoId()}"`);
     console.log(`  dir:    ${dir}`);
     console.log(`  config: ${paths.config(dir)}`);
     console.log(
-      `  condition: ${config.condition.timing}/${config.condition.modality}` +
-        `  user: ${config.user}`,
+      `  gate: ${eff.config.gate.assessment}/${eff.config.gate.modality} ` +
+        `(${eff.config.gate.enforcement})  user: ${eff.config.user}` +
+        (eff.policyApplied ? '  [team policy applied]' : ''),
     );
   });
 
@@ -401,7 +386,8 @@ program
     // it carries, and a fresh budget starts only once the repo has gone quiet
     // long enough to be a new work period (see isSessionAdoptable).
     const sessionId = sessionIdOf(await readHookPayload()) || crypto.randomUUID();
-    const backstopMs = (readConfigSafe(dir)?.budgets.sessionIdleResetMinutes ?? 720) * 60_000;
+    const contextConfig = loadEffectiveConfig(cwd, dir).config;
+    const backstopMs = contextConfig.budgets.sessionIdleResetMinutes * 60_000;
     // Under the lock: two windows starting together would otherwise both read
     // "no adoptable record" and both write a fresh budget, and a gate reading
     // between the truncate and the write would see a torn file.
@@ -427,7 +413,7 @@ program
       return;
     }
     // Per-user interaction language (config is optional pre-`init` → 'en').
-    console.log(contextSummary(res, readConfigSafe(dir)?.language ?? 'en'));
+    console.log(contextSummary(res, contextConfig.language));
   });
 
 // ---------------------------------------------------------------------------
@@ -492,9 +478,11 @@ interface StatusProvince {
 function buildStatus(cwd: string, res: RecomputeResult, dir: string) {
   const { coverage, map } = res;
   const counts = coverageCounts(coverage, map);
-  const config = readConfigSafe(dir);
+  const eff = loadEffectiveConfig(cwd, dir);
+  const config = eff.config;
   const quests = readQuestsSafe(dir);
   const pending = quests.filter((q) => q.status === 'pending');
+  const locks = readLocksSafe(dir);
 
   const provinceName = new Map(map.provinces.map((p) => [p.id, p.name]));
   const byProvince = new Map<string, StatusComponent[]>();
@@ -517,11 +505,25 @@ function buildStatus(cwd: string, res: RecomputeResult, dir: string) {
     .map((n) => n.id)
     .sort();
 
+  // A component is unlocked for editing when a passed check put it in the
+  // ledger OR it is validated (grandfathered) — mirror of gateEditDecision.
+  const unlockedSet = new Set(Object.keys(locks.components));
+  const unlockedCount = map.nodes.filter(
+    (n) =>
+      unlockedSet.has(n.id) || (coverage.components[n.id]?.state ?? 'fog') === 'validated',
+  ).length;
+
   return {
     repoId: resolveRepoId(cwd),
-    user: config?.user ?? currentUser(dir),
-    condition: config?.condition ?? null,
-    models: config?.models ?? null,
+    user: config.user,
+    gate: config.gate,
+    policy: {
+      present: eff.policyPresent,
+      applied: eff.policyApplied,
+      error: eff.policyError,
+    },
+    locks: { unlocked: unlockedCount, locked: map.nodes.length - unlockedCount },
+    models: config.models,
     progress: counts.progress,
     counts: {
       total: counts.total,
@@ -542,11 +544,22 @@ type StatusView = ReturnType<typeof buildStatus>;
 function renderStatus(s: StatusView): string {
   const lines: string[] = [];
   lines.push(`SCALE status — ${s.repoId}`);
-  const cond = s.condition ? `${s.condition.timing}/${s.condition.modality}` : '(no config)';
+  const gateLabel = s.gate.enabled
+    ? `${s.gate.assessment}/${s.gate.modality} (${s.gate.enforcement})`
+    : 'disabled';
   // Intervention model only — the build model is the Claude Code session's, not
   // anything SCALE stores (see ModelsConfigSchema).
-  const models = s.models ? resolveInterventionModel(s.models) : '(no config)';
-  lines.push(`  user: ${s.user}   condition: ${cond}   models: ${models}`);
+  const models = resolveInterventionModel(s.models);
+  lines.push(`  user: ${s.user}   gate: ${gateLabel}   models: ${models}`);
+  const policyLabel = s.policy.applied
+    ? 'team defaults applied'
+    : s.policy.present
+      ? `present but ignored — ${s.policy.error ?? 'invalid'}`
+      : 'none';
+  lines.push(
+    `  policy: ${policyLabel}   territories unlocked for editing: ` +
+      `${s.locks.unlocked}/${s.locks.unlocked + s.locks.locked}`,
+  );
   lines.push('');
 
   if (s.counts.total === 0) {
@@ -802,25 +815,28 @@ log
   );
 
 // ---------------------------------------------------------------------------
-// gate commit  (REAL) — deterministic pre-commit decision (hook path, no LLM)
+// gate edit  (REAL) — deterministic edit-gate decision (hook path, no LLM)
 // ---------------------------------------------------------------------------
 const gate = program
   .command('gate')
   .description(
-    'Interruption-gate policy decisions (PLAN §6.1). Only `commit` (the ' +
-      "pre-commit trigger) is wired; `post-task` is a documented, deferred trigger.",
+    'Edit-gate policy decisions (PLAN-GATE §3). `edit` answers the ' +
+      "PreToolUse(Edit|Write|MultiEdit) hook; `defer` is the user's " +
+      'session-scoped skip.',
   );
 
 /** Fresh in-flow markers older than this are ignored (PLAN §6.1 TTL). */
 const MARKER_TTL_MINUTES = 10;
 
 gate
-  .command('commit')
+  .command('edit')
   .description(
-    'Decide whether a pre-commit intervention should fire. Reads the staged ' +
-      'diff + coverage + budget, prints one JSON line ' +
+    'Decide whether an Edit/Write into locked territory is denied. Reads the ' +
+      'PreToolUse hook payload on stdin, prints one JSON line ' +
       '{"allow":bool,"component":str|null,"reason":str|null}, always exit 0. ' +
-      'Pure git+file I/O, no LLM — the hook (not the CLI) blocks the commit.',
+      'Pure file I/O — no LLM, no network, and no coverage recompute (edits ' +
+      'are too frequent for git churn scans; the snapshot is read as-is). ' +
+      'The hook (not the CLI) blocks the edit.',
   )
   .action(async () => {
     const cwd = process.cwd();
@@ -831,89 +847,132 @@ gate
       console.log(JSON.stringify({ allow, component, reason }));
     };
 
-    // Config (persisted, else schema defaults so the gate works pre-`init`).
-    const config: ScaleConfig =
-      readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
+    const payload = await readHookPayload();
+    const files = editedFilesOf(payload).map((f) => relToRepo(cwd, f));
+    const sessionId = sessionIdOf(payload);
 
-    // Staged diff → touched files → components (via .scale/index.json, nearest-dir
-    // fallback). No .scale/ at all → nothing to gate, allow.
-    const scaleDir = path.join(cwd, '.scale');
-    if (!fs.existsSync(scaleDir)) {
+    // Record propose timestamps for the diff_review pairing FIRST, whatever the
+    // decision — this call replaced `log review`'s propose phase in the
+    // pre-edit hook, and post-edit still closes the pair (PLAN §5 diff_review).
+    if (files.length > 0) {
+      const pending = readPendingEdits(dir);
+      const at = nowIso();
+      for (const f of files) pending[pendingKey(sessionId, f)] = at;
+      writePendingEdits(dir, pending);
+    }
+
+    // No files, or no coverage memory at all → nothing is locked.
+    if (files.length === 0 || !fs.existsSync(path.join(cwd, '.scale'))) {
       emit(true, null, null);
       return;
     }
-    const loaded = loadScaleDir(cwd);
-    const index = loadFileComponentIndex(cwd, loaded);
-    const files = stagedFiles(cwd);
+
+    // Effective config: schema defaults < committed team policy < user
+    // overrides (PLAN-GATE §2). A broken policy fails open to user-only.
+    const config = loadEffectiveConfig(cwd, dir).config;
+    if (!config.gate.enabled) {
+      emit(true, null, null);
+      return;
+    }
+
+    // Exempt paths out, then files → components through the EXACT index only.
+    // The nearest-directory fallback is banned on this path (PLAN-GATE §3.2-1):
+    // it sprays an unanchored file across every component in the directory
+    // (measured at up to 11 here), which would gate new-file creation on a
+    // dozen unrelated unlocks. A file no paper anchors gates nothing.
+    const kept = files.filter((f) => !pathMatchesAny(f, config.exempt.paths));
+    if (kept.length === 0) {
+      emit(true, null, null);
+      return;
+    }
+    const index = loadFileComponentIndex(cwd, loadScaleDir(cwd));
     const touched = new Set<string>();
-    for (const f of files) {
-      for (const id of componentsForFile(index, f)) touched.add(id);
+    for (const f of kept) for (const id of index[f] ?? []) touched.add(id);
+    if (touched.size === 0) {
+      emit(true, null, null);
+      return;
     }
-    const changedLines = stagedChangedLines(cwd);
 
-    // Coverage (materialized from evidence) + the frozen map for importance.
-    const { coverage, map } = recomputeCoverageFromDisk(cwd);
+    // Coverage SNAPSHOT (latency contract §7.1 — no recompute per edit). An
+    // absent snapshot means every component reads as fog, which locks exactly
+    // as a never-checked user should be locked.
+    const coverage =
+      readCoverageSafe(dir) ?? { user: currentUser(dir), updatedAt: '', components: {} };
+    const map = readMapJsonSafe(cwd);
     const importance: Record<string, number> = {};
-    for (const n of map.nodes) importance[n.id] = n.importance;
+    if (map) for (const n of map.nodes) importance[n.id] = n.importance;
+    const locks = readLocksSafe(dir);
 
-    // Budget accounting is a read-decide-write, and it is NOT atomic on its own:
-    // two commits landing together both read the same pre-spend counter and both
-    // fire. Take the repo's session lock for the whole decision. Losing the race
-    // means another gate is deciding right now, so allow — over-interrupting is
-    // the failure this gate exists to prevent.
+    // Budget accounting is a read-decide-write; take the session lock for the
+    // whole decision (same rationale as the old commit gate: losing the race
+    // means another gate is deciding right now, so allow).
     const decided = withSessionLock(dir, () => {
-    // Budget accounting. An expired record must not be reused: `context` is the
-    // only other place that evaluates the window, and it does not run in every
-    // configuration, so a months-old record with a spent budget would otherwise
-    // suppress the gate here forever.
-    const stored = readSessionSafe(dir);
-    const session: SessionRecord =
-      stored && isSessionAdoptable(stored, config.budgets.sessionIdleResetMinutes * 60_000)
-        ? stored
-        : defaultSession(crypto.randomUUID(), nowIso());
+      const stored = readSessionSafe(dir);
+      const session: SessionRecord =
+        stored && isSessionAdoptable(stored, config.budgets.sessionIdleResetMinutes * 60_000)
+          ? stored
+          : defaultSession(sessionId || crypto.randomUUID(), nowIso());
 
-    const now = nowIso();
-    const recentlyAddressed = recentlyAddressedComponents(
-      dir,
-      new Date(now),
-      MARKER_TTL_MINUTES,
-    );
+      const now = nowIso();
+      const recentlyAddressed = recentlyAddressedComponents(
+        dir,
+        new Date(now),
+        MARKER_TTL_MINUTES,
+      );
 
-    const gateInput: GateInput = {
-      touched: [...touched],
-      coverage,
-      config,
-      session: {
-        interventionsThisSession: session.interventionsThisSession,
-        lastInterventionAt: session.lastInterventionAt,
-        pendingComponent: session.pendingComponent,
-      },
-      changedLines,
-      recentlyAddressed,
-      now,
-      importance,
-    };
-
-    const decision = gateDecision(gateInput);
-
-    if (decision.action === 'deny' && decision.component) {
-      // Spend a budget slot INSIDE the lock: bump the counter, stamp the time,
-      // remember the target.
-      writeSession(dir, {
-        ...session,
-        interventionsThisSession: session.interventionsThisSession + 1,
-        lastInterventionAt: now,
-        pendingComponent: decision.component,
+      const decision = gateEditDecision({
+        touched: [...touched],
+        coverage,
+        config,
+        session: {
+          interventionsThisSession: session.interventionsThisSession,
+          lastInterventionAt: session.lastInterventionAt,
+          pendingComponent: session.pendingComponent,
+        },
+        unlocked: Object.keys(locks.components),
+        sessionSkips: session.sessionSkips,
+        recentlyAddressed,
+        now,
+        importance,
       });
-      return { component: decision.component, reason: decision.reason ?? null, now };
-    }
 
-    // Allow. If this allow resolved the pending component (its retry passed, or it
-    // was deferred → dropped), clear the pending marker.
-    if (session.pendingComponent && recentlyAddressed.includes(session.pendingComponent)) {
-      writeSession(dir, { ...session, pendingComponent: null });
-    }
-    return null;
+      if (decision.action === 'deny' && decision.component) {
+        if (decision.spendBudget) {
+          // A fresh deny: spend a budget slot INSIDE the lock.
+          writeSession(dir, {
+            ...session,
+            interventionsThisSession: session.interventionsThisSession + 1,
+            lastInterventionAt: now,
+            pendingComponent: decision.component,
+          });
+          return {
+            kind: 'deny' as const,
+            component: decision.component,
+            reason: decision.reason ?? null,
+            now,
+          };
+        }
+        // A re-deny of the still-pending component: no budget movement, and no
+        // second `requested` evidence row — the intervention is already open.
+        return {
+          kind: 'redeny' as const,
+          component: decision.component,
+          reason: decision.reason ?? null,
+          now,
+        };
+      }
+
+      if (decision.advisory && decision.component) {
+        // Advisory: no budget spend, no block — the evidence row written
+        // outside the lock enters recentlyAddressed and rate-limits repeats.
+        return { kind: 'advisory' as const, component: decision.component, now };
+      }
+
+      // Allow. Clear the pending marker if this allow resolved it.
+      if (session.pendingComponent && recentlyAddressed.includes(session.pendingComponent)) {
+        writeSession(dir, { ...session, pendingComponent: null });
+      }
+      return null;
     });
 
     if (!decided) {
@@ -923,11 +982,32 @@ gate
       return;
     }
 
-    // Record that we REQUESTED an in-flow intervention (accounting only — no dim
-    // change). Not 'shown': the gate only asks the agent to run the check, and
-    // whether it ever reached the junior is decided downstream. Appended outside
-    // the lock — it is async, and the budget is already durably spent.
-    // Best-effort: a write failure must not turn the deny into noise.
+    if (decided.kind === 'redeny') {
+      emit(false, decided.component, decided.reason);
+      return;
+    }
+
+    // Accounting rows land outside the lock (async append, best-effort — a
+    // write failure must not turn the decision into noise).
+    if (decided.kind === 'advisory') {
+      try {
+        await appendEvidence(dir, {
+          type: 'intervention',
+          ts: decided.now,
+          user: currentUser(dir),
+          componentId: decided.component,
+          timing: 'inflow',
+          modality: config.gate.modality,
+          outcome: 'advisory',
+          trigger: 'edit',
+        });
+      } catch {
+        /* keep going */
+      }
+      emit(true, decided.component, null);
+      return;
+    }
+
     try {
       await appendEvidence(dir, {
         type: 'intervention',
@@ -935,8 +1015,9 @@ gate
         user: currentUser(dir),
         componentId: decided.component,
         timing: 'inflow',
-        modality: config.condition.modality,
+        modality: config.gate.modality,
         outcome: 'requested',
+        trigger: 'edit',
       });
     } catch {
       /* keep going — the deny is what matters to the hook */
@@ -950,16 +1031,16 @@ gate
 gate
   .command('defer')
   .description(
-    'Skip the pre-commit check for a component (defer = drop, PLAN §6.1). ' +
-      'Writes the intervention(outcome:deferred) marker the gate recognizes so ' +
-      'the retried commit passes; nothing is queued — the territory just stays ' +
-      'unconquered. Pure file append, no LLM.',
+    'Skip the edit-gate check for a component (PLAN-GATE §3.1): a SESSION-scoped ' +
+      'unlock. The territory stops gating until the current budget period ends, ' +
+      'then locks again — nothing is queued, nothing is durably unlocked. ' +
+      'Pure file append, no LLM.',
   )
-  .argument('<componentId>', 'component whose in-flow check the user is skipping')
+  .argument('<componentId>', 'component whose edit-gate check the user is skipping')
   .option(
     '--by <who>',
     "who chose to skip: 'user' (the junior declined) or 'agent' (the agent " +
-      'skipped without asking, e.g. it authored the commit itself). Only ' +
+      'skipped without asking, e.g. no junior was in the loop). Only ' +
       "'user' is a real deferral decision for study purposes",
     'user',
   )
@@ -971,39 +1052,45 @@ gate
       process.exitCode = 1;
       return;
     }
-    // Modality is accounting metadata; use the configured condition (schema
-    // default pre-`init` so defer works even before state is set up).
-    const config: ScaleConfig =
-      readConfigSafe(dir) ?? ScaleConfigSchema.parse({ user: process.env.USER ?? 'user' });
+    // Modality is accounting metadata; effective config works pre-`init`.
+    const config = loadEffectiveConfig(cwd, dir).config;
     const now = nowIso();
 
-    // The marker: an inflow intervention with outcome 'deferred'. This is exactly
-    // what `recentlyAddressedComponents` (and the pure gate) scan for, so the very
-    // next `git commit` on the same staged diff passes the gate (defer = drop).
-    // `by` keeps an agent-side skip out of the junior's choice data.
+    // Two clears, and both matter: the evidence marker satisfies the immediate
+    // retry (recentlyAddressed, TTL 10 min), while `sessionSkips` holds the
+    // skip open for the REST of the budget period — skip means "not this
+    // session", not "not for the next ten minutes".
     await appendEvidence(dir, {
       type: 'intervention',
       ts: now,
       user: currentUser(dir),
       componentId,
       timing: 'inflow',
-      modality: config.condition.modality,
+      modality: config.gate.modality,
       outcome: 'deferred',
+      trigger: 'edit',
       by: opts.by,
     });
 
-    // Clear the pending marker if this is what the last deny was waiting on, so the
-    // budget accounting matches the retry-passes path.
     withSessionLock(dir, () => {
-      const session = readSessionSafe(dir);
-      if (session && session.pendingComponent === componentId) {
-        writeSession(dir, { ...session, pendingComponent: null });
-      }
+      const stored = readSessionSafe(dir);
+      const session: SessionRecord =
+        stored && isSessionAdoptable(stored, config.budgets.sessionIdleResetMinutes * 60_000)
+          ? stored
+          : defaultSession(crypto.randomUUID(), now);
+      writeSession(dir, {
+        ...session,
+        sessionSkips: session.sessionSkips.includes(componentId)
+          ? session.sessionSkips
+          : [...session.sessionSkips, componentId],
+        pendingComponent:
+          session.pendingComponent === componentId ? null : session.pendingComponent,
+      });
     });
 
     console.log(
-      `scale: skipped '${componentId}' (by ${opts.by}) — territory stays unconquered; ` +
-        'commit will proceed.',
+      `scale: skipped '${componentId}' (by ${opts.by}) — unlocked for THIS session only; ` +
+        'retry the edit. It locks again next session.',
     );
   });
 
@@ -1127,19 +1214,18 @@ program
       // 0.0-0.3 is "cannot state it", 0.4-0.6 "shaky", 0.7-1.0 "explains it", so
       // anything above the bottom band demonstrated something.
       const outcome = achieved >= ITEM_PASS_SCORE ? 'completed' : 'attempted';
-      // `timing` is the STUDY'S MANIPULATED VARIABLE, so it must report the
-      // condition this user is assigned to — never be re-derived from where the
-      // check came from. Deriving it from `--origin` mislabeled in both
-      // directions: a post-session quest completion was filed as `inflow`, and a
-      // voluntary /scale-study check in an in-flow condition as `postsession`.
-      const conditionTiming = readConfigSafe(dir)?.condition.timing ?? 'inflow';
+      // `timing` reports the assessment this user is assigned to — never
+      // re-derived from where the check came from (deriving it from `--origin`
+      // once mislabeled in both directions). The legacy evidence vocabulary is
+      // kept: sync → 'inflow', async → 'postsession'.
+      const effConfig = loadEffectiveConfig(cwd, dir).config;
       try {
         await appendEvidence(dir, {
           type: 'intervention',
           ts: entry.ts,
           user: entry.user,
           componentId,
-          timing: conditionTiming,
+          timing: effConfig.gate.assessment === 'async' ? 'postsession' : 'inflow',
           modality: entry.type === 'quiz_result' ? 'quiz' : 'socratic',
           outcome,
           by,
@@ -1147,6 +1233,11 @@ program
       } catch {
         /* accounting only — the graded result above is what moves coverage */
       }
+
+      // The unlock ledger (PLAN-GATE §3.1): a passed check BY THE USER opens
+      // the edited territory durably. Single funnel shared with quest
+      // completion, so the ledger cannot disagree across surfaces.
+      const unlock = noteCheckOutcome(cwd, dir, componentId, achieved, by, sha, entry.ts);
 
       const res = recomputeCoverageFromDisk(cwd);
       const comp = res.coverage.components[componentId];
@@ -1165,13 +1256,20 @@ program
       // (α=0.3 from 0) means several strong passes are needed to cross the bar, so
       // surface exactly how close this component is and whether it's over yet.
       const mean = meanDims(comp.dims);
-      const validateDim = readConfigSafe(dir)?.thresholds.validateDim ?? 0.6;
+      const validateDim = effConfig.thresholds.validateDim;
       const verdict =
         comp.state === 'validated' ? 'validated' : 'needs more validation';
       console.log(
         `  ${componentId}: ${comp.state} — comprehension ${mean.toFixed(2)} / ` +
           `${validateDim.toFixed(2)} (${verdict})`,
       );
+      if (unlock.unlocked) {
+        console.log(`  territory UNLOCKED for editing (check passed, by ${by}).`);
+      } else if (!unlock.alreadyUnlocked && unlock.checks > 0) {
+        console.log(
+          `  unlock progress: ${unlock.checks}/${effConfig.unlock.checksRequired} passed check(s).`,
+        );
+      }
     },
   );
 
@@ -1500,7 +1598,7 @@ quest
         `rationale ${fmt(component.dims.rationale)}]`,
     );
     const mean = meanDims(component.dims);
-    const validateDim = readConfigSafe(dir)?.thresholds.validateDim ?? 0.6;
+    const validateDim = loadEffectiveConfig(cwd, dir).config.thresholds.validateDim;
     const verdict = component.state === 'validated' ? 'validated' : 'needs more validation';
     console.log(
       `  comprehension ${mean.toFixed(2)} / ${validateDim.toFixed(2)} (${verdict})`,
@@ -1646,7 +1744,11 @@ program
 // ---------------------------------------------------------------------------
 const config = program
   .command('config')
-  .description('Read/write config.json (condition, budgets, thresholds)');
+  .description(
+    'Read/write the user config (gate, budgets, thresholds). `get` shows the ' +
+      'EFFECTIVE config (schema defaults < team policy < your overrides); ' +
+      '`set` writes a personal override into your sparse config.json.',
+  );
 
 /** Resolve a dotted path within an object; returns undefined if absent. */
 function getPath(obj: unknown, dotted: string): unknown {
@@ -1677,23 +1779,25 @@ function setPath(
 
 config
   .command('get')
-  .description('Print config.json, or a single dotted key (e.g. condition.timing)')
+  .description('Print the EFFECTIVE config, or a single dotted key (e.g. gate.assessment)')
   .argument('[key]', 'dotted key path')
-  .action((key: string | undefined) => {
-    const dir = stateDir();
-    let cfg: ScaleConfig;
-    try {
-      cfg = readConfig(dir);
-    } catch {
+  .option('--raw', 'print your sparse user overrides file instead of the effective view', false)
+  .action((key: string | undefined, opts: { raw?: boolean }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    if (!configExists(dir)) {
       console.error('scale: no config found — run `scale init` first.');
       process.exitCode = 1;
       return;
     }
+    const view: unknown = opts.raw
+      ? (readUserConfigRaw(dir) ?? {})
+      : loadEffectiveConfig(cwd, dir).config;
     if (!key) {
-      console.log(JSON.stringify(cfg, null, 2));
+      console.log(JSON.stringify(view, null, 2));
       return;
     }
-    const value = getPath(cfg, key);
+    const value = getPath(view, key);
     if (value === undefined) {
       console.error(`scale: no such config key "${key}".`);
       process.exitCode = 1;
@@ -1704,15 +1808,16 @@ config
 
 config
   .command('set')
-  .description('Set a dotted key and re-validate the whole config')
-  .argument('<key>', 'dotted key path (e.g. condition.modality)')
+  .description(
+    'Set a dotted key as a personal override (kept sparse so team-policy ' +
+      'defaults stay live) and re-validate the effective config',
+  )
+  .argument('<key>', 'dotted key path (e.g. gate.modality)')
   .argument('<value>', 'value (JSON if parseable, else string)')
   .action((key: string, rawValue: string) => {
-    const dir = stateDir();
-    let cfg: ScaleConfig;
-    try {
-      cfg = readConfig(dir);
-    } catch {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    if (!configExists(dir)) {
       console.error('scale: no config found — run `scale init` first.');
       process.exitCode = 1;
       return;
@@ -1724,12 +1829,20 @@ config
     } catch {
       /* leave as string */
     }
-    const next = setPath(cfg as unknown as Record<string, unknown>, key, value);
+    // Operate on the RAW sparse file, never the materialized view — writing the
+    // effective config back would freeze every default as an explicit override.
+    // Legacy keys (condition.*, inflow.*) are migrated on the way through, so a
+    // `set condition.timing inflow` still lands as the gate.* it means.
+    const raw = readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' };
+    const next = migrateLegacyConfig(setPath(raw, key, value)) as Record<string, unknown>;
+    const policy = readPolicyRaw(cwd);
     try {
-      const saved = writeConfig(dir, next);
-      console.log(`scale: set ${key} → ${JSON.stringify(getPath(saved, key))}`);
+      resolveConfig(next, policy.parseError ? undefined : policy.raw); // validate effective
+      writeUserConfigRaw(dir, next);
+      const effective = loadEffectiveConfig(cwd, dir).config;
+      console.log(`scale: set ${key} → ${JSON.stringify(getPath(next, key) ?? getPath(effective, key))}`);
     } catch (err) {
-      console.error(`scale: invalid config after set — ${(err as Error).message}`);
+      console.error(`scale: invalid config after set — ${(err as Error).message.split('\n')[0]}`);
       process.exitCode = 1;
     }
   });

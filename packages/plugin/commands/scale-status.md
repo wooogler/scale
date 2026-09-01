@@ -9,8 +9,9 @@ Report the junior's current coverage at a glance. Read-only; no learning check.
 Run `scale status` and present its output (git+file reads only, no LLM). It
 prints, per PLAN §5.1:
 
-- **Header** — repo-id, user, condition (timing/modality), models
-  (build/intervention).
+- **Header** — repo-id, user, gate (assessment/modality + enforcement), the
+  resolved intervention model, whether a committed team policy is applied, and
+  how many territories are unlocked for editing.
 - **Unification progress** — the importance-weighted total coverage across the
   realm (Σ importance × mean dims / Σ importance).
 - **Territory breakdown** — counts by state: fog / explored / validated / stale.

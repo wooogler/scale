@@ -1,26 +1,28 @@
 /**
- * In-flow intervention GATE — the deterministic pre-commit decision (PLAN §6.1).
+ * The EDIT GATE — the deterministic lock decision (PLAN-GATE §3).
  *
- * This is the beating heart of Principle 2 ("Minimal interruption"): a single,
- * PURE, side-effect-free function that decides whether a pre-commit intervention
- * is allowed to fire. No git, no fs, no clock, no LLM — every input (touched
- * components, coverage, config, session budget accounting, changed-line count,
- * the recently-addressed marker set, and `now`) is INJECTED by the caller (the
- * CLI). The same inputs always yield the same decision, so the budget policy is
- * provably honored and fully unit-testable.
+ * A single, PURE, side-effect-free function decides whether an
+ * Edit/Write/MultiEdit that reaches into locked territory is denied. No git, no
+ * fs, no clock, no LLM — every input (touched components, coverage snapshot,
+ * effective config, the unlock ledger, session skips, budget accounting, and
+ * `now`) is INJECTED by the caller (the CLI), so the same inputs always yield
+ * the same decision and the policy is fully unit-testable.
  *
- * The budget guarantees (all constants in config.json):
- *   - ≤ 1 intervention per commit — realized by the `recentlyAddressed` retry
- *     mechanic, NOT a counter: after a deny the tutor records a validation (or the
- *     user defers), the touched candidate enters `recentlyAddressed` within the
- *     marker TTL, and the retried commit therefore hits the recentlyAddressed
- *     allow-path. One commit can thus fire at most once.
- *   - ≤ maxPerSession interventions per session (a hard counter).
- *   - ≥ cooldownMinutes between interventions.
- *   - never on trivial diffs (< minChangedLines).
- *   - defer = DROP: a deferred component is recorded as an intervention marker,
- *     which puts it in `recentlyAddressed`, so the immediate retry passes and the
- *     item is never re-raised this commit. Nothing crosses into a queue (§6.3).
+ * What "locked" means (PLAN-GATE §3.1):
+ *   a component is locked unless it is in the durable unlock ledger
+ *   (`locks.json` — a passed check put it there) OR its coverage state is
+ *   `validated` (grandfathered: comprehension already demonstrated under the
+ *   old model must not re-lock on migration).
+ *
+ * Budget guarantees (constants live in the effective config):
+ *   - one deny per component per work stretch — after a deny the component is
+ *     either unlocked (check passed), session-skipped (defer), or in
+ *     `recentlyAddressed` (marker TTL), all of which clear it from candidacy,
+ *     so the retried edit passes.
+ *   - ≤ maxPerSession denies per budget period (hard counter).
+ *   - ≥ cooldownMinutes between denies.
+ *   - budget exhaustion fails OPEN (allow) — over-interrupting is the failure
+ *     this gate exists to prevent; S3 will queue the missed check instead.
  */
 import type { Language, ScaleConfig } from './schema/config.js';
 import type { UserCoverage } from './schema/coverage.js';
@@ -28,29 +30,40 @@ import { meanDims } from './coverage-model.js';
 
 /** Session budget-accounting record threaded into the gate (mutated by the CLI). */
 export interface GateSession {
-  /** Interventions already fired this session (vs config.budgets.maxPerSession). */
+  /** Denies already fired this budget period (vs config.budgets.maxPerSession). */
   interventionsThisSession: number;
-  /** ISO timestamp of the last fired intervention, or null if none yet. */
+  /** ISO timestamp of the last fired deny, or null if none yet. */
   lastInterventionAt: string | null;
   /** Component the last deny asked about (cleared once its retry passes). */
   pendingComponent: string | null;
 }
 
-/** Fully-injected inputs to {@link gateDecision}. Pure — no I/O implied. */
-export interface GateInput {
-  /** Component ids touched by the staged diff (already file→component mapped). */
+/** Fully-injected inputs to {@link gateEditDecision}. Pure — no I/O implied. */
+export interface GateEditInput {
+  /**
+   * Component ids the edited file(s) map to — EXACT index matches only, exempt
+   * paths already filtered out. The nearest-directory fallback is banned here:
+   * it sprays a new file across every component in the directory (PLAN-GATE
+   * §3.2-1), which would gate file creation on up to 11 unrelated unlocks.
+   */
   touched: string[];
-  /** Materialized coverage (states + dims). */
+  /**
+   * Materialized coverage SNAPSHOT (coverage.json). Deliberately not a
+   * recompute — edits are far too frequent for per-edit git churn scans; the
+   * snapshot is refreshed by SessionStart/record/status.
+   */
   coverage: UserCoverage;
+  /** The EFFECTIVE config (schema defaults < team policy < user overrides). */
   config: ScaleConfig;
   session: GateSession;
-  /** Total added+deleted lines in the staged diff (trivial-diff gate). */
-  changedLines: number;
+  /** Durably unlocked component ids (the locks.json ledger). */
+  unlocked: string[];
+  /** Components the user deferred THIS budget period (skip = session unlock). */
+  sessionSkips: string[];
   /**
-   * Components already handled within the marker TTL — either a fresh active
-   * validation OR a deferred/completed intervention. Their presence is BOTH the
-   * retry-passes path (tutor recorded → retry allows) AND the defer=drop path
-   * (user skipped → retry allows, item dropped). See PLAN §6.1.
+   * Components handled within the marker TTL — a fresh check result or a
+   * deferred/completed intervention. This is what makes the retried edit pass
+   * right after the tutor records, before the ledger read would even matter.
    */
   recentlyAddressed: string[];
   /** Decision time (ISO), for the cooldown comparison. */
@@ -65,15 +78,20 @@ export interface GateInput {
 /** The gate's verdict. `spendBudget` tells the CLI to charge the session budget. */
 export interface GateDecision {
   action: 'allow' | 'deny';
-  /** The territory the intervention targets (deny only). */
+  /** The territory the decision targets (deny, or advisory allow). */
   component?: string;
   /** Agent-facing instruction (deny) or a short allow rationale. */
   reason?: string;
   /** True only on a deny that actually consumes a budget slot. */
   spendBudget?: boolean;
+  /**
+   * True on an `advisory`-enforcement allow that matched locked territory: the
+   * CLI records it (rate-limited via recentlyAddressed) but never blocks.
+   */
+  advisory?: boolean;
 }
 
-/** A touched component that is worth a check: fog / stale / explored-below-bar. */
+/** A locked, touched component. */
 interface Candidate {
   id: string;
   /** 0=fog, 1=stale, 2=explored (lower = higher priority). */
@@ -90,34 +108,6 @@ function minutesBetween(nowIso: string, thenIso: string): number {
   const b = Date.parse(thenIso);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return Infinity;
   return (a - b) / 60000;
-}
-
-/**
- * Collect the touched components that warrant an intervention:
- *   - `fog`                          — never explored,
- *   - `stale`                        — rebellion, needs re-validation,
- *   - `explored` with mean < validateDim — scouted but not yet conquered.
- * `validated` (and the degenerate explored-at-or-above-bar) are NOT candidates.
- * A touched id with no coverage record is treated as fog.
- */
-function candidatesOf(input: GateInput): Candidate[] {
-  const bar = input.config.thresholds.validateDim;
-  const out: Candidate[] = [];
-  const seen = new Set<string>();
-  for (const id of input.touched) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const comp = input.coverage.components[id];
-    const state = comp?.state ?? 'fog';
-    const mean = comp ? meanDims(comp.dims) : 0;
-    if (state === 'fog' || state === 'stale') {
-      out.push({ id, stateRank: STATE_RANK[state]!, mean });
-    } else if (state === 'explored' && mean < bar) {
-      out.push({ id, stateRank: STATE_RANK.explored!, mean });
-    }
-    // validated, or explored ≥ bar: comprehension already demonstrated, skip.
-  }
-  return out;
 }
 
 /**
@@ -144,88 +134,137 @@ function topCandidate(cands: Candidate[], importance?: Record<string, number>): 
 }
 
 /**
- * Build the agent-facing deny instruction for a target component + modality.
+ * Build the agent-facing deny instruction (PLAN-GATE §3.2-6).
  *
  * This text is read by the AGENT, not by the junior — which is exactly why it
- * has to be emphatic about handing the check over. An earlier version listed
- * `scale gate defer` as a co-equal option, and an agent that found the check
- * inconvenient could skip it silently: the junior never learned an intervention
- * was due, while the evidence log recorded one as delivered and spent a budget
- * slot. Deferring is the JUNIOR's call (PLAN §6.1 "defer = drop, their choice"),
- * so the agent must present the check and may only skip when told to — and when
- * it skips anyway, `--by agent` keeps that out of the study's user-choice data.
+ * has to be emphatic about handing the moment over. An earlier commit-gate
+ * version listed `scale gate defer` as a co-equal option and agents skipped
+ * silently; the junior never learned a check was due while the log recorded one
+ * as delivered. Skipping is the JUNIOR's call, so the agent must present the
+ * moment and may only skip when told to — and an unasked skip must be labeled
+ * `--by agent` so it stays out of the study's user-choice data.
  *
- * The instruction itself always stays English (it addresses the AGENT); when the
- * junior's `language` is 'ko' one extra sentence tells the agent to DELIVER the
- * check in Korean (code identifiers/technical terms stay English — see
- * LanguageSchema in schema/config.ts).
+ * Three axes shape the text:
+ *  - assessment `sync`  — run the check now, in chat; passing unlocks durably.
+ *  - assessment `async` — do NOT quiz now: TEACH, then point the junior at the
+ *    map viewer / a later /scale-study to unlock; the edit stays denied unless
+ *    they choose to skip.
+ *  - enforcement `hard` — the skip paragraph is replaced: team policy disables
+ *    skipping (the member's own enforcement override is the sanctioned valve).
+ *
+ * The instruction itself always stays English (it addresses the AGENT); when
+ * the junior's `language` is 'ko' one extra sentence tells the agent to DELIVER
+ * everything junior-facing in Korean (code identifiers stay English).
  */
-export function gateDenyReason(
-  component: string,
-  modality: string,
-  language: Language = 'en',
-): string {
-  const reason =
-    `SCALE in-flow check — this is for the JUNIOR, not for you to resolve.\n` +
-    `Run the ${modality} comprehension check on the '${component}' territory ` +
-    `using the scale-tutor skill and put it in front of them now (it's ` +
-    `fog/stale/low-coverage and they just changed it). After they complete it ` +
-    `(scale record), retry the commit.\n` +
-    `Do NOT skip this on their behalf. If — and only if — they say to skip, run ` +
-    `\`scale gate defer ${component}\`, then retry. If you skip without asking ` +
-    `(e.g. you authored this commit yourself), you MUST run ` +
-    `\`scale gate defer ${component} --by agent\` and say so in your reply.`;
-  if (language !== 'ko') return reason;
-  return (
-    reason +
-    ` The junior's interaction language is KOREAN: deliver the check itself ` +
-    `entirely in Korean, keeping code identifiers and technical terms in English.`
-  );
+export function gateDenyReason(component: string, config: ScaleConfig): string {
+  const { modality, assessment, enforcement } = config.gate;
+  const language: Language = config.language;
+
+  const head =
+    `SCALE edit gate — the '${component}' territory is LOCKED for this user ` +
+    `(comprehension not yet demonstrated), and this edit reaches into it. ` +
+    `This moment is for the JUNIOR, not for you to resolve.`;
+
+  const body =
+    assessment === 'sync'
+      ? `Run the ${modality} comprehension check on '${component}' using the ` +
+        `scale-tutor skill and put it in front of them now. After they complete ` +
+        `it (scale record), retry the edit — a passing check unlocks this ` +
+        `territory durably.`
+      : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH ` +
+        `instead — explain what '${component}' does and why, grounded in its ` +
+        `paper under .scale/ and in what this edit is trying to change. Then ` +
+        `tell the junior the territory stays locked until they pass its check ` +
+        `later (in the SCALE map viewer, or with /scale-study ${component} in a ` +
+        `coming session). The edit itself stays blocked for now.`;
+
+  const skip =
+    enforcement === 'hard'
+      ? `Skipping is disabled by team policy (enforcement: hard) — do not look ` +
+        `for a way around the lock; work elsewhere or unlock it properly.`
+      : `Do NOT skip on their behalf. If — and only if — the junior says to ` +
+        `skip, run \`scale gate defer ${component}\` (this unlocks it for THIS ` +
+        `SESSION only), then retry the edit. If you skip without asking (e.g. ` +
+        `no junior is in the loop), you MUST run \`scale gate defer ` +
+        `${component} --by agent\` and say so in your reply.`;
+
+  const ko =
+    language === 'ko'
+      ? ` The junior's interaction language is KOREAN: deliver everything ` +
+        `junior-facing entirely in Korean, keeping code identifiers and ` +
+        `technical terms in English.`
+      : '';
+
+  return `${head}\n${body}\n${skip}${ko}`;
 }
 
 /**
- * The deterministic pre-commit gate decision (PLAN §6.1). Conditions are
+ * The deterministic edit-gate decision (PLAN-GATE §3.2). Conditions are
  * evaluated IN ORDER; the first match wins. Every allow-path documents WHY it
- * lets the commit through, so the interruption audit (Phase 6) can read the trace.
+ * lets the edit through, so the interruption audit can read the trace.
  */
-export function gateDecision(input: GateInput): GateDecision {
+export function gateEditDecision(input: GateEditInput): GateDecision {
   const { config, session } = input;
 
-  // 0. Post-session conditions never gate in-flow (hooks only collect evidence).
-  if (config.condition.timing !== 'inflow') {
-    return { action: 'allow', reason: 'post-session condition — gate is a no-op' };
+  // 0. Gate switched off (a lead exempting themselves, or a member override).
+  if (!config.gate.enabled) {
+    return { action: 'allow', reason: 'gate disabled for this user' };
   }
 
-  // 1. pre-commit trigger disabled for this user.
-  if (!config.inflow.triggers.includes('pre-commit')) {
-    return { action: 'allow', reason: 'pre-commit trigger not enabled' };
+  // 1. Candidates: touched components that are still locked and not otherwise
+  //    cleared this session. `validated` is grandfathered as unlocked.
+  const cleared = new Set([
+    ...input.unlocked,
+    ...input.sessionSkips,
+    ...input.recentlyAddressed,
+  ]);
+  const cands: Candidate[] = [];
+  const seen = new Set<string>();
+  for (const id of input.touched) {
+    if (seen.has(id) || cleared.has(id)) continue;
+    seen.add(id);
+    const comp = input.coverage.components[id];
+    const state = comp?.state ?? 'fog';
+    if (state === 'validated') continue;
+    cands.push({ id, stateRank: STATE_RANK[state] ?? 0, mean: comp ? meanDims(comp.dims) : 0 });
   }
-
-  // 2. Nothing under-covered was touched → nothing to check.
-  const cands = candidatesOf(input);
   if (cands.length === 0) {
-    return { action: 'allow', reason: 'no fog/stale/low-coverage territory touched' };
+    return { action: 'allow', reason: 'no locked territory touched' };
   }
 
-  // 3. A touched candidate was already addressed within the marker TTL — the
-  //    tutor just validated it, OR the user just deferred it (defer = drop).
-  //    Either way the retried commit passes and the item is not re-raised.
-  const addressed = new Set(input.recentlyAddressed);
-  if (cands.some((c) => addressed.has(c.id))) {
-    return { action: 'allow', reason: 'candidate recently addressed (retry/defer)' };
+  // 2. Advisory enforcement: never block — surface and record instead. The
+  //    evidence row the CLI writes enters recentlyAddressed, which is what
+  //    keeps one component from producing an advisory row on every keystroke.
+  if (config.gate.enforcement === 'advisory') {
+    const target = topCandidate(cands, input.importance);
+    return {
+      action: 'allow',
+      component: target.id,
+      reason: `advisory: '${target.id}' is locked territory (not enforced)`,
+      advisory: true,
+    };
   }
 
-  // 4. Trivial diff — below the changed-line floor, never interrupt.
-  if (input.changedLines < config.budgets.minChangedLines) {
-    return { action: 'allow', reason: 'trivial diff below minChangedLines' };
+  // 3. The component the last deny targeted stays denied until it is addressed
+  //    (checked, deferred, or unlocked — all of which clear it from candidacy).
+  //    Without this, a bare retry inside the cooldown window walked straight
+  //    through the lock, making it a one-shot nudge instead of a lock. No
+  //    budget is spent on the re-deny — the slot was charged when it fired.
+  const pending = session.pendingComponent;
+  if (pending && cands.some((c) => c.id === pending)) {
+    return {
+      action: 'deny',
+      component: pending,
+      reason: gateDenyReason(pending, config),
+    };
   }
 
-  // 5. Session intervention budget already spent.
+  // 4. Session deny budget already spent — fail open (S3 queues instead).
   if (session.interventionsThisSession >= config.budgets.maxPerSession) {
     return { action: 'allow', reason: 'session intervention budget spent' };
   }
 
-  // 6. Cooldown — too soon since the last intervention.
+  // 5. Cooldown — too soon since the last deny (of a DIFFERENT component).
   if (
     session.lastInterventionAt !== null &&
     minutesBetween(input.now, session.lastInterventionAt) < config.budgets.cooldownMinutes
@@ -233,12 +272,12 @@ export function gateDecision(input: GateInput): GateDecision {
     return { action: 'allow', reason: 'within cooldown window' };
   }
 
-  // 7. Fire: deny with a reason, targeting the highest-priority candidate.
+  // 6. Fire: deny, targeting the highest-priority locked candidate.
   const target = topCandidate(cands, input.importance);
   return {
     action: 'deny',
     component: target.id,
-    reason: gateDenyReason(target.id, config.condition.modality, config.language),
+    reason: gateDenyReason(target.id, config),
     spendBudget: true,
   };
 }

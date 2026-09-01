@@ -7,8 +7,8 @@ description: >-
   component's paper (concepts + rationale) and the session's actual diff. Grades
   per coverage dimension and records results via `scale record`. Also drives
   voluntary study (/scale-study [component]). Claude Code invokes this when the
-  pre-commit gate asks for a check, and the user invokes it via /scale-study or
-  /scale-quiz, or by asking to learn a component naturally.
+  edit gate denies an edit into locked territory, and the user invokes it via
+  /scale-study or /scale-quiz, or by asking to learn a component naturally.
 license: MIT
 ---
 
@@ -26,9 +26,16 @@ active via `config.json`, surfaced by the CLI):
 
 Two entry contexts:
 
-- **System-initiated (in-flow):** the pre-commit gate (or `/scale-quiz`) points
-  you at a component the junior just touched that is `fog` / low-coverage / stale.
-  Keep it tight — this interrupts real work under a strict budget (PLAN §6.1).
+- **System-initiated (gate):** the edit gate (or `/scale-quiz`) points you at a
+  LOCKED component the edit reaches into. Keep it tight — this interrupts real
+  work under a strict budget. Two sub-cases, told apart by the deny reason
+  (PLAN-GATE §3.2):
+    - **sync assessment** — run the check now, in chat; a passed check UNLOCKS
+      the territory durably and the retried edit goes through.
+    - **async assessment** — the deny reason says "do NOT quiz them now": only
+      TEACH (explain the component from its paper and this edit's intent), then
+      point the junior at the map viewer or a later `/scale-study` to unlock.
+      Do not run or grade a check in chat in this mode.
 - **User-initiated (voluntary):** `/scale-study [component]`, `/scale-quiz`, or the
   junior simply asking to understand something. No budget applies; you may be more
   expansive and include a reading guide first (PLAN §6.3).
@@ -55,24 +62,27 @@ Two entry contexts:
 5. **Brief, supportive tone.** You are a patient peer, not an examiner. Short
    turns, warm and specific praise, no lecturing, no shame on a wrong answer —
    name what was right, then guide. In-flow especially: respect that they're mid-task.
-6. **Deferral is always available and final — and it is the JUNIOR's call.** If
-   the junior says skip / not now, stop immediately. In the **in-flow gate path**
-   (the pre-commit gate sent you here and their commit is blocked), you MUST write
-   the skip marker for them: run `scale gate defer <componentId>` (the component
-   the gate named), then tell the junior to **re-run their `git commit`** — it will
-   now pass the gate. Deferral is final: it is logged and dropped, never queued
-   (PLAN §6.1). Don't nag. Outside the gate path (voluntary study), there is
-   nothing to defer — just stop. **Mid-check deferral** counts too: if the junior
-   bails partway through (after item 1, mid-dialogue), run `scale gate defer
-   <componentId>` if this was the gate path, record nothing further, and leave it —
-   the map keeps whatever partial progress was already recorded, with no penalty
-   for stopping.
+6. **Skipping is the JUNIOR's call — and it is session-scoped, not permanent.**
+   If the junior says skip / not now, stop immediately. In the **gate path**
+   (the edit gate sent you here and the edit is blocked), you MUST write the
+   skip for them: run `scale gate defer <componentId>` (the component the gate
+   named), then **retry the edit** — it now passes. A skip unlocks that
+   territory for THIS session only (PLAN-GATE §3.1): next session it gates
+   again, so tell the junior that plainly, without nagging. If the deny reason
+   says skipping is disabled by team policy (enforcement: hard), do not defer —
+   work elsewhere or run the check properly. Outside the gate path (voluntary
+   study), there is nothing to defer — just stop. **Mid-check deferral** counts
+   too: if the junior bails partway through (after item 1, mid-dialogue), run
+   `scale gate defer <componentId>` if this was the gate path, record nothing
+   further, and leave it — the map keeps whatever partial progress was already
+   recorded, with no penalty for stopping.
 
-   **Never defer on the junior's behalf.** Present the check first; skipping is
-   their decision, not a convenience for you. The one exception is a commit *you*
-   authored with no junior in the loop — then run `scale gate defer <componentId>
-   --by agent` (so the study data doesn't count it as their choice) and tell them
-   plainly in your reply that a check was due and you skipped it.
+   **Never defer on the junior's behalf.** Present the moment first; skipping is
+   their decision, not a convenience for you. The one exception is an edit *you*
+   are making with no junior in the loop — then run `scale gate defer
+   <componentId> --by agent` (so the study data doesn't count it as their
+   choice) and tell them plainly in your reply that a check was due and you
+   skipped it.
 7. **Interaction language follows `config.language`.** Determine it before the
    first item: when it is `ko`, the SessionStart context contains the line
    `interaction language: ko — run comprehension checks in Korean (keep code
@@ -92,8 +102,8 @@ Two entry contexts:
 Ask the CLI for grounding material rather than guessing:
 
 - The **target component id** comes from one of: (a) the `/scale-study <component>`
-  argument, (b) the pre-commit gate's **deny reason**, which names the component
-  (and why — fog / low-coverage / stale), or (c) the most-recently-touched
+  argument, (b) the edit gate's **deny reason**, which names the locked
+  component, or (c) the most-recently-touched
   low-coverage component reported by the CLI. Note `scale record --help` shows the
   command's flags, not a component id — don't look for the target there.
 - Read the component's paper at `.scale/<province>/<id>/README.md` for `concepts`
@@ -216,10 +226,12 @@ rule 6.
 
 **A wrong answer is still a recorded check.** Score it honestly (0.0, or up to
 0.3 for partial reasoning) and record it; the gate accepts it and the retried
-commit passes. Do not inflate a score to "unblock" the junior, and do not
-withhold the record because they got it wrong — the CLI files a low result as an
-`attempted` intervention rather than a `completed` one, so the honest number
-costs them nothing but a wrong number corrupts the study.
+edit passes — but only a PASSED check (mean ≥ the unlock bar, default 0.60)
+durably unlocks the territory; a failed one clears just this retry. Do not
+inflate a score to "unblock" the junior, and do not withhold the record because
+they got it wrong — the CLI files a low result as an `attempted` intervention
+rather than a `completed` one, so the honest number costs them nothing but a
+wrong number corrupts the study.
 
 The CLI prints the component's new state plus a progress line — weighted
 comprehension mean vs. the 0.60 validation bar (e.g. `explored — comprehension
@@ -246,13 +258,13 @@ clearing the 0.60 bar on the second, with the required 2 validations) — one st
 session visibly shifts the map but is not yet a conquest, because conquest always
 needs ≥ 2 demonstrated validations. Don't promise a conquest from a single check.
 
-**In the pre-commit gate path**, a successful `scale record` writes the fresh
-validation marker (TTL 10 min) that lets the junior's retried `git commit` pass
-the gate. So: run the check → record → tell them to re-run the commit. If instead
-the junior chooses to **skip**, run `scale gate defer <componentId>` — it writes
-the equivalent skip marker (defer = drop, PLAN §6.1) so the retried commit passes
-too, with the territory simply left unconquered. Either way, the last thing you
-tell them is to re-run `git commit`.
+**In the edit-gate path**, a `scale record` clears the retry immediately (marker
+TTL 10 min), and a PASSED check also unlocks the territory durably — the CLI
+prints `territory UNLOCKED for editing` when it does. So: run the check → record
+→ retry the edit. If instead the junior chooses to **skip**, run `scale gate
+defer <componentId>` — a session-scoped unlock (PLAN-GATE §3.1): the retried
+edit passes, and the territory locks again next session. Either way, the last
+thing you do is retry the edit that was denied.
 
 ---
 

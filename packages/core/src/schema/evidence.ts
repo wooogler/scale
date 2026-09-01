@@ -130,7 +130,17 @@ export const InterventionEvidenceSchema = z.object({
   componentId: z.string(),
   timing: z.enum(['inflow', 'postsession']),
   modality: z.enum(['quiz', 'socratic']),
-  outcome: z.enum(['requested', 'shown', 'deferred', 'completed', 'attempted']),
+  /**
+   * `advisory` — the edit gate matched locked territory but enforcement was
+   * `advisory`, so it recorded instead of denying (PLAN-GATE §3.2-3). These
+   * rows also serve as the advisory rate-limit: they enter recentlyAddressed.
+   */
+  outcome: z.enum(['requested', 'shown', 'deferred', 'completed', 'attempted', 'advisory']),
+  /**
+   * What fired it: `edit` (the PreToolUse edit gate) or `commit` (the removed
+   * pre-commit gate — historical rows only). Absent on older logs.
+   */
+  trigger: z.enum(['edit', 'commit']).optional(),
   /** Who ended it. Absent on `requested`/`shown` and on pre-`by` logs. */
   by: z.enum(['user', 'agent']).optional(),
 });

@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import {
   ScaleConfigSchema,
   type ScaleConfig,
+  resolveConfig,
   UserCoverageSchema,
   type UserCoverage,
   QuestSchema,
@@ -89,6 +90,7 @@ export const paths = {
   evidence: (dir: string) => path.join(dir, 'evidence.jsonl'),
   quests: (dir: string) => path.join(dir, 'quests.json'),
   pendingEdits: (dir: string) => path.join(dir, 'pending-edits.json'),
+  locks: (dir: string) => path.join(dir, 'locks.json'),
 };
 
 /** Create the state dir (idempotent). */
@@ -119,12 +121,93 @@ export function readConfigSafe(dir: string): ScaleConfig | null {
   }
 }
 
-/** Validate then write config.json (pretty-printed). */
-export function writeConfig(dir: string, config: unknown): ScaleConfig {
-  const parsed = ScaleConfigSchema.parse(config);
+/**
+ * Read the user config file RAW — no schema, no defaults. This is the shape the
+ * layering needs (PLAN-GATE §2): the file stores only explicit choices, and a
+ * parsed-and-defaulted view cannot tell "user chose 2" from "default is 2".
+ * Returns null when absent or unparseable.
+ */
+export function readUserConfigRaw(dir: string): Record<string, unknown> | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(paths.config(dir), 'utf8'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the user config file SPARSE — exactly the given raw object, which must
+ * already have been validated by the caller (via `resolveConfig` against the
+ * current policy, so a bad value is rejected before it lands on disk). Never
+ * write a fully materialized `ScaleConfig` here: that would turn every schema
+ * default into an explicit user override and permanently shadow team policy.
+ */
+export function writeUserConfigRaw(dir: string, raw: Record<string, unknown>): void {
   ensureStateDir(dir);
-  fs.writeFileSync(paths.config(dir), JSON.stringify(parsed, null, 2) + '\n');
-  return parsed;
+  fs.writeFileSync(paths.config(dir), JSON.stringify(raw, null, 2) + '\n');
+}
+
+// ---------------------------------------------------------------------------
+// effective config  (schema defaults < .scale/policy.json < user config.json)
+// ---------------------------------------------------------------------------
+
+/** Read `<cwd>/.scale/policy.json` raw. `parseError` = present but not JSON. */
+export function readPolicyRaw(cwd: string): {
+  present: boolean;
+  raw: unknown;
+  parseError: boolean;
+} {
+  const p = path.join(cwd, '.scale', 'policy.json');
+  if (!fs.existsSync(p)) return { present: false, raw: undefined, parseError: false };
+  try {
+    return { present: true, raw: JSON.parse(fs.readFileSync(p, 'utf8')), parseError: false };
+  } catch {
+    return { present: true, raw: undefined, parseError: true };
+  }
+}
+
+export interface EffectiveConfig {
+  config: ScaleConfig;
+  /** A committed policy file exists (even if it failed to apply). */
+  policyPresent: boolean;
+  /** The policy actually contributed defaults to `config`. */
+  policyApplied: boolean;
+  /** Why a present policy was ignored, or null. */
+  policyError: string | null;
+}
+
+/**
+ * The one config read path for every consumer that acts on configuration —
+ * gate, quests, tutor context, serve. Never throws: a corrupt user file is
+ * treated as absent (schema defaults + policy), matching the old
+ * `readConfigSafe(dir) ?? parse({user})` fail-open contract.
+ */
+export function loadEffectiveConfig(cwd: string, dir: string): EffectiveConfig {
+  const user = readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' };
+  if (typeof user.user !== 'string' || !user.user) user.user = process.env.USER ?? 'user';
+  const policy = readPolicyRaw(cwd);
+  const jsonError = policy.parseError ? 'policy.json is not valid JSON' : null;
+  try {
+    const resolved = resolveConfig(user, policy.raw);
+    return {
+      config: resolved.config,
+      policyPresent: policy.present,
+      policyApplied: resolved.policyApplied,
+      policyError: jsonError ?? resolved.policyError,
+    };
+  } catch {
+    // User file invalid beyond repair — schema defaults, still under policy.
+    const fallback = resolveConfig({ user: process.env.USER ?? 'user' }, policy.raw);
+    return {
+      config: fallback.config,
+      policyPresent: policy.present,
+      policyApplied: fallback.policyApplied,
+      policyError: jsonError ?? fallback.policyError,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +282,13 @@ export interface SessionRecord {
    * refilling it.
    */
   openWindows: number;
+  /**
+   * Components the user chose to SKIP this budget period (PLAN-GATE §3.1):
+   * under `soft` enforcement, `scale gate defer` is a session-scoped unlock —
+   * the edit gate stops firing on these until the period ends, then they lock
+   * again. Dies with the record, which is exactly the intended lifetime.
+   */
+  sessionSkips: string[];
 }
 
 /** A brand-new session record (fresh budget). */
@@ -210,6 +300,7 @@ export function defaultSession(sessionId: string, startedAt: string): SessionRec
     lastInterventionAt: null,
     pendingComponent: null,
     openWindows: 0,
+    sessionSkips: [],
   };
 }
 
@@ -237,6 +328,9 @@ export function readSessionSafe(dir: string): SessionRecord | null {
         typeof raw.openWindows === 'number' && Number.isFinite(raw.openWindows)
           ? Math.max(0, Math.trunc(raw.openWindows))
           : 0,
+      sessionSkips: Array.isArray(raw.sessionSkips)
+        ? raw.sessionSkips.filter((s): s is string => typeof s === 'string')
+        : [],
     };
   } catch {
     return null;
@@ -443,6 +537,125 @@ export function writePendingEdits(dir: string, pending: PendingEdits): void {
   } catch {
     /* fail open — evidence capture is never worth breaking an edit over */
   }
+}
+
+// ---------------------------------------------------------------------------
+// locks.json  (the durable per-user unlock ledger — PLAN-GATE §3.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * One durably unlocked component. Presence in `LocksRecord.components` IS the
+ * unlock — partial progress toward `unlock.checksRequired` lives in `progress`
+ * instead, so the gate's membership test stays a plain lookup.
+ */
+export interface LockEntry {
+  unlockedAt: string;
+  /** HEAD sha at unlock time — rebellion (S2) will compare against this. */
+  sha: string;
+  /** Passed checks that produced the unlock. */
+  checks: number;
+  via: 'check';
+}
+
+export interface LocksRecord {
+  version: 1;
+  components: Record<string, LockEntry>;
+  /** Passed-check counts still below `unlock.checksRequired`. */
+  progress: Record<string, number>;
+}
+
+export function emptyLocks(): LocksRecord {
+  return { version: 1, components: {}, progress: {} };
+}
+
+/** Read locks.json, defaulting structure; malformed entries are dropped. */
+export function readLocksSafe(dir: string): LocksRecord {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(paths.locks(dir), 'utf8'));
+  } catch {
+    return emptyLocks();
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return emptyLocks();
+  const r = raw as Record<string, unknown>;
+  const out = emptyLocks();
+  if (r.components && typeof r.components === 'object' && !Array.isArray(r.components)) {
+    for (const [id, v] of Object.entries(r.components as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const e = v as Record<string, unknown>;
+      out.components[id] = {
+        unlockedAt: typeof e.unlockedAt === 'string' ? e.unlockedAt : '',
+        sha: typeof e.sha === 'string' ? e.sha : '',
+        checks: typeof e.checks === 'number' && Number.isFinite(e.checks) ? e.checks : 1,
+        via: 'check',
+      };
+    }
+  }
+  if (r.progress && typeof r.progress === 'object' && !Array.isArray(r.progress)) {
+    for (const [id, v] of Object.entries(r.progress as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) out.progress[id] = Math.trunc(v);
+    }
+  }
+  return out;
+}
+
+export function writeLocks(dir: string, locks: LocksRecord): void {
+  ensureStateDir(dir);
+  fs.writeFileSync(paths.locks(dir), JSON.stringify(locks, null, 2) + '\n');
+}
+
+/**
+ * Register a passed/failed check against the unlock ledger. This is THE single
+ * unlock path — `scale record`, `scale quest complete`, and the serve API all
+ * funnel through it, so the ledger cannot disagree with itself across surfaces.
+ *
+ * Rules (PLAN-GATE §3.1, §5-4):
+ *  - only `by === 'user'` counts — an agent answering its own quiz must never
+ *    unlock territory for itself, whatever it scored;
+ *  - the check's mean score must reach `unlock.passBar`;
+ *  - `unlock.checksRequired` passed checks accumulate in `progress` before the
+ *    component moves into `components` (the actual unlock).
+ *
+ * Runs under the session lock: record and a concurrent gate decision touch the
+ * same directory, and a lost update here would re-lock passed territory.
+ */
+export function noteCheckOutcome(
+  cwd: string,
+  dir: string,
+  componentId: string,
+  meanScore: number,
+  by: 'user' | 'agent',
+  headSha: string,
+  now: string = new Date().toISOString(),
+): { unlocked: boolean; alreadyUnlocked: boolean; checks: number } {
+  const { config } = loadEffectiveConfig(cwd, dir);
+  if (by !== 'user' || !Number.isFinite(meanScore) || meanScore < config.unlock.passBar) {
+    const existing = readLocksSafe(dir).components[componentId];
+    return { unlocked: false, alreadyUnlocked: !!existing, checks: existing?.checks ?? 0 };
+  }
+
+  const result = withSessionLock(dir, () => {
+    const locks = readLocksSafe(dir);
+    const existing = locks.components[componentId];
+    if (existing) {
+      existing.checks += 1;
+      writeLocks(dir, locks);
+      return { unlocked: false, alreadyUnlocked: true, checks: existing.checks };
+    }
+    const checks = (locks.progress[componentId] ?? 0) + 1;
+    if (checks >= config.unlock.checksRequired) {
+      delete locks.progress[componentId];
+      locks.components[componentId] = { unlockedAt: now, sha: headSha, checks, via: 'check' };
+      writeLocks(dir, locks);
+      return { unlocked: true, alreadyUnlocked: false, checks };
+    }
+    locks.progress[componentId] = checks;
+    writeLocks(dir, locks);
+    return { unlocked: false, alreadyUnlocked: false, checks };
+  });
+  // Lock contention: fail toward not-unlocking now — the next passed check (or
+  // a retry) gets it. Never toward a phantom unlock.
+  return result ?? { unlocked: false, alreadyUnlocked: false, checks: 0 };
 }
 
 // ---------------------------------------------------------------------------

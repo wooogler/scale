@@ -44,17 +44,49 @@ describe('schema fixtures', () => {
     expect(parsed[0]?.items.length).toBe(2);
   });
 
-  it('config.json parses', () => {
+  it('config.json (legacy fixture) parses via migration', () => {
+    // The fixture still speaks the pre-edit-gate vocabulary on purpose: real
+    // deployed configs do too, and they must land as gate.* (PLAN-GATE §2.1).
     const parsed = ScaleConfigSchema.parse(readJson('config.json'));
-    expect(parsed.condition.timing).toBe('inflow');
-    expect(parsed.budgets.maxPerCommit).toBe(1);
+    expect(parsed.gate.assessment).toBe('sync'); // condition.timing: inflow
+    expect(parsed.gate.modality).toBe('quiz');
+    expect(parsed.gate.enabled).toBe(true); // inflow.triggers had pre-commit
+    expect(parsed.budgets.maxPerSession).toBe(2);
+    // Dropped commit-era knobs are stripped, not fatal.
+    expect('maxPerCommit' in parsed.budgets).toBe(false);
   });
 
   it('config schema applies defaults for a minimal object', () => {
     const parsed = ScaleConfigSchema.parse({ user: 'x' });
-    expect(parsed.condition.modality).toBe('quiz');
-    expect(parsed.inflow.triggers).toEqual(['pre-commit']);
+    expect(parsed.gate.modality).toBe('quiz');
+    expect(parsed.gate.assessment).toBe('sync');
+    expect(parsed.gate.enforcement).toBe('soft');
+    expect(parsed.gate.enabled).toBe(true);
+    expect(parsed.unlock.passBar).toBe(0.6);
+    expect(parsed.unlock.checksRequired).toBe(1);
+    expect(parsed.exempt.paths).toEqual([]);
     expect(parsed.thresholds.validateDim).toBe(0.6);
+  });
+
+  it('legacy condition/inflow migrate without clobbering explicit gate keys', () => {
+    const parsed = ScaleConfigSchema.parse({
+      user: 'x',
+      condition: { timing: 'postsession', modality: 'socratic' },
+      inflow: { triggers: [] },
+      gate: { assessment: 'sync' }, // explicit new-style key wins
+    });
+    expect(parsed.gate.assessment).toBe('sync');
+    expect(parsed.gate.modality).toBe('socratic');
+    expect(parsed.gate.enabled).toBe(false); // pre-commit was switched off
+  });
+
+  it('legacy postsession users gain an async gate (intended behavior change)', () => {
+    const parsed = ScaleConfigSchema.parse({
+      user: 'x',
+      condition: { timing: 'postsession', modality: 'quiz' },
+    });
+    expect(parsed.gate.assessment).toBe('async');
+    expect(parsed.gate.enabled).toBe(true);
   });
 
   // The intervention tier is one token across providers, and older configs on
@@ -99,9 +131,9 @@ describe('schema fixtures', () => {
     expect(() =>
       ScaleConfigSchema.parse({ user: 'x', budgets: { maxPerSession: -1 } }),
     ).toThrow();
-    // 0 is meaningful ("never interrupt on commit"), so it must still parse.
+    // 0 is meaningful ("never deny"), so it must still parse.
     expect(
-      ScaleConfigSchema.parse({ user: 'x', budgets: { maxPerCommit: 0 } }).budgets.maxPerCommit,
+      ScaleConfigSchema.parse({ user: 'x', budgets: { maxPerSession: 0 } }).budgets.maxPerSession,
     ).toBe(0);
   });
 

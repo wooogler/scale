@@ -133,21 +133,31 @@ export interface Strings {
     modelNoteBuildPre: string;
     modelNoteBuildMid: string;
     modelNoteBuildPost: string;
-    conditionHeading: string;
-    timing: string;
-    inflow: string;
-    inflowHint: string;
-    postsession: string;
-    postsessionHint: string;
+    gateHeading: string;
+    gateEnabled: string;
+    gateOn: string;
+    gateOnHint: string;
+    gateOff: string;
+    gateOffHint: string;
+    assessment: string;
+    assessSync: string;
+    assessSyncHint: string;
+    assessAsync: string;
+    assessAsyncHint: string;
     modality: string;
     quizHint: string;
     socraticHint: string;
-    triggers: string;
+    enforcement: string;
+    enfAdvisory: string;
+    enfAdvisoryHint: string;
+    enfSoft: string;
+    enfSoftHint: string;
+    enfHard: string;
+    enfHardHint: string;
+    policyNote: string;
     budgetHeading: string;
-    perCommit: string;
     perSession: string;
     cooldownMin: string;
-    minChangedLines: string;
   };
 }
 
@@ -245,21 +255,32 @@ export const STRINGS: Record<Language, Strings> = {
       modelNoteBuildMid:
         ' runs inside a Claude Code session, so it uses whatever model that session is on — pick it with ',
       modelNoteBuildPost: ' before you build.',
-      conditionHeading: 'Condition',
-      timing: 'Timing',
-      inflow: 'In-flow',
-      inflowHint: 'interrupt while working',
-      postsession: 'Post-session',
-      postsessionHint: 'at session end',
+      gateHeading: 'Edit gate',
+      gateEnabled: 'Gate',
+      gateOn: 'On',
+      gateOnHint: 'locked territory gates edits',
+      gateOff: 'Off',
+      gateOffHint: 'never gate my edits',
+      assessment: 'Check timing',
+      assessSync: 'Immediate',
+      assessSyncHint: 'check in chat, right away',
+      assessAsync: 'Deferred',
+      assessAsyncHint: 'teach now, check later here',
       modality: 'Modality',
       quizHint: 'multiple choice',
       socraticHint: 'dialogue (needs a key)',
-      triggers: 'In-flow triggers',
+      enforcement: 'Enforcement',
+      enfAdvisory: 'Advisory',
+      enfAdvisoryHint: 'note it, never block',
+      enfSoft: 'Soft',
+      enfSoftHint: 'block, skip allowed',
+      enfHard: 'Hard',
+      enfHardHint: 'block, no skip',
+      policyNote:
+        'Team policy sets the defaults here — anything you change becomes your personal override.',
       budgetHeading: 'Interruption budget',
-      perCommit: 'per commit',
       perSession: 'per session',
       cooldownMin: 'cooldown (min)',
-      minChangedLines: 'min changed lines',
     },
   },
 
@@ -365,21 +386,32 @@ export const STRINGS: Record<Language, Strings> = {
       modelNoteBuildMid:
         '은(는) Claude Code 세션 안에서 실행되어 그 세션의 모델을 그대로 사용합니다 — 빌드 전에 ',
       modelNoteBuildPost: '로 선택하세요.',
-      conditionHeading: '개입 조건',
-      timing: '시점',
-      inflow: '작업 중',
-      inflowHint: '작업 도중 개입',
-      postsession: '세션 종료 후',
-      postsessionHint: '세션이 끝날 때',
+      gateHeading: '편집 게이트',
+      gateEnabled: '게이트',
+      gateOn: '켬',
+      gateOnHint: '잠긴 영토 편집을 게이트',
+      gateOff: '끔',
+      gateOffHint: '내 편집은 게이트하지 않음',
+      assessment: '확인 시점',
+      assessSync: '즉시',
+      assessSyncHint: '채팅에서 바로 확인',
+      assessAsync: '나중에',
+      assessAsyncHint: '지금은 설명만, 확인은 여기서',
       modality: '방식',
       quizHint: '객관식',
       socraticHint: '대화형 (API 키 필요)',
-      triggers: '개입 트리거',
+      enforcement: '강제 수준',
+      enfAdvisory: '알림만',
+      enfAdvisoryHint: '기록만 하고 막지 않음',
+      enfSoft: '소프트',
+      enfSoftHint: '차단하되 스킵 가능',
+      enfHard: '하드',
+      enfHardHint: '차단, 스킵 없음',
+      policyNote:
+        '기본값은 팀 정책이 정합니다 — 여기서 바꾸면 내 개인 override가 됩니다.',
       budgetHeading: '방해 예산',
-      perCommit: '커밋당',
       perSession: '세션당',
       cooldownMin: '쿨다운 (분)',
-      minChangedLines: '최소 변경 줄 수',
     },
   },
 };
