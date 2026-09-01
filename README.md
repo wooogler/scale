@@ -42,10 +42,13 @@ to the code they're shipping.
   materialized from evidence: *passive* signals (files touched, prompts, diff-review
   latency) plus *active* quiz / Socratic checks. Each component has a skin-neutral state:
   `fog` → `explored` → `validated`, with `stale` when its sources drift.
-- **Interventions in two timings.** *In-flow*: a deterministic pre-commit gate denies a
-  commit that touched low-coverage territory until a comprehension check is recorded
-  (budget-limited, always deferrable). *Post-session*: quests generated for the touched,
-  low-coverage components, completed later in chat or the map viewer.
+- **The edit gate** (PLAN-GATE). Territory is **locked** per user until they pass a
+  comprehension check: an Edit/Write reaching into locked territory is denied
+  (budget-limited, deterministic), and a passed check unlocks it **durably**. Two
+  assessment venues, same lock: `sync` runs the check in chat right there; `async`
+  teaches at deny time and the junior unlocks later in the map viewer or via
+  `/scale-study`. Team leads set defaults in a committed `.scale/policy.json`;
+  every member may override any knob in their own config.
 - **Game skin is UI only.** territory / conquest / rebellion (and importance-sized castles)
   are a rendering layer over the neutral `component` / `coverage` / `staleness` model —
   schemas and code never use game terms.
@@ -60,7 +63,7 @@ Monorepo, TypeScript throughout (npm workspaces), so CLI, hooks, and web share o
 |---|---|
 | **`@scale/core`** | Shared engine: zod schemas, coverage model, paper loader, file→component index, layout, drift, cost estimator. |
 | **`@scale/cli`** | The `scale` CLI wrapping core (also the binary the plugin hooks call). |
-| **`@scale/plugin`** | Claude Code plugin: hooks (capture + commit gate) and `/scale-*` skills/commands. Ships two **generated, committed** payloads — `bin/scale.mjs` (the bundled CLI) and `web-dist/` — so it stays self-contained; regenerate with `npm run build:plugin`. |
+| **`@scale/plugin`** | Claude Code plugin: hooks (capture + edit gate) and `/scale-*` skills/commands. Ships two **generated, committed** payloads — `bin/scale.mjs` (the bundled CLI) and `web-dist/` — so it stays self-contained; regenerate with `npm run build:plugin`. |
 | **`@scale/web`** | React + Vite + SVG map viewer served by `scale serve`, plus a local JSON API. |
 
 ---
@@ -114,12 +117,16 @@ tier you chose:
 | `opus` | `claude-opus-4-8` | `gpt-5.6-sol` |
 
 Set `models.openaiModel` (CLI only) to pin an explicit GPT model id instead of the tier
-mapping. The 2×2 study condition lives in the same config:
+mapping. The gate's behavior lives in the same config:
 
 ```bash
-scale config set condition.timing inflow|postsession
-scale config set condition.modality quiz|socratic
+scale config set gate.assessment sync|async     # check in chat now vs unlock later
+scale config set gate.modality quiz|socratic
+scale config set gate.enforcement advisory|soft|hard
 ```
+
+Every value you `set` becomes a **personal override**, written sparsely on top of the
+team's committed defaults in `.scale/policy.json` (see [Team policy](#team-policy)).
 
 ### Senior — build the coverage memory (once per repo, on Opus/Fable)
 
@@ -151,12 +158,17 @@ for the release procedure — a plugin update needs a version bump.)
 Then work normally in Claude Code:
 
 - **Learn:** `/scale-study [id]` (voluntary reading guide + check) or `/scale-quiz [id]`
-  (manual check) — MCQ quiz or short Socratic dialogue per `condition.modality`.
-- **In-flow gate:** under an `inflow` condition, a commit touching fog/low-coverage/stale
-  territory is denied until a check is recorded; `scale gate defer <id>` skips it.
-- **Check progress:** `scale status` (coverage at a glance) and `scale serve` (the map).
-- **Post-session:** under a `postsession` condition, `scale quest generate` produces quests
-  for touched components; complete them with `scale quest complete` or in the map viewer.
+  (manual check) — MCQ quiz or short Socratic dialogue per `gate.modality`.
+- **The edit gate:** an Edit/Write into LOCKED territory (never checked, or re-locked by
+  rebellion) is denied. `sync` assessment: the tutor runs the check in chat and a pass
+  unlocks the territory durably. `async` assessment: the agent teaches instead, and you
+  unlock later in the map viewer or with `/scale-study`. `scale gate defer <id>` skips —
+  a session-scoped unlock; it locks again next session.
+- **Check progress:** `scale status` (coverage + how much territory is unlocked) and
+  `scale serve` (the map).
+- **Post-session quests** (async assessment only): `scale quest generate` produces quests
+  for touched components; complete them with `scale quest complete` or in the map viewer —
+  passing also unlocks the territory.
 
 ---
 
@@ -174,8 +186,8 @@ Then work normally in Claude Code:
 | `scale estimate [--json]` | Estimate the scale-map build cost per model before you run it. | ⚡ |
 | `scale config get [key]` / `set <key> <val>` | Read/write `config.json` (condition, models, budgets, thresholds). | ⚡ |
 | `scale log prompt \| touch \| review` | Append a raw passive signal to `evidence.jsonl` (hook fast-append). | ⚡ |
-| `scale gate commit` | Decide if a pre-commit check should fire; prints one JSON line, always exit 0. | ⚡ |
-| `scale gate defer <id>` | Skip the pre-commit check for a component (defer = drop). | ⚡ |
+| `scale gate edit` | Decide if an edit into locked territory is denied (PreToolUse hook); prints one JSON line, always exit 0. | ⚡ |
+| `scale gate defer <id>` | Skip a component's check — a session-scoped unlock; it locks again next session. | ⚡ |
 | `scale record <id> [-d -s \| --socratic]` | Record a quiz/Socratic validation outcome; updates coverage. | ⚡ |
 | `scale coverage recompute` | Re-materialize `coverage.json` from `evidence.jsonl`. | ⚡ |
 | `scale quest generate [-k N]` | Generate quests for touched, low-coverage components. | 🧠 |
@@ -203,10 +215,14 @@ row at the top, then the rest — same file, same validation, no terminal needed
 | Setting | Values | What it changes |
 |---|---|---|
 | `language` | `en` \| `ko` | Interaction language for everything SCALE says to you — web UI, quiz items, Socratic dialogue, in-flow checks. Code identifiers, file paths, and established dev terms stay English. Default `en`. |
-| `condition.timing` | `inflow` \| `postsession` | Interrupt while working vs. at session end. |
-| `condition.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
-| `inflow.triggers` | `pre-commit` | Which in-flow moments the gate fires on. The schema also accepts `post-task`, but **nothing implements it** — there is no Stop hook, so enabling it alone yields a silently zero-intervention session. |
-| `budgets.*` | non-negative numbers | Interruption ceiling: per commit, per session, cooldown, minimum changed lines. `0` means "off". |
+| `gate.enabled` | `true` \| `false` | The gate as a whole. A team lead who wants to exempt themselves turns this off in their own config. |
+| `gate.assessment` | `sync` \| `async` | Where the check runs after a deny: in chat right now, vs. teach now + unlock later (map viewer / `/scale-study`). |
+| `gate.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
+| `gate.enforcement` | `advisory` \| `soft` \| `hard` | Note-only, block-with-skip, or block-without-skip. There is no absolute lock: your own `enforcement` override is the sanctioned pressure valve. |
+| `unlock.passBar` | 0–1 | Mean score a single check needs to count as passed (default 0.6). |
+| `unlock.checksRequired` | ≥ 1 | Passed checks needed before a territory unlocks (default 1). |
+| `exempt.paths` | glob list | Files the gate never fires on (`*` within a segment, `**` across). New files are already exempt — only exact paper anchors gate. |
+| `budgets.*` | non-negative numbers | Interruption ceiling: denies per session, cooldown minutes. `0` means "off". |
 | `budgets.sessionIdleResetMinutes` | non-negative number | Backstop for ending a budget period (default 720 = 12h). A period normally ends when the **last Claude Code window** attached to the repo closes, so a second terminal shares the budget instead of refilling it; this only recovers a SessionEnd lost to a crash, and is deliberately longer than a working day so it never ends a session by itself. |
 | `models.provider` | `anthropic` \| `openai` | Which API serves **interventions**. |
 | `models.intervention` | `sonnet` \| `opus` | Intervention tier; resolves per provider (see table above). |
@@ -215,6 +231,32 @@ row at the top, then the rest — same file, same validation, no terminal needed
 The build model is not listed: `/scale-map` runs inside a Claude Code session and uses
 that session's model (`/model`), so a setting here could only state an intention it cannot
 enforce. Only interventions follow `models.provider`.
+
+### Team policy
+
+A team lead sets DEFAULTS — not rules — by committing `.scale/policy.json` to the repo
+(PLAN-GATE §2). It may carry the `gate`, `unlock`, `exempt`, `budgets`, and `thresholds`
+sections; personal keys (`user`, `language`, `models`) are ignored if present. Precedence,
+per leaf key:
+
+```
+schema defaults  <  .scale/policy.json (committed)  <  ~/.scale/<repo-id>/config.json
+```
+
+```jsonc
+// .scale/policy.json — guard it with CODEOWNERS if the lead should approve changes
+{
+  "gate": { "assessment": "async", "enforcement": "soft" },
+  "budgets": { "maxPerSession": 3 },
+  "exempt": { "paths": ["**/*.md"] }
+}
+```
+
+Anything a member writes with `scale config set` (or the Settings modal) becomes their
+personal override on top of these defaults — including `gate.enabled: false` for a lead
+who doesn't want to gate themselves. The user file stays sparse, so a later policy change
+reaches everyone who hasn't explicitly overridden that key. A policy that fails to parse
+is ignored whole (fail open) and `scale status` says so.
 
 `language` never touches the coverage memory: the `.scale/` papers are always written in
 English — they are repo-shared state, and `language` is a per-user interaction preference.
@@ -251,18 +293,22 @@ session — which is why the two tiers never mix.
 ## What works / not yet
 
 **Works today** — the full loop: build the memory (`/scale-map` on Opus/Fable) → `scale
-map layout`/`index` → coverage materialized from evidence → quiz + Socratic checks in chat
-→ deterministic in-flow commit gate (with budget + `gate defer`) → `scale status` → post-
-session `scale quest generate`/`list`/`complete` (CLI and web share one completion path) →
-web map viewer + JSON API. All four 2×2 condition cells switch by `config.json`.
+map layout`/`index` → coverage materialized from evidence → the deterministic **edit gate**
+(locks + budget + session-scoped `gate defer`, team-policy defaults with per-user
+overrides) → quiz + Socratic checks in chat that durably **unlock** territory → `scale
+status` → post-session `scale quest generate`/`list`/`complete` (CLI and web share one
+completion path, both unlock) → web map viewer + JSON API.
 
-**Not yet**
+**Not yet** (see PLAN-GATE §4 for the staged plan)
 
-- **`inflow.triggers: post-task`** — accepted by the schema and shown in the Settings
-  modal, but no Stop hook exists. Turning it on (with `pre-commit` off) produces a
-  session that looks like `inflow` and delivers no interventions.
-- **2×2 study auto-driving** — the tutor runs a check when invoked; nothing fires the
-  configured modality automatically on schedule.
+- **Rebellion v2 (S2)** — authorship-aware re-locking: a collaborator's commits into your
+  unlocked territory should flip it stale, re-lock it, and ground the recovery quiz in
+  their diff. Today staleness uses total churn with no authorship filter, and rebellion
+  does not yet re-lock.
+- **Async completion surfaces (S3)** — deny-time teaching works, but pending unlocks are
+  not yet surfaced in the viewer, quiz grading still happens client-side (the answer key
+  reaches the browser — must move server-side before checks guard anything), and there is
+  no LAN token for a phone.
 - **Mode A live co-construction** — building the memory alongside the junior in-flow (hook
   infrastructure exists; the mode does not).
 - **Full drift / rebellion detection** — `scale map drift` reports SHAs only; per-component

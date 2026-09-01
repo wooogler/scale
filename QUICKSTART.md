@@ -72,11 +72,15 @@ Set `models.openaiModel` to pin an explicit GPT model id instead. There is **no
 build-model config key** — `/scale-map` runs inside a Claude Code session, so the
 build model is whatever that session is on; pick it with `/model` beforehand.
 
-The manipulated **2×2 study condition** lives in the same config:
+The **edit gate** is configured in the same file — and every value you set is a
+personal override on top of the team's committed defaults in `.scale/policy.json`
+(PLAN-GATE §2; `scale config get` shows the effective merge):
 
 ```bash
-scale config set condition.timing inflow|postsession
-scale config set condition.modality quiz|socratic
+scale config set gate.assessment sync|async      # check in chat now vs unlock later
+scale config set gate.modality quiz|socratic
+scale config set gate.enforcement advisory|soft|hard
+scale config set gate.enabled false              # opt yourself out entirely
 ```
 
 ---
@@ -149,14 +153,14 @@ behind `packages/plugin/.claude-plugin/plugin.json` means the session is serving
 a stale cache (`packages/plugin/README.md` has the release procedure).
 
 The plugin (see `packages/plugin/README.md`) captures evidence silently
-(SessionStart context, prompt/edit signals) and runs the in-flow commit gate. All
+(SessionStart context, prompt/edit signals) and runs the edit gate. All
 hooks **fail open** — a missing/slow CLI degrades to a no-op and never blocks you.
 
 ### Comprehension checks (quiz / socratic)
 
 Both modalities run in chat via the `scale-tutor` skill, grounded in the
 component's paper (`concepts` + `rationale`). The active modality is
-`condition.modality`:
+`gate.modality`:
 
 - **quiz** — 1–2 grounded multiple-choice items.
 - **socratic** — a short capped dialogue (≤3 exchanges).
@@ -166,36 +170,41 @@ Two ways to trigger a check yourself (available in every condition, no budget):
 - `/scale-study [component-id]` — **voluntary learning**: a reading guide over the
   paper, then a check. Passing records a validation with `--origin voluntary`.
 - `/scale-quiz [component-id]` — a manual/testing shortcut into the same tutor
-  path without waiting for a commit.
+  path without waiting for the gate.
 
 Passing a check is recorded by the tutor via `scale record`, which updates
-coverage (per-dim EMA) and can move a territory fog → explored → validated.
+coverage (per-dim EMA), can move a territory fog → explored → validated — and,
+when the check's mean score reaches `unlock.passBar` (default 0.6), **unlocks the
+territory durably** for editing (PLAN-GATE §3.1).
 
-### The in-flow commit gate + defer
+### The edit gate + defer
 
-Under an **in-flow** condition, a `git commit` that touched fog/low-coverage/stale
-territory triggers the gate (subject to the interruption budget: ≤1 per commit,
-≤2 per session, ≥15 min cooldown, and never on a trivial diff below
-`budgets.minChangedLines`, default 20). The gate **denies** the commit with a
-reason telling the agent to run the tutor check; after `scale record` writes a
-fresh validation marker, the retried commit passes.
+Every territory starts **locked** for you (except components already `validated`).
+When the agent tries to Edit/Write a file anchored to a locked component, the
+gate **denies the edit** (subject to the interruption budget: ≤2 denies per
+session, ≥15 min cooldown; the component just denied stays denied until it is
+checked or skipped). What happens next depends on `gate.assessment`:
 
-To skip instead (the escape hatch — **defer = drop**, the territory simply stays
-unconquered, nothing is queued):
+- **sync** — the tutor runs the check right there in chat; a pass unlocks the
+  territory durably and the retried edit goes through.
+- **async** — the agent TEACHES the component instead (no quiz in chat), and you
+  unlock later: in the map viewer's quest runner, or with `/scale-study` in a
+  later session. The edit stays blocked for now unless you skip.
+
+To skip (under `soft` enforcement — `hard` disables it):
 
 ```bash
-scale gate defer <component-id>   # writes the deferred marker; retry the commit → allowed
+scale gate defer <component-id>   # session-scoped unlock; retry the edit → allowed
 ```
 
-Deferring is **the junior's call, not the agent's**. The deny message tells the
-agent to put the check in front of you and never skip on your behalf; if an agent
-skips a check on a commit it authored itself, it must use `--by agent` so the
-evidence log doesn't record it as your decision.
+A skip unlocks that territory for **this session only** — it locks again next
+session. Skipping is **the junior's call, not the agent's**; an agent editing
+with no junior in the loop must use `--by agent` so the evidence log doesn't
+record it as your decision.
 
-The CLI's `scale gate commit` is pure git + file I/O (no LLM) and emits one JSON
-line `{"allow":bool,"component":str|null,"reason":str|null}`; the plugin hook
-turns `allow:false` into the commit-blocking deny. Under **post-session**
-conditions the gate is a silent no-op.
+The CLI's `scale gate edit` is pure file I/O (no LLM, no git churn scan) and
+emits one JSON line `{"allow":bool,"component":str|null,"reason":str|null}`; the
+plugin hook turns `allow:false` into the edit-blocking deny.
 
 ---
 
@@ -242,26 +251,28 @@ it tells you exactly what's missing with a button straight to the key field.
 
 ## 6. Post-session quests
 
-Under a **post-session** condition, the `SessionEnd` hook runs `scale quest
-generate` detached (never blocks exit). It picks the top-K (default 3) touched,
+Under **async assessment**, the `SessionEnd` hook runs `scale quest generate`
+detached (never blocks exit). It picks the top-K (default 3) touched,
 low-coverage/stale components by importance and generates items in the configured
 modality on the **intervention model**:
 
 ```bash
-scale config set condition.timing postsession
+scale config set gate.assessment async
 scale quest generate      # writes ~/.scale/<repo-id>/quests.json
 scale quest list          # inspect pending quests
 ```
 
 If no API key is available for the configured provider (or the API errors),
 generation falls back to **deterministic** item synthesis from the paper — you
-still get a valid `quests.json`. In-flow conditions generate no quests (a no-op).
+still get a valid `quests.json`. Sync-assessment users generate no quests (their
+checks happen in chat).
 
 Quests appear on the map as pending; you **complete them in the web app** (the
 quest runner POSTs to `/api/quests/:id/complete` or `/api/socratic/:id/message`),
 which records the result and moves the component's coverage. `scale quest
 complete <questId> --results '<json>'` does the same from the CLI — both paths
-share one implementation, so either works.
+share one implementation, and a passed quest **unlocks the territory** exactly
+like an in-chat check.
 
 ---
 
@@ -269,27 +280,33 @@ share one implementation, so either works.
 
 **Works today**
 
-- CLI: `init`, `config get/set`, `log prompt|touch|review`, `gate commit`, `gate
-  defer`, `record`, `coverage recompute`, `estimate`, `map layout|index`, `quest
-  generate|list`, `serve`, `reset`.
+- CLI: `init`, `config get/set` (layered over `.scale/policy.json`), `log
+  prompt|touch|review`, `gate edit`, `gate defer`, `record`, `coverage recompute`,
+  `estimate`, `map layout|index`, `quest generate|list|complete`, `serve`, `reset`.
 - Plugin: all hooks (fail-open) + `/scale-map`, `/scale-status`, `/scale-study`,
   `/scale-quiz`. (`/scale-status` reports via `scale status`.)
-- In-flow gate: deterministic deny/allow with budget enforcement + `gate defer`.
-- Interventions: quiz + socratic in chat; post-session quest generation (LLM with
+- The edit gate: deterministic lock/deny with the per-user unlock ledger
+  (`locks.json`), team-policy defaults + personal overrides, budget enforcement,
+  and session-scoped `gate defer`.
+- Interventions: quiz + socratic in chat; async quest generation (LLM with
   deterministic fallback); web quest runner (quiz offline; socratic needs an API
-  key). All four 2×2 cells switch by `config.json`.
+  key). Both completion paths unlock territory.
 - Web map viewer + JSON API; coverage materialized from evidence.
 
-**Not yet**
+**Not yet** (staged in PLAN-GATE §4)
 
-- **2×2 study auto-driving** — the tutor runs a check when invoked, but there is no
-  automated driver that fires the configured modality on schedule.
+- **Rebellion v2 (S2)** — collaborator commits re-locking your unlocked territory,
+  with the recovery quiz grounded in their diff; today staleness has no authorship
+  filter and never re-locks.
+- **Async surfaces (S3)** — pending unlocks in the viewer, server-side quiz
+  grading (the answer key currently reaches the browser — it must move before
+  checks guard anything), LAN token for mobile.
 - **Mode A live co-construction** — building the memory alongside the junior in the
   flow (the hook infrastructure exists; the mode does not).
-- **Full drift / rebellion detection** — `scale map drift` reports SHAs only;
+- **Full drift detection** — `scale map drift` reports SHAs only;
   per-component source-churn staleness is not yet wired.
-- Senior rationale interviews (schema-ready via `provenance`) and study-logging /
-  condition-assignment infra are deferred (`PLAN.md` §11).
+- Senior rationale interviews (schema-ready via `provenance`) and study-logging
+  infra are deferred (`PLAN.md` §11).
 
 Build steps run on **Opus/Fable**; every intervention (quiz/socratic, quest
 generation, socratic proxy) runs on the **Sonnet 5 / Opus 4.8 tier** — or

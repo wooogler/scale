@@ -5,6 +5,14 @@ A system that helps a junior engineer build genuine comprehension of a codebase 
 
 Research prototype targeting UIST. Study logging / condition assignment infra is **out of scope for now** (deferred), but **all four intervention conditions must be fully functional** and switchable by config.
 
+> **⚠ Superseded in part by [`PLAN-GATE.md`](./PLAN-GATE.md) (2026-09-01).** The
+> intervention design changed: the pre-commit gate (§6.1) is replaced by an
+> edit-time gate with a durable per-user unlock ledger, the 2×2
+> `condition.{timing,modality}` keys became `gate.{assessment,modality}`, and
+> team-lead defaults live in a committed `.scale/policy.json` that members may
+> override. §6.1's mechanics, `inflow.triggers`, `maxPerCommit`, and
+> `minChangedLines` are historical. Everything else here stands.
+
 ---
 
 ## 1. Principles
