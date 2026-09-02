@@ -128,7 +128,11 @@ Frontmatter rules:
 - **`concepts`** — 2–6 per component. Each is a discrete idea a junior could be
   quizzed on. Give each a stable `id` and a one-line `name`. These drive item
   generation, so make them specific ("cookie carries only an opaque id"), not
-  vague ("sessions work").
+  vague ("sessions work"). **One claim per concept, and keep the name under ~25
+  words**: the name is pasted verbatim as a quiz option, and a 45-word name that
+  bundles three claims cannot be answered or graded as one item. **Never state
+  the same claim in two components** — the generator uses sibling concepts as
+  distractors, so a duplicated truth keys a correct answer wrong (measured).
 - **`rationale`** — 1–4 entries. Each is a real design *decision*, its *why*, the
   *alternatives* considered/rejected, and its `provenance`. In a fresh build you
   are inferring these from the code, so **`provenance: inferred`** for all of
@@ -334,6 +338,12 @@ stability is the entire point of the map (survey knowledge / method-of-loci —
 PLAN §4.2): the layout is computed once and frozen. After this freeze, new
 components are placed *incrementally near their neighbors* and existing nodes
 never move.
+
+Then build the reverse index used by the junior's hooks, and make sure
+`.scale/.gitignore` lists `index.json`: the index is regenerable, the gate reads
+it first with no freshness check, and a committed stale copy routes edits to the
+wrong territory. (A koa build shipped without the ignore file; the SCALE repo's
+own `.scale/.gitignore` is the model.)
 
 Then (optional, regenerable) build the reverse index used by the junior's hooks:
 
