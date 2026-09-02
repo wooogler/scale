@@ -37,10 +37,13 @@ describe('partitionTarget — which limit binds, and saying so', () => {
   });
 
   it('reproduces the koa target the build ignored', () => {
-    // The real measurement: 2,066 LOC over 7 source files. The estimator said
-    // this; the skill's hard floor of 20 produced 36.
+    // koa's `lib/` alone: 2,066 LOC over 7 files. (The scanner sees the whole
+    // repo — 9 files, 2,110 LOC — and reports 8; both are the same judgement at
+    // two different scan boundaries, and only one of them may be quoted beside
+    // a ratio.) Either way the skill's hard floor of 20 produced 36.
     const p = partitionTarget({ loc: 2066, files: 7 });
     expect(p.target).toBe(7);
+    expect(partitionTarget({ loc: 2110, files: 9 }).target).toBe(8);
     expect(p.max).toBeLessThan(36);
   });
 

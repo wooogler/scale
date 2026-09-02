@@ -170,7 +170,7 @@ export const LEAF_CLAMP = { min: 5 } as const;
  * `graphify-check` — is keyed by file, so past this ratio one edit gates,
  * credits and re-locks several territories together. The bar sits just above 1
  * so a handful of legitimately shared files still passes, while a partition
- * built at sub-file granularity does not (koa measured 5.1).
+ * built at sub-file granularity does not (koa measured 4.5).
  */
 export const GRANULARITY_MAX_PER_FILE = 1.5;
 

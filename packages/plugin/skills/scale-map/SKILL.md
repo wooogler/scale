@@ -62,7 +62,7 @@ paper should see a clear technical description, not game flavor.
 - **The target component count comes from `scale estimate`, not from this file.**
   It is arithmetic over the repo's own shape — source lines and source **files** —
   and it prints a band you must land inside. There is no fixed range that fits
-  every repo: a 2,000-line library wants roughly eight components, and a large
+  every repo: a two-thousand-line library wants a handful, and a large
   service wants far more than one flat layer of provinces can hold (see the
   grouping note below). Read the number before you plan the partition.
 - **Never go finer than one component per source file.** `sources` anchors whole
