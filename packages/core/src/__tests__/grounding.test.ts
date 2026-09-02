@@ -76,6 +76,99 @@ describe('paperGrounding', () => {
   });
 });
 
+/**
+ * Section-aware clipping (PLAN §6.2).
+ *
+ * The regression these pin: papers grew past the caps, and head-truncation
+ * spends the budget front-to-back — so Rationale and Conclusion, the two
+ * sections the rationale dimension is graded against, fell off the end of every
+ * paper on the drift path, which is the very path that tells the model the
+ * paper is the only account of WHY.
+ */
+describe('paperGrounding — section-aware clipping', () => {
+  const fill = (n: number) => 'w'.repeat(n);
+  const sec = (name: string, n: number) => `## ${name}\n${fill(n)}`;
+  const body = (opts: { intro?: number; desc?: number } = {}) =>
+    [
+      '```mermaid\ngraph TD\n  A --> B\n```',
+      sec('Abstract', 300),
+      sec('Introduction', opts.intro ?? 200),
+      '## Related Work\n- [other](../other/)',
+      sec('Description', opts.desc ?? 3_000),
+      sec('Rationale', 400),
+      sec('Conclusion', 300),
+    ].join('\n\n');
+
+  it('leaves a body that fits byte-identical — clipping must be invisible', () => {
+    const small = ['## Abstract\nshort', '## Rationale\nbecause', '## Conclusion\ndone'].join('\n\n');
+    const out = paperGrounding(paperFixture(small));
+    expect(out).toContain(small);
+    expect(out).not.toContain('[paper truncated]');
+    expect(out).not.toContain('omitted]');
+  });
+
+  it('keeps Abstract, Rationale and Conclusion whole and truncates Description', () => {
+    const out = paperGrounding(paperFixture(body()), { maxBodyChars: 1_500 });
+    // Whole: the heading plus every character under it.
+    expect(out).toContain(sec('Abstract', 300));
+    expect(out).toContain(sec('Rationale', 400));
+    expect(out).toContain(sec('Conclusion', 300));
+    expect(out).toContain(sec('Introduction', 200));
+    // Present but cut, and saying so.
+    expect(out).toContain('## Description');
+    expect(out).not.toContain(sec('Description', 3_000));
+    expect(out).toContain('[paper truncated]');
+    // The hero is the lowest-ranked block, and it says it is gone.
+    expect(out).toContain('[opening omitted]');
+    expect(out).not.toContain('graph TD');
+  });
+
+  it('emits in document order, not priority order', () => {
+    const out = paperGrounding(paperFixture(body()), { maxBodyChars: 1_500 });
+    const at = (h: string) => out.indexOf(`## ${h}`);
+    expect(at('Abstract')).toBeLessThan(at('Introduction'));
+    expect(at('Introduction')).toBeLessThan(at('Description'));
+    expect(at('Description')).toBeLessThan(at('Rationale'));
+    expect(at('Rationale')).toBeLessThan(at('Conclusion'));
+  });
+
+  it('drops a section entirely, with a marker, when nothing is left for it', () => {
+    // Rationale + Conclusion spend nearly the whole budget, so Introduction and
+    // Description get no usable room at all.
+    const out = paperGrounding(paperFixture(body({ intro: 2_000 })), { maxBodyChars: 1_100 });
+    expect(out).toContain(sec('Abstract', 300));
+    expect(out).toContain(sec('Rationale', 400));
+    expect(out).toContain('[introduction omitted]');
+    expect(out).toContain('[description omitted]');
+  });
+
+  it('head-truncates a body with no headings exactly as before', () => {
+    const flat = fill(5_000);
+    const out = paperGrounding(paperFixture(flat), { maxBodyChars: 1_000 });
+    expect(out).toContain(`${flat.slice(0, 1_000)}\n\n[paper truncated]`);
+  });
+
+  it('falls back to head-truncating Abstract+Rationale+Conclusion when even those overflow', () => {
+    const huge = [sec('Abstract', 2_000), sec('Introduction', 2_000), sec('Description', 2_000), sec('Rationale', 2_000), sec('Conclusion', 2_000)].join('\n\n');
+    const out = paperGrounding(paperFixture(huge), { maxBodyChars: 1_000 });
+    expect(out).toContain('## Abstract');
+    expect(out).toContain('[paper truncated]');
+    // Nothing outside the protected three is reached at all.
+    expect(out).not.toContain('## Introduction');
+    expect(out).not.toContain('## Description');
+    expect(out.length).toBeLessThan(1_000 + 1_000);
+  });
+
+  it('holds the budget on every real-sized shape it is given', () => {
+    for (const cap of [900, 1_500, 4_000]) {
+      const out = paperGrounding(paperFixture(body()), { maxBodyChars: cap, includeBody: true });
+      const frontOnly = paperGrounding(paperFixture(body()), { includeBody: false }).length;
+      // Budget + the fence text + a handful of short markers.
+      expect(out.length - frontOnly).toBeLessThan(cap + 1_000);
+    }
+  });
+});
+
 describe('neighbourIndex', () => {
   const map = (edges: { from: string; to: string; kind: string }[]) =>
     ({ nodes: [], provinces: [], edges }) as never;

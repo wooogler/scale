@@ -41,6 +41,168 @@ function withoutRelatedWork(body: string): string {
   return body.replace(/^##\s*Related Work\b(?:[\s\S]*?(?=^##\s)|[\s\S]*)/gim, '').trim();
 }
 
+/**
+ * Marker left where prose was cut. Unchanged wording: the generator prompts and
+ * the tests both key off this exact string.
+ */
+const TRUNCATION_MARKER = '[paper truncated]';
+
+/** Head-truncate — the pre-section behaviour, kept verbatim for the cases below. */
+function headTruncate(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max)}\n\n${TRUNCATION_MARKER}`;
+}
+
+/**
+ * The order body sections are KEPT in when the budget bites — deliberately not
+ * document order.
+ *
+ * Papers are written Abstract, Introduction, Related Work, Description,
+ * Rationale, Conclusion, so head-truncation spends the budget on the front of
+ * the document and drops the back. Measured on a rebuilt koa memory (8 papers,
+ * bodies 14.5–19.6k chars): at the 16k default the cut landed inside Conclusion,
+ * and at the 9k DRIFT cap inside Description for every single paper — so the
+ * prose Rationale and Conclusion reached the generator in none of them. That is
+ * the drift/recovery path, whose own drift block tells the model the paper is
+ * "the only account of WHY the original design was chosen", and whose rationale
+ * coverage dimension is graded against exactly that prose.
+ *
+ * Hence: Abstract first, as the cheapest complete account of the component;
+ * then the two sections that carry reasoning rather than mechanism; then the
+ * narrative pair; then the leading block, which is usually the mermaid hero and
+ * restates the Description in the form least useful to an item generator.
+ */
+const SECTION_PRIORITY = ['abstract', 'rationale', 'conclusion', 'introduction', 'description'];
+
+/**
+ * Floor on a truncated tail section. Below this the emitted chunk is a heading
+ * plus a sentence fragment: it advertises a section the model cannot actually
+ * read, which is worse than the omission marker saying plainly that it is gone.
+ */
+const MIN_SECTION_CHARS = 200;
+
+/** A `## `-delimited chunk of the prose, heading line included. */
+interface ProseSection {
+  /** First word of the heading, lower-cased — what {@link SECTION_PRIORITY} ranks. */
+  key: string;
+  /** What an omission marker calls this section. */
+  label: string;
+  /** The section verbatim, heading line and all, trimmed at both ends. */
+  text: string;
+}
+
+/**
+ * Split a body on its `## ` headings, keeping anything before the first heading
+ * as a leading block.
+ *
+ * That block is content, not chrome — it is the hero diagram — so it is ranked,
+ * not discarded. An empty result means the body has no headings at all, which
+ * is the signal to fall back to head-truncation: there is no structure to be
+ * smart about, and inventing one would change output for bodies this function
+ * cannot reason about.
+ */
+function splitProseSections(prose: string): ProseSection[] {
+  const headings = [...prose.matchAll(/^##[^\S\n]+(.*)$/gm)].map((m) => ({
+    at: m.index ?? 0,
+    title: (m[1] ?? '').trim(),
+  }));
+  if (headings.length === 0) return [];
+  const sections: ProseSection[] = [];
+  const lead = prose.slice(0, headings[0]!.at).trim();
+  if (lead) sections.push({ key: '', label: 'opening', text: lead });
+  for (let i = 0; i < headings.length; i++) {
+    const start = headings[i]!.at;
+    const end = i + 1 < headings.length ? headings[i + 1]!.at : prose.length;
+    const title = headings[i]!.title;
+    sections.push({
+      // First word only, so `## Rationale and trade-offs` still ranks as the
+      // rationale section. Non-letters stripped: `## Rationale:` is the same
+      // section under a different pen.
+      key: (title.split(/\s+/)[0] ?? '').toLowerCase().replace(/[^a-z]/g, ''),
+      label: (title.toLowerCase() || 'section').slice(0, 60),
+      text: prose.slice(start, end).trim(),
+    });
+  }
+  return sections;
+}
+
+/**
+ * Fit a paper body into `maxBodyChars` by choosing WHICH sections to keep,
+ * rather than where to stop reading.
+ *
+ * The budget itself is untouched — see {@link DEFAULT_MAX_BODY_CHARS} and
+ * {@link DRIFT_MAX_BODY_CHARS}; only the choice of what it buys changes. Three
+ * rules earn their keep:
+ *
+ *  - A body that already fits is returned byte-identical. Clipping must be
+ *    invisible in the common case, and every existing caller and test depends
+ *    on that.
+ *  - Sections are ADMITTED by {@link SECTION_PRIORITY} but EMITTED in document
+ *    order. Reordering the prose would put a Conclusion above the Description it
+ *    concludes, and the model reads it as the paper's own argument.
+ *  - What is dropped says so. A silent gap invites the generator to infer that
+ *    the component simply has no stated rationale, and to write items against
+ *    material it was never shown.
+ *
+ * The markers (`[paper truncated]`, `[… omitted]`) sit outside the budget, as
+ * the truncation marker always has: a handful of short lines, bounded by the
+ * section count.
+ */
+function clipProse(prose: string, maxBodyChars: number): string {
+  if (prose.length <= maxBodyChars) return prose;
+
+  const sections = splitProseSections(prose);
+  if (sections.length === 0) return headTruncate(prose, maxBodyChars);
+
+  // Degenerate case: the three sections worth protecting do not themselves fit.
+  // Section-picking has nothing left to choose between, so fall back to the old
+  // behaviour over just those three — a head-truncated Abstract (+ whatever of
+  // Rationale follows) still beats a head-truncated Introduction.
+  const core = sections.filter((s) => ['abstract', 'rationale', 'conclusion'].includes(s.key));
+  const coreLength = core.reduce((n, s) => n + s.text.length, 0) + Math.max(0, core.length - 1) * 2;
+  if (core.length > 0 && coreLength > maxBodyChars) {
+    return headTruncate(core.map((s) => s.text).join('\n\n'), maxBodyChars);
+  }
+
+  // Rank: a known section by its priority; the leading block and any unknown
+  // heading after all of them, among themselves in document order.
+  const ordered = sections
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      const rank = (e: { s: ProseSection; i: number }) => {
+        const p = SECTION_PRIORITY.indexOf(e.s.key);
+        return p >= 0 ? p : SECTION_PRIORITY.length + 1 + e.i;
+      };
+      return rank(a) - rank(b) || a.i - b.i;
+    });
+
+  const kept = new Map<number, string>();
+  let used = 0;
+  let full = false;
+  for (const { s, i } of ordered) {
+    if (full) break;
+    const sep = kept.size > 0 ? 2 : 0; // the '\n\n' between emitted sections
+    const room = maxBodyChars - used - sep;
+    if (s.text.length <= room) {
+      kept.set(i, s.text);
+      used += sep + s.text.length;
+      continue;
+    }
+    // The first section that overflows is the last one admitted: it takes what
+    // is left, and everything below it in priority is dropped whole. Letting a
+    // smaller lower-priority section slip into the remainder would trade a
+    // readable tail of Rationale for a complete section nobody ranked as high.
+    if (room >= MIN_SECTION_CHARS) {
+      kept.set(i, `${s.text.slice(0, room)}\n\n${TRUNCATION_MARKER}`);
+      used += sep + room;
+    }
+    full = true;
+  }
+
+  return sections
+    .map((s, i) => kept.get(i) ?? `[${s.label} omitted]`)
+    .join('\n\n');
+}
+
 
 /** A component's measured dependencies, both directions. */
 export interface ComponentNeighbours {
@@ -207,10 +369,9 @@ export function paperGrounding(paper: LoadedPaper, opts: GroundingOptions = {}):
   if (includeBody) {
     const prose = withoutRelatedWork(paper.body);
     if (prose) {
-      const clipped =
-        prose.length > maxBodyChars
-          ? `${prose.slice(0, maxBodyChars)}\n\n[paper truncated]`
-          : prose;
+      // Section-aware: the budget is unchanged, what it buys is not. See
+      // {@link clipProse} for the measurement that forced it.
+      const clipped = clipProse(prose, maxBodyChars);
       // The paper is repository content too (PLAN-GATE §13.6): a teammate can
       // change it in a PR exactly as they change the code the drift block
       // fences. It is curated and reviewed, so it keeps its standing as the
