@@ -98,7 +98,7 @@ const ROOT = rootArg();
  * just above 1 so a map with a few multi-component files still scores, while
  * one built at sub-file granularity is refused rather than mis-measured.
  */
-const GRANULARITY_MAX_COMPONENTS_PER_FILE = 1.5;
+const GRANULARITY_MAX_COMPONENTS_PER_FILE = 1.5; // mirrors @scale/core GRANULARITY_MAX_PER_FILE
 
 const FALLBACK_SCAN_ROOTS = [
   'packages/cli/src',

@@ -1,6 +1,6 @@
 {
   "name": "@scale/plugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "SCALE Claude Code plugin — hooks + skills + commands, plus a self-contained `scale` CLI (bin/scale.mjs) and web map (web-dist/) produced by `npm run build:plugin` at the repo root. Hook scripts are plain .mjs Node scripts."
 }

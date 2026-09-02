@@ -96,25 +96,47 @@ scale estimate            # human table
 scale estimate --json     # machine-readable
 ```
 
+The estimate prints the **target component count and the band the build must land
+in**, the province shape that count implies, and whether the count is capped by
+how many source files there are to anchor to. Then it prices the build.
+
 The estimate table lists **only the two build-tier models** (Opus 5, Fable 5) —
 the intervention tier never builds. Both are quoted as a band: the calibration run
 was Opus 4.8 with thinking off, and both build models think by default, so the low
 end is that measurement and the high end is ~1.5× output. Fable's rates are 2×
-Opus's on top of that. Example (this repo):
+Opus's on top of that. Shape of the output (figures move with the repo — run it
+yourself for the current ones):
 
 ```
-repo: 47 files, 11,711 LOC → ~42 components
+repo: 54 files, 17,671 LOC → ~54 components (build within 36–81)
+  capped by FILE COUNT: this repo wants ~64, but sources anchor whole files, so 54 file(s) resolve at most 54 components.
+  Going finer would put several components on one file, and the edit gate, coverage
+  credit and drift all key off the file — they would move together.
+  shape: 6 top-level group(s), 1 grouping level(s) above the components.
 
 Build model  est. cost      est. time (single-agent)
 -----------  -------------  ------------------------
-Opus 5       $19.34–$23.21  ~31 min
-Fable 5      $38.68–$46.41  ~31 min
+Opus 5       $29.18–$35.02  ~46 min
+Fable 5      $58.37–$70.03  ~46 min
 ```
 
 **Then build** with the `/scale-map` command (the Mode B skill): Survey (propose
-5–9 provinces + 20–60 components, stops for your approval) → Write (subagent
-fan-out) → Link (Related Work cross-links) → Layout. It stops for human approval
-after Survey before writing anything.
+the number of components `scale estimate` sized the repo for, grouped into
+provinces of 5–9, stopping for your approval) → Write (subagent fan-out) → Link
+(Related Work cross-links) → Layout → Check. It stops for human approval after
+Survey before writing anything, and again if its honest partition falls outside
+the estimate's band.
+
+**Then verify** the partition is one the tool can actually work with:
+
+```bash
+scale map check
+```
+
+It compares the built count against the estimate's band, measures components per
+anchored file, and exits non-zero when the partition is too fine to route an edit
+through. A partition finer than one component per source file breaks the edit
+gate, coverage credit and drift at once, because all three key off the file.
 
 The layout/index steps are deterministic CLI commands the skill calls (you can
 also run them by hand):

@@ -34,7 +34,9 @@ to the code they're shipping.
 ## How it works
 
 - **Coverage memory (`.scale/`).** One markdown paper per component (frontmatter: stable
-  `id`, `sources`, quizzable `concepts`, `rationale`), grouped into 5–9 provinces. A frozen
+  `id`, `sources`, quizzable `concepts`, `rationale`), grouped into provinces of 5–9. How
+  many components a repo gets is arithmetic, not a fixed range — `scale estimate` sizes it
+  from source lines and source files, and `scale map check` holds the build to it. A frozen
   `map.json` gives each component stable spatial coordinates and an importance weight; an
   `index.json` reverse-maps files → components. The memory is git-versioned and anchored to
   a build SHA.
@@ -195,7 +197,7 @@ Then work normally in Claude Code:
 | `scale init [--user <l>] [--force]` | Create `~/.scale/<repo-id>/` with a default `config.json`. | ⚡ |
 | `scale status [--json]` | Coverage at a glance: unification progress, per-province states, stale territory, pending quests. | ⚡ |
 | `scale context` | Print the SessionStart coverage summary injected to the agent. | ⚡ |
-| `scale estimate [--json]` | Estimate the scale-map build cost per model before you run it. | ⚡ |
+| `scale estimate [--json]` | Target component count + band for this repo, and the build cost per model. | ⚡ |
 | `scale config get [key]` / `set <key> <val>` | Read/write `config.json` (condition, models, budgets, thresholds). | ⚡ |
 | `scale log prompt \| touch \| review` | Append a raw passive signal to `evidence.jsonl` (hook fast-append). | ⚡ |
 | `scale gate edit` | Decide if an edit into locked territory is denied (PreToolUse hook); prints one JSON line, always exit 0. | ⚡ |
@@ -207,6 +209,7 @@ Then work normally in Claude Code:
 | `scale quest complete <id> --results \| --socratic` | Record a quest outcome, mark it completed, update coverage. | ⚡ |
 | `scale map layout` | Compute/extend the frozen spatial layout → `.scale/map.json`. | ⚡ |
 | `scale map index` | Build the file→component reverse index → `.scale/index.json`. | ⚡ |
+| `scale map check [--json]` | Hold a built `.scale/` to the sizing contract; non-zero exit when it does not hold. | ⚡ |
 | `scale map drift` | Flag components whose sources changed since the build SHA (minimal stub). | ⚡ |
 | `scale serve [-p 4318] [--host <addr>] [--token <t>]` | Serve the local web map viewer + JSON API. | ⚡/🧠 |
 | `scale config unset <key>` | Drop one personal override so the team default applies again. | ⚡ |

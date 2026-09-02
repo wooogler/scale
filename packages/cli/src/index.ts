@@ -21,6 +21,12 @@ import { execFileSync } from 'node:child_process';
 
 import { Command } from 'commander';
 import {
+  checkPartition,
+  partitionPasses,
+  GRANULARITY_MAX_PER_FILE,
+  partitionTarget,
+  CHILDREN_PER_NODE,
+  PER_LOC,
   type Language,
   type ScaleConfig,
   type EvidenceEntry,
@@ -1659,6 +1665,14 @@ function isGeneratedFile(full: string): boolean {
 }
 
 /**
+ * Measure the repo's shape for {@link estimateBuild}: source lines AND the file
+ * count, which is now load-bearing rather than decoration. Every exclusion below
+ * therefore lowers the component target, not just the price — a repo written in
+ * a language outside the extension allow-list scans as zero files and zero lines,
+ * and the estimate then reports the floor. The estimate says so (the file count
+ * is printed and `granularityLimited` is true when it binds), but a caller
+ * reading only the component number would not notice.
+ *
  * Walk `root` counting source lines (wc -l semantics: newline bytes) across
  * SOURCE_EXTS, skipping EXCLUDE_DIRS and test/spec files. Pure fs, no git.
  */
@@ -1701,10 +1715,47 @@ function scanSourceLoc(root: string): { files: number; loc: number } {
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 
 /** Render the human-readable estimate table + header/footer. */
-function renderEstimate(files: number, est: BuildEstimate): string {
+function renderEstimate(est: BuildEstimate): string {
   const lines: string[] = [];
+  const p = est.partition;
+  if (est.files === 0) {
+    // The floor would otherwise print a confident "~5 components" for a repo the
+    // scan could not read at all — an unlisted language, or the wrong directory.
+    lines.push(
+      `repo: no source files recognized under this directory (${est.loc.toLocaleString()} LOC).`,
+      '  The extension allow-list found nothing, so there is no partition to size and',
+      '  the cost below is meaningless. Check you are in the repo root, and that its',
+      '  language is one the scanner knows.',
+      '',
+    );
+  }
   lines.push(
-    `repo: ${files} files, ${est.loc.toLocaleString()} LOC → ~${est.components} components`,
+    `repo: ${est.files} files, ${est.loc.toLocaleString()} LOC → ~${est.components} components ` +
+      `(build within ${p.min}–${p.max})`,
+  );
+  // Which limit bound the target is load-bearing, not trivia: it tells the
+  // cartographer whether the number reflects how much code there is or how
+  // coarsely the anchors can point at it.
+  if (p.boundBy === 'files') {
+    lines.push(
+      `  capped by FILE COUNT: this repo wants ~${p.demand}, but sources anchor whole files, ` +
+        `so ${p.byFiles} file(s) resolve at most ${p.byFiles} components.`,
+    );
+    lines.push(
+      '  Going finer would put several components on one file, and the edit gate, coverage',
+      '  credit and drift all key off the file — they would move together.',
+    );
+  } else if (p.boundBy === 'floor') {
+    lines.push(
+      `  at the FLOOR: ${est.loc.toLocaleString()} LOC would round to ${p.byLoc}, which is too ` +
+        `few to carry a map, so the minimum of ${p.demand} applies.`,
+    );
+  } else {
+    lines.push(`  from LOC (~${PER_LOC.locPerComponent} lines each); ${p.byFiles} files leave room.`);
+  }
+  lines.push(
+    `  shape: ${p.topGroups} top-level group(s), ${p.depth} grouping level(s) above the components` +
+      (p.needsHierarchy ? ' — too many for one flat province layer.' : '.'),
   );
   lines.push('');
 
@@ -1755,7 +1806,7 @@ program
   .action((opts: { json?: boolean }) => {
     const cwd = process.cwd();
     const { files, loc } = scanSourceLoc(cwd);
-    const est = estimateBuild(loc);
+    const est = estimateBuild({ loc, files });
 
     if (opts.json) {
       console.log(
@@ -1763,6 +1814,7 @@ program
           {
             repo: { files, loc },
             components: est.components,
+            partition: est.partition,
             tokens: est.tokens,
             seconds: est.seconds,
             minutes: est.minutes,
@@ -1774,7 +1826,7 @@ program
       );
       return;
     }
-    console.log(renderEstimate(files, est));
+    console.log(renderEstimate(est));
   });
 
 // ---------------------------------------------------------------------------
@@ -2028,6 +2080,155 @@ map
       `scale: indexed ${loaded.papers.length} component(s), ` +
         `${Object.keys(index).length} file(s) → ${path.relative(cwd, outPath) || outPath}`,
     );
+  });
+
+map
+  .command('check')
+  .description(
+    'Hold a built .scale/ to the sizing contract: partition size against ' +
+      '`scale estimate`, components per source file, and children per group. ' +
+      'Pure fs scan + arithmetic — no LLM, no git.',
+  )
+  .option('--json', 'emit machine-readable JSON instead of the report', false)
+  .action((opts: { json?: boolean }) => {
+    const cwd = process.cwd();
+    // A documented `--json` form that answers with zero bytes on its error paths
+    // is not machine-readable; every exit here carries the same shape.
+    const bail = (error: string): void => {
+      if (opts.json) console.log(JSON.stringify({ ok: false, error }, null, 2));
+      else console.error(`scale: ${error}`);
+      process.exitCode = 1;
+    };
+    const scaleDir = path.join(cwd, '.scale');
+    if (!fs.existsSync(scaleDir)) {
+      bail(`no coverage-memory dir at ${scaleDir} — nothing to check.`);
+      return;
+    }
+    const loaded = loadScaleDir(cwd);
+    const built = loaded.papers.length;
+    if (built === 0) {
+      bail('no component papers found — nothing to check.');
+      return;
+    }
+
+    const { files, loc } = scanSourceLoc(cwd);
+    const target = partitionTarget({ loc, files });
+
+    // Components per ANCHORED file, not per scanned file: the ratio that
+    // matters is over the files papers actually claim, since those are the only
+    // ones the file→component index can route an edit through.
+    const index = buildFileComponentIndex(componentSourcesIndex(loaded));
+    const allAnchored = Object.keys(index);
+    // Density is judged against SOURCE files only, because that is the surface
+    // the target's ceiling was computed against. Counting every anchored path
+    // would let a partition dilute its own density with manifests and docs: ten
+    // components over five source files and five markdown files would measure
+    // 1.0 while the code they actually gate is at 2.0.
+    // A path that is not on disk can never route an edit, so counting it would
+    // let a partition improve its measured density by anchoring files that do
+    // not exist — the density check exists precisely to guarantee routing.
+    const deadAnchors = allAnchored.filter((f) => !fs.existsSync(path.resolve(cwd, f)));
+    const sourceAnchored = allAnchored.filter(
+      (f) =>
+        SOURCE_EXTS.has(path.extname(f).toLowerCase()) &&
+        !isTestFile(path.basename(f)) &&
+        fs.existsSync(path.resolve(cwd, f)),
+    );
+    const anchoredFiles = sourceAnchored.length;
+    // JSON.stringify turns Infinity into null, which reads as "no data" rather
+    // than "the worst possible density"; the machine surface says so in a field
+    // that survives serialization.
+    const perFile = anchoredFiles > 0 ? built / anchoredFiles : null;
+    const worst = Object.entries(index)
+      .map(([file, ids]) => ({ file, n: ids.length }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 5);
+
+    // Group sizes, read off the store's own folder layout.
+    const byProvince = new Map<string, number>();
+    for (const paper of loaded.papers) {
+      const prov = paper.province || '(none)';
+      byProvince.set(prov, (byProvince.get(prov) ?? 0) + 1);
+    }
+    const groups = [...byProvince.entries()].map(([id, n]) => ({ id, n })).sort((a, b) => b.n - a.n);
+
+    const findings: ReturnType<typeof checkPartition> = [];
+    if (deadAnchors.length > 0) {
+      // A warning, not a failure. A path that is gone cannot route an edit, but
+      // neither does it make the rest of the partition unresolvable — the harm
+      // is that the paper still teaches code that no longer exists. It is kept
+      // out of the density denominator above, so it can no longer flatter the
+      // ratio either. (This is how the check found that this repo's own memory
+      // still anchors the commit hook removed in PLAN-GATE §6.)
+      findings.push({
+        level: 'warn',
+        code: 'stale-anchor',
+        message:
+          `${deadAnchors.length} anchored path(s) no longer exist ` +
+          `(e.g. ${deadAnchors.slice(0, 3).join(', ')}). Those papers describe code that is gone.`,
+      });
+    }
+    findings.push(...checkPartition(
+      { components: built, anchoredFiles, groupSizes: groups.map((g) => g.n) },
+      target,
+    ));
+
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            built,
+            target,
+            repo: { files, loc },
+            anchoredFiles,
+            anchoredPaths: allAnchored.length,
+            deadAnchors,
+            perFile,
+            groups,
+            worst,
+            findings,
+          },
+          null,
+          2,
+        ),
+      );
+      if (!partitionPasses(findings)) process.exitCode = 1;
+      return;
+    }
+
+    const out: string[] = [];
+    out.push('scale map check — partition vs the sizing contract');
+    out.push('');
+    out.push(`  built            ${built} components in ${groups.length} group(s)`);
+    out.push(
+      `  estimate         ${target.target} (band ${target.min}–${target.max}) ` +
+        `from ${files} files, ${loc.toLocaleString()} LOC`,
+    );
+    out.push(
+      `  per file         ${perFile === null ? 'no source files anchored' : perFile.toFixed(2) + ' components per anchored source file'} ` +
+        `(max ${GRANULARITY_MAX_PER_FILE}; ${anchoredFiles} source of ${allAnchored.length} anchored)`,
+    );
+    out.push(
+      `  shape            ${target.depth} grouping level(s), ${target.topGroups} at the top` +
+        (target.needsHierarchy ? ' — needs more than a flat province layer' : ''),
+    );
+    if (worst.length > 0 && worst[0]!.n > 1) {
+      out.push('');
+      out.push('  files claimed by more than one component:');
+      for (const w of worst) {
+        if (w.n > 1) out.push(`    ${String(w.n).padStart(3)}  ${w.file}`);
+      }
+    }
+    out.push('');
+    if (findings.length === 0) {
+      out.push('  OK — the partition is within the contract.');
+    } else {
+      for (const f of findings) {
+        out.push(`  ${f.level === 'fail' ? 'FAIL' : 'WARN'}  ${f.message}`);
+      }
+    }
+    console.log(out.join('\n'));
+    if (!partitionPasses(findings)) process.exitCode = 1;
   });
 
 // ---------------------------------------------------------------------------

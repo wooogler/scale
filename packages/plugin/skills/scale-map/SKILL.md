@@ -2,9 +2,10 @@
 name: scale-map
 description: >-
   Mode B coverage-memory builder for SCALE (senior side, run with Opus or
-  better). Surveys a target repository into 5–9 provinces and 20–60 component
-  "papers" under .scale/, writes each paper (structure + concepts + inferred
-  rationale), cross-links them, and freezes a spatial map. Use this to build the
+  better). Surveys a target repository into the number of component "papers"
+  `scale estimate` sizes it for, groups them into provinces, writes each paper
+  (structure + concepts + inferred rationale), cross-links them, and freezes a
+  spatial map. Use this to build the
   coverage memory from scratch, or in sync mode to update papers after code
   changes. Forked and extended from cluedoc (MIT). Invoke via /scale-map or when
   asked to "build the scale map", "survey the repo into components", or "update
@@ -58,10 +59,26 @@ paper should see a clear technical description, not game flavor.
 └── map.json                         # frozen layout — written by `scale map layout`
 ```
 
-- **Target: 20–60 components across 5–9 provinces.** Fewer than 20 means your
-  granularity is too coarse to learn from; more than 60 means it's too fine and
-  the map becomes noise. If the repo pushes you outside this band, merge or split
-  provinces — do not exceed it.
+- **The target component count comes from `scale estimate`, not from this file.**
+  It is arithmetic over the repo's own shape — source lines and source **files** —
+  and it prints a band you must land inside. There is no fixed range that fits
+  every repo: a 2,000-line library wants roughly eight components, and a large
+  service wants far more than one flat layer of provinces can hold (see the
+  grouping note below). Read the number before you plan the partition.
+- **Never go finer than one component per source file.** `sources` anchors whole
+  files, and every consumer that turns an edit into a territory — the edit gate,
+  coverage credit, drift — is keyed by file. Put two components on one file and
+  an edit gates, credits and re-locks both; put twelve on one file and the tool
+  can no longer tell which territory the junior is even in. This is why the
+  estimate caps the count at the file count, and why it says so when it does.
+- **Group into provinces of 5–9 components.** Provinces exist to make the map
+  readable, so their count follows from the component count rather than being
+  chosen. `scale estimate` prints the shape: how many top-level groups, and how
+  many grouping levels. Take the count from there rather than dividing yourself,
+  and land every province inside 5–9 — `scale map check` warns on groups at
+  either edge. A repo large enough that provinces themselves would exceed nine
+  needs another grouping level; the estimate says so, and that case is not yet
+  supported by `map.json` — stop and say so rather than flattening it.
 - One folder per component; the folder name **is** the component `id`.
 - Bodies are **prose only**: no code symbols, no file paths, no snippets in the
   body text. All code anchoring lives in the `sources` frontmatter field. (This
@@ -99,8 +116,15 @@ Frontmatter rules:
 - **`id`** — lowercase kebab slug, unique across the whole realm. Stable forever.
   Choose it carefully at Survey time; it is the primary key everywhere downstream.
 - **`sources`** — file granularity only (never line ranges). List the files whose
-  behavior this component *is*. A file may appear in more than one component's
-  sources if it genuinely spans concerns, but prefer a clean partition.
+  behavior this component *is*. **A file claimed by two components is a cost, not
+  a licence.** Everything downstream keys off the file, so both components gate,
+  take coverage credit and re-lock on any edit to it — the tool cannot tell them
+  apart. Share a file only where the behaviour genuinely is shared (a small
+  helper two territories both own), never as a way to split one large file into
+  several components. `scale map check` fails a partition that averages more
+  than ~1 component per anchored file. If a file is too big to be one learnable
+  unit, say so in Survey and leave it as one component: splitting it honestly
+  needs symbol-level anchors, which the tool does not have yet.
 - **`concepts`** — 2–6 per component. Each is a discrete idea a junior could be
   quizzed on. Give each a stable `id` and a one-line `name`. These drive item
   generation, so make them specific ("cookie carries only an opaque id"), not
@@ -161,10 +185,18 @@ Survey, before anything.** A full build is expensive (LLM-heavy; see the calibra
 in `scale estimate`), so the user must see the cost and pick the build model first.
 
 1. Run `scale estimate` in the target repo. It is pure and fast (fs scan +
-   arithmetic — no LLM, no API) and prints a per-build-model table: repo size →
-   estimated components, and estimated **cost + time for each BUILD model (Opus 5
-   and Fable 5)**.
-2. **Present that table to the user verbatim.**
+   arithmetic — no LLM, no API) and prints: repo size → **target component count
+   and the band you must build inside**, the province shape that count implies,
+   whether file-level anchors are what caps it, and estimated **cost + time for
+   each BUILD model (Opus 5 and Fable 5)**.
+2. **Present that output to the user verbatim.** The component count is not a
+   footnote to the price — it is the contract for the build. Note that the two
+   are computed independently: the price is projected from source lines alone,
+   so it does **not** rise when you propose more components than the target.
+   That is precisely why the count has to be honoured rather than merely noted.
+   The koa build produced 36 components against a target of 8 and cost roughly
+   four times the figure that had been approved, because the papers are the
+   output tokens and the estimate had priced eight of them.
 3. **State the model YOU are running on.** The build happens in this Claude Code
    session, so the model doing the work is the session's — there is no config key
    that changes it, and no way for you to switch it yourself. Say plainly which
@@ -184,16 +216,36 @@ Explore the repository (read the README, entry points, directory layout,
 package/build manifests, route tables, schema/migrations). Then propose a **plan**
 for human approval before writing anything:
 
-- **Provinces (5–9):** the top-level feature groups. Name them after user-facing
-  or architectural seams (e.g. Authentication, Document Signing, Templates, Teams,
-  Webhooks), not after directories.
-- **Components (20–60):** for each province, a list of components with a proposed
-  `id`, `title`, and candidate `sources`. Aim for components that are a coherent
-  learnable unit — roughly "a thing a junior could understand in one sitting".
+- **Components — as many as the estimate said, inside its band.** For each, a
+  proposed `id`, `title`, and candidate `sources`. Aim for a coherent learnable
+  unit, roughly "a thing a junior could understand in one sitting". Two hard
+  constraints, both from **What you produce** above: no component may be finer than a file,
+  and no file should be claimed by more than one component unless it genuinely
+  is shared behaviour.
+- **Provinces — as many as the estimate's shape line says, each holding 5–9.** Name them after
+  user-facing or architectural seams (e.g. Authentication, Document Signing,
+  Templates, Teams, Webhooks), not after directories.
 
 Present this as a table/tree and **stop for approval**. Granularity is the
-make-or-break decision (PLAN §10); do not proceed to Write on a guess. If the repo
-resists a clean 5–9 / 20–60 partition, say so and propose the closest honest fit.
+make-or-break decision; do not proceed to Write on a guess.
+
+**If your honest partition falls outside the estimate's band, you must stop.**
+Do not build it and mention the discrepancy afterwards — that has already
+happened once and produced a map at 4.5× the estimate, five components deep on
+every source file, which broke the edit gate, coverage credit and drift together.
+Instead: say which way you differ and why, note that the cost moves with the
+count, and ask the user to approve the revised number explicitly before you
+write anything. The band is roughly 1.5× either way, further clipped so that its
+top never authorizes something the check would reject: it will not exceed what
+one flat layer of provinces holds, nor a density of about one component per
+source file. Needing more than the band usually means the repo has few, large
+files, in which case say so — the honest fit is the file count, and finer
+partitioning has to wait for symbol-level anchors.
+
+After Layout, run **`scale map check`**. It holds the built partition to the same
+arithmetic — size against the band, components per anchored file, group sizes —
+and exits non-zero when it does not hold. A build is not finished until it passes
+or the user has accepted a named exception.
 
 ### 2. Write  →  subagent fan-out, one province at a time
 
@@ -281,7 +333,9 @@ When invoked after the code has changed, do **not** rebuild from scratch. Instea
 
 ## Quality bar (self-check before you finish)
 
-- [ ] 5–9 provinces, 20–60 components, all within a clean tree under `.scale/`.
+- [ ] `scale map check` exits zero (partition inside the estimate's band, at most
+      ~1 component per anchored file, provinces of 5–9), all within a clean tree
+      under `.scale/`.
 - [ ] Every component paper has a stable `id`, `sources` (files only), 2–6 concrete
       `concepts`, 1–4 `rationale` entries each with `provenance`.
 - [ ] Every paper has a hero Mermaid visual and all seven sections in order.

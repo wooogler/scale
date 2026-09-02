@@ -96,7 +96,7 @@ Derived from cluedoc (MIT) — capability tree of markdown "papers", one folder 
 
 ### 4.1 Paper format
 
-Layout: `.scale/README.md` (root) + `<province>/README.md` + `<province>/<component>/README.md`. Target **20–60 components** across **5–9 provinces**.
+Layout: `.scale/README.md` (root) + `<province>/README.md` + `<province>/<component>/README.md`. The component count is **sized per repo by `scale estimate`** (source LOC, capped by source file count) and enforced afterwards by `scale map check`; provinces hold 5–9 components each. The former fixed **20–60 / 5–9** target is superseded — it was a hard floor that overrode the estimate and produced a 36-component map for a repo sized at 8 (koa, 2026-09-01).
 
 Frontmatter (extends cluedoc's `title`/`sources`):
 
@@ -146,7 +146,7 @@ Spatial stability is the point of a map (survey knowledge / method-of-loci): lay
 
 A Claude Code skill run once in the pilot repo (with Opus or better), then in sync mode after changes:
 
-1. **Survey** — propose provinces (5–9) and component list (20–60) with `sources`, as a plan for approval.
+1. **Survey** — run `scale estimate` first; propose that many components with `sources`, grouped into provinces of 5–9, as a plan for approval. A proposal outside the estimate's band (±1.5×) must be re-estimated and re-approved before any paper is written, never built past and explained afterwards.
 2. **Write** — subagent fan-out per province; write every paper (structure/concepts prose + hero visuals + *inferred* rationale, `provenance: inferred`).
 3. **Link** — Related Work cross-links; verify no dead links.
 4. **Layout** — run `scale map layout` (deterministic, CLI) to freeze coordinates + importance.
@@ -239,7 +239,7 @@ Skills: **`scale-map`** (Mode B builder + sync; senior), **`scale-tutor`** (juni
 | # | Phase | Contents | Acceptance criteria | Size |
 |---|---|---|---|---|
 | 0 | Scaffold | monorepo, core schema types (zod), CLI/plugin/web skeletons, git init | `scale --help` runs; schemas validate fixtures | S (~½d) |
-| 1 | Memory substrate | `scale-map` skill v1; **dry-run on 2 pilot candidates**; pick repo, pin SHA; full build → 20–60 papers; `map layout`/`index` | papers readable & well-linked; component count in range; layout stable across runs | M (2–3d) |
+| 1 | Memory substrate | `scale-map` skill v1; **dry-run on 2 pilot candidates**; pick repo, pin SHA; full build → papers sized by `scale estimate`; `map layout`/`index`/`check` | papers readable & well-linked; `scale map check` exits zero; layout stable across runs | M (2–3d) |
 | 2 | Map viewer (read-only) | `scale serve` + map screen + paper panel; renders hand-seeded coverage.json | pilot repo demoable as a map; castle click → paper | M (2–3d) |
 | 3 | Evidence & state engine | junior hooks (capture only), file→component join, coverage model v1, drift/loyalty | work one real session → map afterwards shows explored territory + review latencies logged; zero perceived latency | M (2–3d) |
 | 4 | In-flow interventions | tutor skill (both modalities), configurable triggers (pre-commit default, post-task opt-in) + budget policy, record→conquest, `/scale-study` voluntary path | budget rules provably honored (≤1/commit, ≤2/session, cooldown, defer=drop, nothing leaks to quest queue); both modalities complete in chat | M (2–3d) |
@@ -250,7 +250,7 @@ Dependencies: 1→2→(3,4,5 partially parallel)→6. Phases 4 and 5 both depend
 
 ## 9. Pilot repo
 
-Criteria: TS/JS full-stack (single language → dependency analysis + junior familiarity), self-hostable dev env, feature diversity supporting 20–60 components, moderate size (~20–80k LOC) so Mode B build is tractable, realistic feature-add/bug-fix tasks for a study, permissive license. **Pin a fork at a fixed SHA.**
+Criteria: TS/JS full-stack (single language → dependency analysis + junior familiarity), self-hostable dev env, feature diversity and **enough source files to anchor one component each** (a repo of few large files caps the partition below what its LOC deserves — `scale estimate` reports this as granularity-limited), moderate size (~20–80k LOC) so Mode B build is tractable, realistic feature-add/bug-fix tasks for a study, permissive license. **Pin a fork at a fixed SHA.**
 
 Shortlist (validate top candidates with a 30-min survey dry-run in Phase 1):
 
