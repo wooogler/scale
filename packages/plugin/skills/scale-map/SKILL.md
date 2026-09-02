@@ -342,8 +342,8 @@ never move.
 Then build the reverse index used by the junior's hooks, and make sure
 `.scale/.gitignore` lists `index.json`: the index is regenerable, the gate reads
 it first with no freshness check, and a committed stale copy routes edits to the
-wrong territory. (A koa build shipped without the ignore file; the SCALE repo's
-own `.scale/.gitignore` is the model.)
+wrong territory. Either `.scale/.gitignore` or an entry in the repo's root
+`.gitignore` works; a koa build shipped with neither.
 
 Then (optional, regenerable) build the reverse index used by the junior's hooks:
 
