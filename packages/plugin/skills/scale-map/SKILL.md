@@ -193,10 +193,12 @@ in `scale estimate`), so the user must see the cost and pick the build model fir
    footnote to the price — it is the contract for the build. Note that the two
    are computed independently: the price is projected from source lines alone,
    so it does **not** rise when you propose more components than the target.
-   That is precisely why the count has to be honoured rather than merely noted.
-   The koa build produced 36 components against a target of 8 and cost roughly
-   four times the figure that had been approved, because the papers are the
-   output tokens and the estimate had priced eight of them.
+   That is precisely why the count has to be honoured rather than merely noted:
+   nothing about the price will stop you. Measured on koa, built twice from one
+   commit — 36 components against a target of 8 spent about 1.4× the tokens of
+   the 8-component build. More, because the papers are the output, but nowhere
+   near the 4.5× the count overshot by, since most of a build is reading the
+   same source either way.
 3. **State the model YOU are running on.** The build happens in this Claude Code
    session, so the model doing the work is the session's — there is no config key
    that changes it, and no way for you to switch it yourself. Say plainly which

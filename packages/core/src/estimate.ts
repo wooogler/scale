@@ -18,11 +18,15 @@
  *
  * The halves are also INDEPENDENT, which is easy to misread: the cost basis is
  * projected from LOC alone and does not move with the component target, so two
- * repos of equal size price identically however differently they partition. The
- * consequence runs the other way — a build that overshoots the target overshoots
- * the price, because the papers are the output tokens and the figure quoted was
- * for the target's worth of them. koa's 36-component build cost roughly four
- * times its estimate.
+ * repos of equal size price identically however differently they partition.
+ *
+ * MEASURED, so the effect is not overstated: koa was built twice from the same
+ * commit, once at 36 components and once at 8. The 36-component build spent
+ * about 1.4x the tokens of the 8-component one — more, because the papers are
+ * the output, but nowhere near the 4.5x its component count overshot by. Most of
+ * a build's cost is reading the same source, which is why pricing from LOC alone
+ * turns out to be a fair basis and why the count has to be enforced on its own
+ * terms rather than through the bill.
  */
 
 /** Per-1M-token USD rates for a model (input/output/cache-read/cache-write). */
@@ -402,9 +406,10 @@ export interface BuildEstimate {
  * Takes the whole {@link RepoShape} rather than LOC alone, because the component
  * count is now bounded by file count too. The cost basis is NOT affected by that
  * — it is projected from LOC alone, so two repos of equal size price identically
- * however differently they partition. The dependency runs the other way: a build
- * that overshoots the target overshoots the price it was quoted, as koa's did by
- * roughly four times, and the cost arithmetic cannot see that coming.
+ * however differently they partition. Overshooting the target does cost more
+ * (measured on koa: about 1.4x the tokens for 4.5x the components), but far less
+ * than proportionally, because most of the spend is reading the same source. The
+ * count is therefore not something the price can police.
  */
 export function estimateBuild(shape: RepoShape): BuildEstimate {
   const l = Math.max(0, shape.loc);
