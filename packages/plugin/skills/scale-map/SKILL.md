@@ -275,6 +275,18 @@ handler is created does not run, argued a design rationale for it, and was
 refuted by a five-line script. A false paper is worse than a missing one, because
 the tutor grades a junior against it.
 
+**This applies to the province and root papers too, and they are where it gets
+forgotten.** They are written last, from the finished component papers, and it is
+tempting to let them summarise rather than verify — at which point they
+generalise. Measured on one build: the province paper stated a count of shared
+files that `scale map check` contradicts, claimed a uniform default-handling rule
+that two of the settings do not follow, and gave a reason for one grouping that
+its own component paper disproves. Every claim in an orienting paper is a claim
+about the code, so hold it to the same standard: check it, or drop it to the
+level of generality you can actually support. Also read the component papers
+against each other — two of them describing the same edge in opposite terms is a
+contradiction only a reader of both will catch, and that reader is you.
+
 Each component paper must have: complete extended frontmatter (with
 `provenance: inferred` on every rationale entry), a hero Mermaid visual, and all
 seven sections. Explain the `concepts` in the Description; explain the `rationale`
