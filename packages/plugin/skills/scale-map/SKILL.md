@@ -251,10 +251,29 @@ or the user has accepted a named exception.
 
 ### 2. Write  →  subagent fan-out, one province at a time
 
-Write every paper. **Fan out with subagents — one per province** — so provinces
-are built in parallel and each subagent holds only its slice of the repo in
-context. Give each subagent: its province, its component list with `sources`, this
-paper form, and the terminology rule.
+Write every paper. **Fan out with subagents** so papers are built in parallel and
+each subagent holds only its slice of the repo in context. Give each subagent: its
+components with `sources`, this paper form, the terminology rule, and — this is
+the part that decides the map's quality — the accuracy rule below.
+
+**One subagent per province, unless there is only one province.** A small repo
+sizes to a single province, and then per-province fan-out is no fan-out at all:
+one subagent writes every paper in sequence. In that case fan out **per
+component** instead, hand each writer the full component roster so its Related
+Work links resolve, and write the province and root papers afterwards from the
+finished set.
+
+**Accuracy is the writer's job, not the reviewer's.** Instruct every subagent to:
+read its anchored sources end to end before writing; verify every falsifiable
+claim against the code, and where a claim is about behaviour, against the repo's
+own tests or by running it; check that a causal chain is the chain the code
+actually takes, not a plausible one; and **omit anything it cannot confirm** — a
+shorter true paper beats a fuller false one. Require each subagent to report what
+it could not verify. Without this, papers come back confidently wrong: one build
+asserted in two separate papers that middleware registered after the request
+handler is created does not run, argued a design rationale for it, and was
+refuted by a five-line script. A false paper is worse than a missing one, because
+the tutor grades a junior against it.
 
 Each component paper must have: complete extended frontmatter (with
 `provenance: inferred` on every rationale entry), a hero Mermaid visual, and all
