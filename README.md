@@ -6,8 +6,8 @@ that keeps a junior engineer's real comprehension in sync while they work in Cla
 
 Two users, one map:
 
-- **Senior** builds and maintains the coverage memory — a set of markdown "papers", one
-  per component, anchored to source files at a git SHA.
+- **Senior** builds and maintains the coverage memory — a set of markdown **component
+  docs**, one per component, anchored to source files at a git SHA.
 - **Junior** learns while coding with Claude Code — passive signals plus active quiz /
   Socratic checks track how well they actually understand each component, and lightweight
   interventions nudge comprehension up before it drifts.
@@ -33,8 +33,13 @@ to the code they're shipping.
 
 ## How it works
 
-- **Coverage memory (`.scale/`).** One markdown paper per component (frontmatter: stable
-  `id`, `sources`, quizzable `concepts`, `rationale`), grouped into provinces of 5–9. How
+- **Coverage memory (`.scale/`).** One markdown component doc per component (frontmatter:
+  stable `id`, `sources`, quizzable `concepts`, `rationale`), grouped into provinces of
+  5–9. Every doc carries the same six sections — `Summary`, `What it does`, `Related
+  components`, `How it works`, `Design decisions`, `Where it sits` — so a reader always
+  knows where to look, and the cross-links in `Related components` are the graph. (The
+  loader still accepts the older academic headings as aliases, so a memory built before the
+  rename keeps loading; `/scale-map` never writes them again.) How
   many components a repo gets is arithmetic, not a fixed range — `scale estimate` sizes it
   from source lines and source files, and `scale map check` holds the build to it. A frozen
   `map.json` gives each component stable spatial coordinates and an importance weight; an
@@ -63,7 +68,7 @@ Monorepo, TypeScript throughout (npm workspaces), so CLI, hooks, and web share o
 
 | Package | Role |
 |---|---|
-| **`@scale/core`** | Shared engine: zod schemas, coverage model, paper loader, file→component index, layout, drift, cost estimator. |
+| **`@scale/core`** | Shared engine: zod schemas, coverage model, component-doc loader, file→component index, layout, drift, cost estimator. |
 | **`@scale/cli`** | The `scale` CLI wrapping core (also the binary the plugin hooks call). |
 | **`@scale/plugin`** | Claude Code plugin: hooks (capture + edit gate) and `/scale-*` skills/commands. Ships two **generated, committed** payloads — `bin/scale.mjs` (the bundled CLI) and `web-dist/` — so it stays self-contained; regenerate with `npm run build:plugin`. |
 | **`@scale/web`** | React + Vite + SVG map viewer served by `scale serve`, plus a local JSON API. |
@@ -134,7 +139,7 @@ team's committed defaults in `.scale/policy.json` (see [Team policy](#team-polic
 
 ```bash
 scale estimate                 # preview per-model cost/time (pure fs scan, no LLM)
-# → build the papers with the /scale-map skill: Survey (approval gate) → Write → Link → Layout
+# → build the component docs with /scale-map: Survey (approval gate) → Write → Link → Layout
 scale map layout               # freeze .scale/map.json (spatial coords + importance)
 scale map index                # build .scale/index.json (file → component reverse index)
 ```
@@ -206,17 +211,17 @@ check` will hold the finished build to the same band.
 **The build is one session, and the Survey gate is where your knowledge enters.** Pick
 Opus 5 or Fable 5 with `/model`, then run `/scale-map` in the target repo. The skill
 surveys the source into provinces and components and stops for approval before it writes a
-single paper. That pause is the point: a model reading an unfamiliar repo groups by
+single component doc. That pause is the point: a model reading an unfamiliar repo groups by
 directory when the real seams are often elsewhere, and you are the one who knows which
 module is load-bearing and which three files are really one idea. Correcting the partition
-there costs a sentence; correcting it after forty papers exist costs the build.
+there costs a sentence; correcting it after forty docs exist costs the build.
 
-**What lands where.** The papers, `map.json`, `deps.json`, and any `.scale/policy.json` are
-committed to the target repo — the map is a shared artifact and belongs in review, where a
-wrong claim in a paper can be caught the same way a wrong comment is. `.scale/index.json`
-is gitignored and rebuilt on demand with `scale map index`, because it is derived. Your
-coverage, evidence log, locks, and quests never leave `~/.scale/<repo-id>/`: two people
-working the same repo share the map but not the score.
+**What lands where.** The component docs, `map.json`, `deps.json`, and any
+`.scale/policy.json` are committed to the target repo — the map is a shared artifact and
+belongs in review, where a wrong claim in a doc can be caught the same way a wrong comment
+is. `.scale/index.json` is gitignored and rebuilt on demand with `scale map index`, because
+it is derived. Your coverage, evidence log, locks, and quests never leave
+`~/.scale/<repo-id>/`: two people working the same repo share the map but not the score.
 
 **Expect to start at zero, on code you wrote.** Coverage is materialized from evidence
 SCALE observed, and it observed none of the work that predates the map — so the first
@@ -226,7 +231,7 @@ component now, not that you once touched it. It does mean the first week is fron
 and two knobs make it bearable: start on `gate.enforcement advisory` so the gate reports
 instead of blocks, and put vendored, generated, and migration paths in `exempt.paths` so
 the session budget is spent on code you actually own. New files never gate — only exact
-paper anchors do (see [Settings](#settings)).
+doc anchors do (see [Settings](#settings)).
 
 **A repo with history behaves differently from an empty one.** Drift is measured per
 validated component since the sha *you* validated it at, split by author, so an active repo
@@ -243,8 +248,8 @@ ledger, and may override any policy key in their own config (see
 [Team policy](#team-policy)). The map is shared, the pressure is personal — which is also
 why a team lead can turn `gate.enabled` off for themselves without touching anyone else.
 
-**Keeping the map honest as the code moves.** Papers are anchored to source files at a
-build sha, so renames and deletions age them. `scale map check` reports the partition
+**Keeping the map honest as the code moves.** Component docs are anchored to source files
+at a build sha, so renames and deletions age them. `scale map check` reports the partition
 against the sizing band, anchored paths that no longer exist, and files claimed by more
 than one component; re-run `scale map index` whenever anchors change, and re-run
 `/scale-map` scoped to a single province when a subsystem has genuinely been restructured.
@@ -346,11 +351,12 @@ row at the top, then the rest — same file, same validation, no terminal needed
 | `drift.selfRatio` | 0–1 | The same for **your own** churn (default 0.8). Much higher: the gate cleared you before you wrote it, so this only catches a wholesale rewrite of something you unlocked with one check. |
 | `drift.trigger` | `ratio` \| `any-foreign-commit` | `any-foreign-commit` re-locks on a single foreign commit. Measured here, one commit touches ~7.9 of 37 components and the busiest are touched by ~60% of commits, so on a real team it re-locks the same territory daily. Available, not the default. |
 | `drift.digest` | `daily` \| `session` \| `off` | How often SessionStart names newly re-locked territory. |
-| `drift.shareDiff` | `full` \| `metadata` \| `off` | **How much of a teammate's change reaches the intervention API** when grounding a recovery check. `full` sends commit metadata plus a clipped diff excerpt; `metadata` sends who/which files/which declarations and **no source lines**; `off` grounds recovery in the paper alone. Team-policy settable — a lead can decide this once for everyone. |
+| `drift.shareDiff` | `full` \| `metadata` \| `off` | **How much of a teammate's change reaches the intervention API** when grounding a recovery check. `full` sends commit metadata plus a clipped diff excerpt; `metadata` sends who/which files/which declarations and **no source lines**; `off` grounds recovery in the component doc alone. Team-policy settable — a lead can decide this once for everyone. |
 | `identity.emails` | list | Extra git addresses that are also **you** (a work address, a GitHub `users.noreply`), on top of `git config user.email`. Personal only — a team policy can never set who you are. Prefer a committed `.mailmap`, which SCALE already honors. |
 | `unlock.passBar` | 0–1 | Mean score a single check needs to count as passed (default 0.6). |
 | `unlock.checksRequired` | ≥ 1 | Passed checks needed before a territory unlocks (default 1). |
-| `exempt.paths` | glob list | Files the gate never fires on (`*` within a segment, `**` across). New files are already exempt — only exact paper anchors gate. |
+| `exempt.paths` | glob list | Files the gate never fires on (`*` within a segment, `**` across). New files are already exempt — only exact doc anchors gate. |
+| `thresholds.docReadCap` | 0–1 | Ceiling on the coverage a *reading* alone can earn (default 0.4): opening a component doc explores territory, it never conquers it. (A config still carrying the old pre-rename key is migrated to this one silently.) |
 | `budgets.*` | non-negative numbers | Interruption ceiling: denies per session, cooldown minutes. `0` means "off". |
 | `budgets.sessionIdleResetMinutes` | non-negative number | Backstop for ending a budget period (default 720 = 12h). A period normally ends when the **last Claude Code window** attached to the repo closes, so a second terminal shares the budget instead of refilling it; this only recovers a SessionEnd lost to a crash, and is deliberately longer than a working day so it never ends a session by itself. |
 | `models.provider` | `anthropic` \| `openai` | Which API serves **interventions**. |
@@ -387,8 +393,9 @@ who doesn't want to gate themselves. The user file stays sparse, so a later poli
 reaches everyone who hasn't explicitly overridden that key. A policy that fails to parse
 is ignored whole (fail open) and `scale status` says so.
 
-`language` never touches the coverage memory: the `.scale/` papers are always written in
-English — they are repo-shared state, and `language` is a per-user interaction preference.
+`language` never touches the coverage memory: the `.scale/` component docs are always
+written in English — they are repo-shared state, and `language` is a per-user interaction
+preference.
 
 ### API keys
 
@@ -400,7 +407,7 @@ Interventions (Socratic dialogue, LLM-written quests) need a key for the selecte
 
 The key is never returned by the API and never logged — the UI only ever shows a masked
 tail (`sk-…9f2A`) and where it came from. With no key, quest generation falls back to
-deterministic paper-grounded items and the Socratic runner says exactly what's missing and
+deterministic doc-grounded items and the Socratic runner says exactly what's missing and
 links to Settings.
 
 ---
@@ -442,7 +449,7 @@ denies, skips, redirects, out-of-band edits, unlocks, re-locks, session tallies)
   reporting command just never caught up.
 - **API-dependent paths** — LLM quest generation and the web Socratic proxy need an API key
   (Anthropic or OpenAI); both fall back to deterministic behavior offline (quest generation
-  synthesizes items from the paper; the Socratic proxy is unavailable without a key).
+  synthesizes items from the doc; the Socratic proxy is unavailable without a key).
 
 ---
 
@@ -471,7 +478,7 @@ double-counted every symbol. Do not delete the file because nothing imports it.
 `.scale/deps.json`, which `scale map layout` merges as `depends_on` edges. Those edges
 put measured dependency centrality into `importance` — which drives node size, the
 gate's candidate ranking, and quest selection, and until now came only from the
-markdown links an LLM wrote in each paper's Related Work section (24.6% of which have
+markdown links an LLM wrote in each doc's `Related components` section (24.6% of which have
 any code path behind them, per `check:map`). The LLM's `reference` edges are kept
 alongside rather than replaced: the difference between them is the measurement.
 

@@ -22,7 +22,7 @@
  *
  * MEASURED, so the effect is not overstated: koa was built twice from the same
  * commit, once at 36 components and once at 8. The 36-component build spent
- * about 1.4x the tokens of the 8-component one — more, because the papers are
+ * about 1.4x the tokens of the 8-component one — more, because the docs are
  * the output, but nowhere near the 4.5x its component count overshot by. Most of
  * a build's cost is reading the same source, which is why pricing from LOC alone
  * turns out to be a fair basis and why the count has to be enforced on its own
@@ -297,7 +297,7 @@ export function partitionTarget(shape: RepoShape): PartitionTarget {
   const byLoc = Math.round(loc / PER_LOC.locPerComponent);
   const byFiles = files;
 
-  // What the CONTENT asks for, floored: forty lines still want a few papers
+  // What the CONTENT asks for, floored: forty lines still want a few docs
   // rather than none, so long as there are files to anchor them to.
   const demand = Math.max(LEAF_CLAMP.min, byLoc);
 
@@ -449,9 +449,9 @@ export function estimateBuild(shape: RepoShape): BuildEstimate {
 
 /** What a built `.scale/` looks like, reduced to the numbers sizing cares about. */
 export interface BuiltPartition {
-  /** Component papers written. */
+  /** Component docs written. */
   components: number;
-  /** Distinct source files those papers anchor (the index's key set). */
+  /** Distinct source files those docs anchor (the index's key set). */
   anchoredFiles: number;
   /** Components per group, e.g. per province. */
   groupSizes: number[];

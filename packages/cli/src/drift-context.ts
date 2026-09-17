@@ -3,8 +3,8 @@
  * recovery check's grounding (PLAN-GATE §4 S2b).
  *
  * The impure half of the drift block: git lives here, the budget and rendering
- * live in `@scale/core`'s `paperGrounding`. Everything fails to `null`, which
- * simply means the check is grounded in the paper alone — the same check the
+ * live in `@scale/core`'s `docGrounding`. Everything fails to `null`, which
+ * simply means the check is grounded in the doc alone — the same check the
  * junior would have got before this existed.
  *
  * NOT on the hook path. This runs at quest generation and at tutor time, both
@@ -167,7 +167,7 @@ export function driftContext(
 
   // %x1f is a unit separator — a subject can contain anything else.
   const logOut = git(cwd, ['log', `--format=%h%x1f%aE%x1f%s`, range, '--', ...sources], PINNED_FLAGS);
-  if (logOut === null) return null; // unresolvable anchor → paper-only grounding
+  if (logOut === null) return null; // unresolvable anchor → doc-only grounding
   const commits = logOut
     .split('\n')
     .filter(Boolean)

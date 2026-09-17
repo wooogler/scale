@@ -22,8 +22,8 @@ interface Props {
   onClose: () => void;
   /** Called once coverage has actually moved, so the map can re-fetch + animate. */
   onCompleted: (componentId: string, component: ComponentCoverage) => void;
-  /** Open this component's paper (the "just read it" escape hatch). */
-  onReadPaper: () => void;
+  /** Open this component's doc (the "just read it" escape hatch). */
+  onReadDoc: () => void;
   /** Open the settings modal, optionally focused on a provider's key field. */
   onOpenSettings: (provider?: LlmProvider) => void;
 }
@@ -203,12 +203,12 @@ interface ChatMsg {
 function SocraticRunner({
   quest,
   onCompleted,
-  onReadPaper,
+  onReadDoc,
   onOpenSettings,
 }: {
   quest: Quest;
   onCompleted: Props['onCompleted'];
-  onReadPaper: Props['onReadPaper'];
+  onReadDoc: Props['onReadDoc'];
   onOpenSettings: Props['onOpenSettings'];
 }): JSX.Element {
   const S = useStrings();
@@ -301,8 +301,8 @@ function SocraticRunner({
             >
               {S.tryAgain}
             </button>
-            <button type="button" className="qr-read-btn" onClick={onReadPaper}>
-              {S.readPaperInstead}
+            <button type="button" className="qr-read-btn" onClick={onReadDoc}>
+              {S.readDocInstead}
             </button>
           </div>
         </div>
@@ -343,7 +343,7 @@ export function QuestRunner({
   title,
   onClose,
   onCompleted,
-  onReadPaper,
+  onReadDoc,
   onOpenSettings,
 }: Props): JSX.Element {
   const S = useStrings();
@@ -375,7 +375,7 @@ export function QuestRunner({
           <SocraticRunner
             quest={quest}
             onCompleted={onCompleted}
-            onReadPaper={onReadPaper}
+            onReadDoc={onReadDoc}
             onOpenSettings={onOpenSettings}
           />
         )}

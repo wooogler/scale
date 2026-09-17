@@ -94,15 +94,31 @@ describe('applyEvidence — passive signals', () => {
     expect(cov.components.a?.state).toBe('explored');
   });
 
-  it('caps paper_read credit at paperReadCap across all three dims', () => {
+  it('caps doc_read credit at docReadCap across all three dims', () => {
     let cov = seed();
-    const read: EvidenceEntry = { ts: 'r1', user: 'u', type: 'paper_read', componentId: 'a' };
+    const read: EvidenceEntry = { ts: 'r1', user: 'u', type: 'doc_read', componentId: 'a' };
     for (let i = 0; i < 20; i++) cov = applyEvidence(cov, { ...read, ts: `r${i}` }, config);
     const d = cov.components.a!.dims;
-    expect(d.structure).toBeCloseTo(config.thresholds.paperReadCap);
-    expect(d.concepts).toBeCloseTo(config.thresholds.paperReadCap);
-    expect(d.rationale).toBeCloseTo(config.thresholds.paperReadCap);
+    expect(d.structure).toBeCloseTo(config.thresholds.docReadCap);
+    expect(d.concepts).toBeCloseTo(config.thresholds.docReadCap);
+    expect(d.rationale).toBeCloseTo(config.thresholds.docReadCap);
     expect(cov.components.a?.state).toBe('explored');
+  });
+
+  it('credits a legacy paper_read row exactly as a doc_read', () => {
+    // evidence.jsonl is append-only and coverage is re-materialized by folding
+    // it from the beginning, so every row written before the rename is replayed
+    // on every run. Treating the old literal as unknown would silently erase the
+    // reading credit of every user who has one.
+    const fold = (type: 'doc_read' | 'paper_read'): number => {
+      let cov = seed();
+      for (let i = 0; i < 3; i++) {
+        cov = applyEvidence(cov, { ts: `r${i}`, user: 'u', type, componentId: 'a' }, config);
+      }
+      return cov.components.a!.dims.concepts;
+    };
+    expect(fold('paper_read')).toBe(fold('doc_read'));
+    expect(fold('paper_read')).toBeGreaterThan(0);
   });
 });
 

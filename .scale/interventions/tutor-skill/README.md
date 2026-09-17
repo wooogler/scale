@@ -53,7 +53,7 @@ flowchart TD
     REC --> RETRY["tell them to retry the commit"]
 ```
 
-## Abstract
+## Summary
 
 This component is the instruction document that turns a general coding assistant
 into a comprehension tutor: it defines two short, grounded check formats — a one-
@@ -64,7 +64,7 @@ computes: it produces evidence, and the scoring model lives elsewhere. It is als
 the party responsible for writing the skip marker when a junior declines, so a
 blocked commit is never left stuck.
 
-## Introduction
+## What it does
 
 Everything else in the in-flow arm is deterministic file and git work. This piece is
 not: it is a conversation with a person, run by a language model, and its output is
@@ -77,7 +77,7 @@ file directly destroys the property that coverage is a recomputable view of raw
 signals. So this component is written as non-negotiable rules rather than as
 suggestions, and most of them protect a property some other component depends on.
 
-## Related Work
+## Related components
 
 The system-initiated entry into this protocol is a refusal produced by
 [The Pure Pre-Commit Decision](../commit-gate/) and delivered by
@@ -111,7 +111,7 @@ a live tutor present — and the shape those pre-generated items must take, incl
 the permissive validation applied to anything a model wrote, is set out in
 [Quest Documents and Item Shapes](../../quests/quest-schema/).
 
-## Description
+## How it works
 
 The protocol begins by establishing what it is checking and why it was invoked. The
 target component comes from one of three places: an explicit argument when the junior
@@ -195,7 +195,7 @@ origin. If the junior only wants to read, nothing is recorded and the door is le
 Nothing in the system fires either modality automatically on a schedule; this protocol
 runs when the gate, a command, or the junior asks for it.
 
-## Rationale
+## Design decisions
 
 The instruction to record rather than compute is the load-bearing one, and it is stated
 as a numbered rule. The force behind it appears to be that the coverage file is a
@@ -233,7 +233,7 @@ conversational party — the only one present at the moment of refusal — close
 and the repeated instruction to end by telling them to retry the commit suggests that
 leaving the junior without the final step was a real failure mode.
 
-## Conclusion
+## Where it sits
 
 This component is where a deterministic system briefly hands control to a conversation,
 and almost every rule in it exists to keep that handoff from damaging the deterministic

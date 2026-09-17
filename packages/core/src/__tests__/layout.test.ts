@@ -20,7 +20,7 @@ function inputFromSample(): LayoutInput {
   const loaded = loadScaleDir(sampleRoot);
   return {
     provinces: loaded.provinces,
-    nodes: loaded.papers.map((p) => ({ id: p.id, province: p.province })),
+    nodes: loaded.docs.map((d) => ({ id: d.id, province: d.province })),
     edges: loaded.edges,
   };
 }

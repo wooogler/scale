@@ -43,10 +43,10 @@ surfaces keep working.
 
 ## Related Work
 
-This component underpins Document Sharing, which asks on every request whether
-the current identity may reach a given resource. It also cooperates with the
-account-privilege machinery: a change in privilege triggers a rotation here so
-that a stale identifier can never carry elevated rights.
+- [Document Sharing](../sharing/) — asks on every request whether the current
+  identity may reach a given resource.
+- [Password Hashing](../password-hashing/) — the privilege changes that trigger
+  a rotation here originate around it.
 
 ## Description
 

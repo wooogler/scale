@@ -28,7 +28,7 @@ const git = (args: string[], env: Record<string, string> = {}): string =>
     env: { ...process.env, ...env },
   }).trim();
 
-/** A component paper anchored to one source file of `lines` lines. */
+/** A component doc anchored to one source file of `lines` lines. */
 function seedComponent(id: string, lines: number): void {
   const dir = path.join(repo, '.scale', 'prov', id);
   fs.mkdirSync(dir, { recursive: true });

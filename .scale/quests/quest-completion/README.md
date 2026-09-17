@@ -48,7 +48,7 @@ flowchart TD
     R --> O["return the component's<br/>new state and three scores"]
 ```
 
-## Abstract
+## Summary
 
 This component is the single place where a quest stops being a pending offer and
 becomes a change in the learner's recorded comprehension. It validates the graded
@@ -58,7 +58,7 @@ surfaces — the map viewer in the browser and the command line — call exactly
 functions, which is what guarantees a quest completes identically no matter where it
 was answered.
 
-## Introduction
+## What it does
 
 A quest can be answered in two very different places. A learner might sit at the map
 on a phone, tap through question cards, and submit; or they might close out a quest
@@ -75,7 +75,7 @@ model blends history. A surface that got three of the four right would yield
 different comprehension for the same answers depending on where they were typed,
 with no error to explain it. Centralizing the sequence makes that unrepresentable.
 
-## Related Work
+## Related components
 
 The document being completed is defined by [Quest Documents and Item Shapes](../quest-schema/) —
 notably its status field, which this path is the only writer of, and its component
@@ -115,7 +115,7 @@ under [Quiz and Socratic Protocols](../../interventions/tutor-skill/), which is 
 the rubric this path consumes is produced and which grades on the same three
 dimensions this path records.
 
-## Description
+## How it works
 
 Two entry points exist, one per modality, and they share a tail.
 
@@ -186,7 +186,7 @@ dialogue that happened elsewhere, such as in chat. The "single source of truth"
 claim in the code comments is accurate for the card path and aspirational for the
 dialogue path.
 
-## Rationale
+## Design decisions
 
 Centralizing completion is the decision the source comments argue for most directly,
 and the stated reason is the absence of divergence between browser and command line.
@@ -223,7 +223,7 @@ that a systematically wrong payload completes a quest while recording nothing �
 which is why the number actually recorded is returned to the caller and printed
 rather than swallowed.
 
-## Conclusion
+## Where it sits
 
 This is the narrow gate through which every graded quest passes on its way into the
 comprehension record, and its value is entirely in being the only such gate for the

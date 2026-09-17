@@ -3,7 +3,7 @@
  *
  * Runs DETACHED off the SessionEnd hook, so it may call the Claude API (cheap
  * INTERVENTION-tier model) but must NEVER throw fatally: everything is wrapped so
- * a bad paper, missing key, or API error degrades to a deterministic fallback
+ * a bad doc, missing key, or API error degrades to a deterministic fallback
  * that still produces a valid quests.json.
  *
  * Model policy (fixed): quest generation is an INTERVENTION, so it runs on the
@@ -26,7 +26,7 @@ import {
   type ScaleConfig,
   type Language,
   type LoadedScale,
-  type LoadedPaper,
+  type LoadedDoc,
   type UserCoverage,
   type ComponentCoverage,
   type MapJson,
@@ -36,11 +36,11 @@ import {
   type DimName,
   QuestSchema,
   loadScaleDir,
-  paperById,
+  docById,
   emptyComponentCoverage,
   meanDims,
   resolveInterventionModel,
-  paperGrounding,
+  docGrounding,
   neighbourIndex,
   componentSourcesIndex,
   type ComponentNeighbours,
@@ -220,20 +220,20 @@ function pickRanked(
 }
 
 // ---------------------------------------------------------------------------
-// Grounding — paper → prompt context
+// Grounding — doc → prompt context
 // ---------------------------------------------------------------------------
 
 /**
  * Grounding for item generation. Shared with the web Socratic proxy via core, so
- * the two prompts cannot drift apart again, and it now carries the paper's PROSE
+ * the two prompts cannot drift apart again, and it now carries the doc's PROSE
  * — the mechanism the generator needs to write a `structure` item at all.
  */
 function groundingText(
-  paper: LoadedPaper,
+  doc: LoadedDoc,
   neighbours?: ComponentNeighbours,
   drift?: DriftContext | null,
 ): string {
-  return paperGrounding(paper, { neighbours, ...(drift ? { drift } : {}) });
+  return docGrounding(doc, { neighbours, ...(drift ? { drift } : {}) });
 }
 
 /**
@@ -285,7 +285,7 @@ const KO_ITEM_INSTRUCTION =
 async function llmQuizItems(
   provider: LlmProvider,
   model: string,
-  paper: LoadedPaper,
+  doc: LoadedDoc,
   language: Language = 'en',
   neighbours?: ComponentNeighbours,
   drift?: DriftContext | null,
@@ -296,33 +296,33 @@ async function llmQuizItems(
     maxTokens: 1024,
     system:
       'You write multiple-choice comprehension items for a code-onboarding tutor. ' +
-      'Ground every item strictly in the provided component paper — its concepts, ' +
+      'Ground every item strictly in the provided component doc — its concepts, ' +
       'its rationale, and its prose. Each item tags the comprehension dimension it ' +
       'probes: "structure" (how the component is built — its moving parts, its data ' +
       'and control flow, its invariants), "concepts" (its named ideas), or ' +
       '"rationale" (why it was designed that way, and what the rejected ' +
       'alternatives would have cost). ' +
-      // Anti-trivia. The paper's prose names parts and relationships, and the
+      // Anti-trivia. The doc's prose names parts and relationships, and the
       // cheapest item a model can write from that is a lookup — "which module
       // does X use" — which scores recall and reads as comprehension. The tutor
       // rubric grades reasoning, so the items have to demand it.
       'NEVER write a lookup item: nothing whose answer is a name, a file, or a ' +
-      'restatement that could be found by searching the paper for a word in the ' +
+      'restatement that could be found by searching the doc for a word in the ' +
       'question. An item must require reasoning ABOUT the mechanism — predict a ' +
       'behavior in a new case, identify what breaks if a decision were reversed, ' +
       'or pick the consequence of an invariant being violated. Distractors must be ' +
       'real misconceptions: the plausible-but-wrong reading of the design, or the ' +
-      'alternative the paper explicitly rejected. Return ONLY JSON, no prose.' +
+      'alternative the doc explicitly rejected. Return ONLY JSON, no prose.' +
       (language === 'ko' ? KO_ITEM_INSTRUCTION : ''),
     messages: [
       {
         role: 'user',
         content:
-          `${groundingText(paper, neighbours, drift)}\n\n` +
+          `${groundingText(doc, neighbours, drift)}\n\n` +
           'Write exactly 2 multiple-choice items. Return JSON of the form:\n' +
           '{"items":[{"stem":"...","options":["A","B","C","D"],"correctIndex":0,"dim":"concepts"}]}\n' +
           'Rules: exactly 4 options each; correctIndex is 0-3; the correct option must ' +
-          'be faithful to the paper; distractors plausible but wrong, and similar in ' +
+          'be faithful to the doc; distractors plausible but wrong, and similar in ' +
           'length and register so none is a giveaway. Vary the dimension across the ' +
           'two items — do not write two of the same kind.',
       },
@@ -367,7 +367,7 @@ async function llmQuizItems(
 async function llmSocraticItems(
   provider: LlmProvider,
   model: string,
-  paper: LoadedPaper,
+  doc: LoadedDoc,
   language: Language = 'en',
   neighbours?: ComponentNeighbours,
   drift?: DriftContext | null,
@@ -378,14 +378,14 @@ async function llmSocraticItems(
     maxTokens: 512,
     system:
       'You open a Socratic comprehension dialogue for a code-onboarding tutor. ' +
-      'Ground the opening question strictly in the provided component paper. Do not ' +
+      'Ground the opening question strictly in the provided component doc. Do not ' +
       'reveal answers. Return ONLY JSON, no prose.' +
       (language === 'ko' ? KO_ITEM_INSTRUCTION : ''),
     messages: [
       {
         role: 'user',
         content:
-          `${groundingText(paper, neighbours, drift)}\n\n` +
+          `${groundingText(doc, neighbours, drift)}\n\n` +
           'Return JSON of the form:\n' +
           '{"seedQuestion":"...","focus":"one sentence naming the concept/rationale to probe"}\n' +
           'The seedQuestion should invite the learner to explain how this component works ' +
@@ -401,7 +401,7 @@ async function llmSocraticItems(
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic fallback — synthesize valid items from the paper (offline-safe)
+// Deterministic fallback — synthesize valid items from the doc (offline-safe)
 // ---------------------------------------------------------------------------
 
 /**
@@ -437,13 +437,13 @@ function hashKey(s: string): number {
  * Choose up to `n` distractors from `pool`, deterministically but DIFFERENTLY
  * per component.
  *
- * The pool is every other component's concepts (or rationale) in paper-load
+ * The pool is every other component's concepts (or rationale) in doc-load
  * order, and taking `slice(0, 3)` from it handed 36 of the 37 components a
  * byte-identical set of options — two distinct distractor sets across the whole
  * repo. That does not just make items easy; it makes the correct answer findable
  * as the odd one out without reading anything, while the score is still recorded
  * as an active validation. Rotating by a hash of the component id keeps the
- * output reproducible (same paper set → same items) while making the options
+ * output reproducible (same doc set → same items) while making the options
  * actually vary.
  *
  * `correct` is excluded so an item can never offer the answer twice — one of
@@ -525,12 +525,12 @@ function mcqItem(
 }
 
 export function deterministicQuizItems(
-  paper: LoadedPaper,
+  doc: LoadedDoc,
   loaded: LoadedScale,
   language: Language = 'en',
   neighbours?: ComponentNeighbours,
 ): QuestItem[] {
-  const fm = paper.frontmatter;
+  const fm = doc.frontmatter;
   const ko = language === 'ko';
   const items: QuestItem[] = [];
 
@@ -552,7 +552,7 @@ export function deterministicQuizItems(
   const farConcepts: string[] = [];
   const nearWhys: string[] = [];
   const farWhys: string[] = [];
-  for (const p of loaded.papers) {
+  for (const p of loaded.docs) {
     if (p.id === fm.id) continue;
     const isNear = nearIds.has(p.id);
     for (const c of p.frontmatter.concepts) (isNear ? nearConcepts : farConcepts).push(c.name);
@@ -563,7 +563,7 @@ export function deterministicQuizItems(
 
   // Item 1 (concepts): "which concept belongs to this component".
   // Stems are per-language templates; embedded titles/concept names come from
-  // the (always-English) papers and stay English in the Korean stems.
+  // the (always-English) docs and stay English in the Korean stems.
   if (fm.concepts.length > 0) {
     const c = fm.concepts[0]!;
     items.push(
@@ -595,7 +595,7 @@ export function deterministicQuizItems(
     );
   }
 
-  // Guarantee 2 items even for a thin paper: fall back to a structure item over
+  // Guarantee 2 items even for a thin doc: fall back to a structure item over
   // the component's sources / a second concept.
   while (items.length < 2) {
     if (fm.concepts.length > items.length) {
@@ -631,10 +631,10 @@ export function deterministicQuizItems(
 }
 
 export function deterministicSocraticItems(
-  paper: LoadedPaper,
+  doc: LoadedDoc,
   language: Language = 'en',
 ): QuestItem[] {
-  const fm = paper.frontmatter;
+  const fm = doc.frontmatter;
   const firstConcept = fm.concepts[0]?.name ?? fm.title;
   const firstRationale = fm.rationale.find((r) => r.why);
   // `focus` is tutor-facing grounding metadata, not shown to the junior — English.
@@ -692,7 +692,7 @@ export async function generateQuests(
   }
 
   const loaded = loadScaleDir(cwd);
-  if (loaded.papers.length === 0) {
+  if (loaded.docs.length === 0) {
     return { via: 'skip', model, count: 0, path: questsPath, components: [] };
   }
 
@@ -720,10 +720,10 @@ export async function generateQuests(
 
   const quests: Quest[] = [];
   for (const componentId of picked) {
-    const paper = paperById(loaded, componentId);
-    if (!paper) continue;
+    const doc = docById(loaded, componentId);
+    if (!doc) continue;
     // A `stale` component is a RECOVERY check: ground it in what changed since
-    // the junior validated it, not in the paper alone.
+    // the junior validated it, not in the doc alone.
     const drift = driftFor(cwd, coverage, loaded, componentId, config.drift.shareDiff);
 
     let items: QuestItem[] | null = null;
@@ -734,7 +734,7 @@ export async function generateQuests(
             ? await llmQuizItems(
                 provider,
                 model,
-                paper,
+                doc,
                 config.language,
                 neighbours.get(componentId),
                 drift,
@@ -742,7 +742,7 @@ export async function generateQuests(
             : await llmSocraticItems(
                 provider,
                 model,
-                paper,
+                doc,
                 config.language,
                 neighbours.get(componentId),
                 drift,
@@ -763,8 +763,8 @@ export async function generateQuests(
       usedFallback = true;
       items =
         modality === 'quiz'
-          ? deterministicQuizItems(paper, loaded, config.language, neighbours.get(componentId))
-          : deterministicSocraticItems(paper, config.language);
+          ? deterministicQuizItems(doc, loaded, config.language, neighbours.get(componentId))
+          : deterministicSocraticItems(doc, config.language);
     }
     quests.push(makeQuest(componentId, modality, items));
   }
@@ -794,10 +794,10 @@ export async function generateQuests(
  * Unlike `generateQuests` this is deliberately NOT gated on the post-session
  * condition: voluntary learning is available in EVERY condition and spends no
  * interruption budget — it is the junior's own initiative. Tries the configured
- * INTERVENTION model, falls back to deterministic paper-grounded items when
+ * INTERVENTION model, falls back to deterministic doc-grounded items when
  * there is no API key (so the button always works offline).
  *
- * Returns null when the component has no paper in `.scale/`.
+ * Returns null when the component has no doc in `.scale/`.
  */
 export async function generateVoluntaryQuest(
   cwd: string,
@@ -809,8 +809,8 @@ export async function generateVoluntaryQuest(
   const model = resolveInterventionModel(config.models);
 
   const loaded = loadScaleDir(cwd);
-  const paper = paperById(loaded, componentId);
-  if (!paper) return null;
+  const doc = docById(loaded, componentId);
+  if (!doc) return null;
   // Same measured-dependency grounding the post-session path gets. Read from the
   // frozen map directly: this path does not otherwise need a coverage recompute.
   const neighbours = readMapJsonSafe(cwd)
@@ -839,8 +839,8 @@ export async function generateVoluntaryQuest(
   try {
     items =
       modality === 'quiz'
-        ? await llmQuizItems(provider, model, paper, config.language, neighbours, drift)
-        : await llmSocraticItems(provider, model, paper, config.language, neighbours, drift);
+        ? await llmQuizItems(provider, model, doc, config.language, neighbours, drift)
+        : await llmSocraticItems(provider, model, doc, config.language, neighbours, drift);
     via = 'llm';
   } catch {
     items = null; // no key / API error → deterministic fallback below
@@ -848,8 +848,8 @@ export async function generateVoluntaryQuest(
   if (!items || items.length === 0) {
     items =
       modality === 'quiz'
-        ? deterministicQuizItems(paper, loaded, config.language, neighbours)
-        : deterministicSocraticItems(paper, config.language);
+        ? deterministicQuizItems(doc, loaded, config.language, neighbours)
+        : deterministicSocraticItems(doc, config.language);
     via = 'fallback';
   }
 

@@ -55,7 +55,7 @@ flowchart TD
     RANK --> D["DENY naming one component,<br/>with an instruction and a budget charge"]
 ```
 
-## Abstract
+## Summary
 
 This component is the single function that decides whether a comprehension check
 may interrupt a commit. It takes the touched components, the junior's coverage,
@@ -66,7 +66,7 @@ reads nothing and writes nothing, so the interruption budget it enforces is a
 property that can be proved by test rather than a behaviour that must be observed
 in the wild.
 
-## Introduction
+## What it does
 
 An in-flow intervention is a hostile act: it stops a person mid-task. The system
 is willing to do that, but only under promises — at most one check per commit, at
@@ -83,7 +83,7 @@ the session record, reading the clock — belongs to the caller, which is docume
 separately. What remains here is a small ordered set of questions and a ranking
 rule, and nothing else.
 
-## Related Work
+## Related components
 
 The caller that assembles this function's inputs, spends the budget it authorizes,
 and translates its verdict into something the agent obeys is
@@ -112,7 +112,7 @@ The touched-component list handed in is produced by
 [File-to-Component Reverse Index](../../map/file-component-index/), which maps the
 staged file paths onto component identifiers.
 
-## Description
+## How it works
 
 The decision proceeds as an ordered sequence of questions, and the first one that
 matches ends it. This ordering is itself the policy: cheap and absolute exclusions
@@ -175,7 +175,7 @@ The invariant worth holding onto: the same inputs always produce the same verdic
 and the verdict alone never changes anything. Every consequence — the evidence
 written, the budget spent, the commit blocked — is somebody else's job.
 
-## Rationale
+## Design decisions
 
 The dominant decision is purity, and the code says so directly: the header calls
 this the beating heart of the minimal-interruption principle and lists the injected
@@ -213,7 +213,7 @@ for the interruption audit the project plans. Without it, a gate that never fire
 looks identical to a gate that is broken, and during a study that difference is the
 whole result.
 
-## Conclusion
+## Where it sits
 
 This is the smallest and most load-bearing piece of the in-flow arm: an ordered set
 of guards and a ranking rule, with no ability to affect the world. Understanding it

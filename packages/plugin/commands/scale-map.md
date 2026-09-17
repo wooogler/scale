@@ -13,14 +13,14 @@ Use the **scale-map** skill now.
   estimate` — the target component count and the band, presented verbatim, plus
   the cost gate) → **Survey** (propose that many components, grouped into
   provinces, for approval) → **Write** (subagent fan-out, one province each) →
-  **Link** (Related Work, no dead links) → **Layout** (`scale map layout` to
+  **Link** (Related components, no dead links) → **Layout** (`scale map layout` to
   freeze `map.json`) → **Check** (`scale map check` must exit zero).
 - If `.scale/` already exists → run **sync mode**: `scale map drift` to find
-  components whose sources changed, update those papers progressively up/down the
-  tree, place any new components incrementally, re-verify links.
+  components whose sources changed, update those component docs progressively
+  up/down the tree, place any new components incrementally, re-verify links.
 
 Arguments: `$ARGUMENTS` — optionally a province or component `id` to scope a sync
-to, or `dry-run` to produce only the Survey plan without writing papers.
+to, or `dry-run` to produce only the Survey plan without writing docs.
 
 Stop for human approval after Survey before writing anything. If your honest
 partition falls outside the estimate's band, stop and get the revised number

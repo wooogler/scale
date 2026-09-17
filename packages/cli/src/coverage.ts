@@ -80,7 +80,7 @@ function readMapOrCompute(cwd: string, loaded: LoadedScale): MapJson {
   }
   return computeLayout({
     provinces: loaded.provinces,
-    nodes: loaded.papers.map((p) => ({ id: p.id, province: p.province })),
+    nodes: loaded.docs.map((p) => ({ id: p.id, province: p.province })),
     edges: loaded.edges,
     builtFromSha: shortHeadSha(cwd) || '',
   });
@@ -216,7 +216,7 @@ const COMMIT_HEADER = /^C([0-9a-f]{7,40})\t(.*)$/;
  *    user has not read.
  *  - A RENAME into one of `sources` reads as a whole-file add, and the file's
  *    history before the rename is invisible to the pathspec. Left as-is: if a
- *    teammate moved code the paper anchors, that paper's anchor is stale too,
+ *    teammate moved code the doc anchors, that doc's anchor is stale too,
  *    and flagging the component is the right answer rather than a false negative.
  *
  * Per-commit sums run higher than a net diff (a line added then removed counts
@@ -430,7 +430,7 @@ export function coverageCounts(coverage: UserCoverage, map: MapJson): CoverageCo
 
 /**
  * Load the file→component index for `cwd`: prefer the persisted
- * `.scale/index.json`, else build it in-memory from the papers' sources. Both
+ * `.scale/index.json`, else build it in-memory from the docs' sources. Both
  * feed `componentsForFile` (exact match + nearest-dir fallback).
  */
 export function loadFileComponentIndex(cwd: string, loaded: LoadedScale): FileComponentIndex {

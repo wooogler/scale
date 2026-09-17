@@ -21,11 +21,11 @@ flowchart TD
     DRIFT -. intended, not implemented .-> STALE[per-component staleness]
 ```
 
-## Abstract
+## Summary
 
 This province owns everything that turns a set of prose papers into a navigable place and keeps that place addressable from the outside. It defines the frozen document that records where each component sits and how much it weighs, the deterministic computation that fills that document in and never disturbs what it has already placed, the reverse lookup that resolves a file path back to the components responsible for it, and the reporting of how far the code has moved since the papers described it.
 
-## Introduction
+## What it does
 
 A coverage memory is a folder of markdown. Read on its own, it is a document set: hierarchical, searchable, and entirely without geography. That is enough to look things up and not nearly enough to remember them. The premise this province rests on is that people navigate places far better than they navigate lists — that a learner who has seen a codebase drawn as a stable arrangement of regions can recall roughly where a subsystem lives, and reach for it, long before they could recall its name.
 
@@ -33,13 +33,13 @@ Turning documents into a place requires committing to positions, and committing 
 
 The province also carries the map's second, less pictorial job. The same papers that supply component identities also declare which files each component covers, and that declaration inverted is the bridge between the world of file paths — where all runtime signals originate — and the world of components, where all reasoning happens. Both artifacts are derived from the same papers, and both are about addressing: one addresses by position, the other by path.
 
-## Related Work
+## Related components
 
 Within this province, [The Frozen Map Document](map-schema/) defines the shape everything else agrees on — normalized positions, an importance weight, a province grouping, a link graph, and a stamp of the revision the papers were built against. [Deterministic Layout and Incremental Placement](frozen-layout/) is the sole writer of that document and the source of its stability guarantees: seeded rather than random, additive rather than recomputed, with province separation established by arithmetic instead of by simulation. [File-to-Component Reverse Index](file-component-index/) handles the other direction of addressing, inverting declared source anchors into a path lookup with a bounded guess for files no paper has claimed yet. [Source Drift and Staleness Flagging](drift-detection/) is where the province is most incomplete, and its paper says so: the command reports revision identifiers and defers the per-component analysis it is named for.
 
 Outside the province, the closest neighbour is [Loading the Coverage Memory Tree](../memory/paper-loader/), which supplies every input this province consumes — component identifiers, province groupings, source anchors, and the cross-links that become edges — so a change in how papers are parsed propagates directly into geometry. [Scoring: Exponential Averaging, Loyalty, Classification](../comprehension/coverage-model/) is the most consequential consumer: it multiplies this province's importance weights into the single aggregate figure a learner watches, which means a layout decision quietly becomes a scoring decision. [Drawing the Map from Frozen Geometry](../viewer/map-canvas/) is the reason the geometry has to be good, rendering positions and weights literally and inheriting every stability property this province guarantees.
 
-## Description
+## How it works
 
 Responsibility divides along two axes: what is frozen versus what is derived, and what is defined versus what is computed.
 
@@ -51,7 +51,7 @@ The reverse index derives. It flattens every paper's declared source anchors int
 
 The drift component reports, and reports less than its name promises. It reads the frozen document, prints its build revision against the repository's current one, and states plainly that per-component source churn is not implemented. The staleness that genuinely reaches a learner is computed elsewhere, during coverage re-materialization, and it anchors on each component's own last-confirmed revision rather than on the map's build stamp. This province therefore holds the reference point for drift without holding the working measurement of it, and any accurate mental model has to keep those two facts apart.
 
-## Rationale
+## Design decisions
 
 The seam that defines this province is derivation from papers plus permanence. Everything here is computed from the coverage memory rather than authored, and everything here answers a question of the form "where is this" — where on the canvas, or which component owns this path. That is a genuinely different concern from what the papers say, which belongs to the memory province, and from what a particular person understands, which belongs to the comprehension province. Keeping geometry out of the papers means an author never hand-places anything and cannot accidentally make the map inconsistent with the text; keeping geometry out of the viewer means the arrangement survives independently of any rendering technology and can be shared, committed, and diffed.
 
@@ -59,6 +59,6 @@ The second organizing principle is the split between what is frozen and what is 
 
 Placing drift here rather than in the comprehension province is the least comfortable of these decisions, and the code suggests why it was made: drift is defined relative to the map's build revision, and the map document is the artifact that carries that revision. But because the working staleness computation anchors per component instead, the concern is currently split across two provinces, with the reporting surface in one and the measurement in the other. If the designed behaviour were completed, the natural resolution would be for this province to own the measurement of how far source anchors have moved and for the comprehension province to own what that means for a person's understanding. Until then, the honest description is that this seam is provisional, and the drift paper is the place to read about the gap rather than around it.
 
-## Conclusion
+## Where it sits
 
 This province is the map's substrate: a schema that fixes what a position means, a computation that assigns positions once and defends them against every future run, an index that translates file paths into components so that signals from the outside world can land, and a drift surface that currently reports more than it measures. Read the layout paper for the guarantees that make the map trustworthy, the schema paper for the contract the rest of the system depends on, and the drift paper for a clear account of what is not yet built.

@@ -904,7 +904,7 @@ export function syncLocksWithDrift(
 
 /**
  * Drop ledger entries for components the map no longer knows (PLAN-GATE §14.4).
- * A paper that was deleted or renamed otherwise leaves a permanent owed check
+ * A doc that was deleted or renamed otherwise leaves a permanent owed check
  * in the SessionStart line and the viewer header. Called where the map is at
  * hand (`scale context`), never from the gate. Returns the ids removed.
  */
@@ -973,17 +973,17 @@ export function markDigestShown(dir: string, now: string = new Date().toISOStrin
 }
 
 // ---------------------------------------------------------------------------
-// coverage-memory (.scale/) paper scan — for `map index`
+// coverage-memory (.scale/) doc scan — for `map index`
 // ---------------------------------------------------------------------------
 
 /**
  * Minimal frontmatter scan of a coverage-memory `.scale/` dir. Extracts just
  * `id` and `sources` from each `README.md` — the two fields
  * `buildFileComponentIndex` needs. Deliberately lightweight (no YAML dep); the
- * authoritative paper parser lives in the Mode-B builder skill, not the CLI.
+ * authoritative doc parser lives in the Mode-B builder skill, not the CLI.
  */
-export function scanPapers(scaleDir: string): { id: string; sources: string[] }[] {
-  const papers: { id: string; sources: string[] }[] = [];
+export function scanDocs(scaleDir: string): { id: string; sources: string[] }[] {
+  const docs: { id: string; sources: string[] }[] = [];
 
   const walk = (d: string): void => {
     let entries: fs.Dirent[];
@@ -997,14 +997,14 @@ export function scanPapers(scaleDir: string): { id: string; sources: string[] }[
       if (e.isDirectory()) {
         walk(full);
       } else if (e.isFile() && e.name.toLowerCase() === 'readme.md') {
-        const paper = parseFrontmatter(full);
-        if (paper) papers.push(paper);
+        const doc = parseFrontmatter(full);
+        if (doc) docs.push(doc);
       }
     }
   };
 
   walk(scaleDir);
-  return papers;
+  return docs;
 }
 
 function parseFrontmatter(file: string): { id: string; sources: string[] } | null {

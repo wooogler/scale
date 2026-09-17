@@ -32,7 +32,7 @@ flowchart TD
     RUNNER -->|records an outcome| SERVER
 ```
 
-## Abstract
+## Summary
 
 This province is the visual surface of the whole system: a local server that exposes a repository's
 coverage memory and a learner's comprehension state over a small JSON interface, and a single-page
@@ -41,7 +41,7 @@ codebase they have genuinely understood, reads the paper for any of them, and co
 comprehension check that moves the picture. Nothing here decides what coverage means — it reads,
 draws, and hands outcomes back to the engine that does.
 
-## Introduction
+## What it does
 
 Every other province in this system produces data: papers describing components, a frozen layout
 giving them positions, an evidence log of what a learner touched and answered, and a coverage view
@@ -61,7 +61,7 @@ It also imposes an unusual deployment shape. There is no hosted service and no a
 is a process the learner starts inside the repository they are working in; it reads files, serves a
 bundle, and exits when they close it.
 
-## Related Work
+## Related components
 
 Seven components divide this province. [Serving the Map and Its JSON API](./local-server/) is the
 process behind everything else: it resolves which repository and which learner are in play, serves
@@ -70,7 +70,7 @@ is the browser's only contact with it, and the only place a fallback to bundled 
 occur. [Composition and the Unification Header](./app-shell/) owns all shared state and composes the
 three visible surfaces. [Drawing the Map from Frozen Geometry](./map-canvas/) draws the map itself
 from stored coordinates, with continuous semantic zoom.
-[Reading a Paper In-App](./component-panel/) is the reading and score-reading surface for a single component, including a deliberately partial markdown
+[Reading a Doc In-App](./component-panel/) is the reading and score-reading surface for a single component, including a deliberately partial markdown
 renderer. [Running a Quest in the Browser](./quest-runner-ui/) delivers both comprehension-check
 modalities. [The Single Skin Boundary](./terminology-skin/) is the one file allowed to translate
 neutral coverage states into the map's presentation vocabulary.
@@ -83,7 +83,7 @@ translates from. [The Shared Completion Path](../quests/quest-completion/) is wh
 finished in the browser becomes recorded evidence — the same routine the command line uses, which is
 what keeps the two surfaces from producing different results for the same answers.
 
-## Description
+## How it works
 
 The province's responsibility divides along two clean seams: process versus browser, and data versus
 presentation.
@@ -116,7 +116,7 @@ feature here that cannot degrade offline, because it depends on a live model. Lo
 refreshed while the page is open except after a completed check. And the header does not yet carry
 the session recap the design describes.
 
-## Rationale
+## Design decisions
 
 The seam that defines this province is read-and-render versus decide-and-record. Nothing in here
 computes what coverage should be. The canvas asks for coordinates it did not choose; the shell asks
@@ -138,7 +138,7 @@ would be worse: the freshness rule the coverage endpoint implements, the shared-
 delegation, and the fallback behaviour in the data layer are a single design conversation about
 staying truthful to the stored record, and separating the participants would obscure it.
 
-## Conclusion
+## Where it sits
 
 The Map Viewer is where the system's work becomes visible: a frozen spatial layout coloured by
 genuine comprehension, a paper always one click away, and a check that moves the picture when it is

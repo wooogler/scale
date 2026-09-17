@@ -55,21 +55,21 @@ flowchart TB
     N --> I
 ```
 
-## Abstract
+## Summary
 
 The coverage memory does not appear by itself: a senior engineer runs a high-capability model over the repository once, and it writes every paper. This component is the protocol that run follows — a six-stage procedure with two mandatory human stops, a partition size taken from arithmetic rather than from the protocol itself, parallel writing per province, and a strict separation between what the model decides and what a deterministic command decides. It also defines the far cheaper sync path used on every later run, where only papers whose sources have drifted are revisited. It is documentation-as-program: a skill file the model reads and executes, plus a short command that invokes it.
 
-## Introduction
+## What it does
 
 Building a coverage memory for a real repository means producing dozens of documents, each anchored to real files, each carrying quizzable concepts and inferred design reasoning, all cross-linked into a connected graph. That is far too much work for a person, and it is exactly the kind of work a capable model is good at — provided it is told, precisely, what shape the output must take and where it is allowed to make decisions.
 
 Two forces shape the protocol. The first is cost: a full build is the single most expensive thing the system ever does, and it runs on the most capable model tier, so a person must be able to see the price and decline before any spending starts. The second is that one decision inside the build dominates every downstream outcome — how the repository is partitioned into components. Too coarse and no paper is learnable in one sitting; too fine and the map becomes noise. That decision is made once, is expensive to revisit, and is not one a model should make unsupervised. Both forces are answered the same way: with a hard stop and a human answer.
 
-## Related Work
+## Related components
 
 The output of this protocol is governed by [Paper Format and Frontmatter Contract](../paper-format/), which the skill restates in condensed form as instructions to the writing model. The cost gate that opens the protocol is powered by [Pre-Flight Build Cost Estimation](../build-cost-estimator/), whose table the builder is required to present verbatim. The layout stage hands off entirely to [Deterministic Layout and Incremental Placement](../../map/frozen-layout/), which is the component the protocol explicitly forbids the model to do by hand. Sync mode is meant to be driven by [Source Drift and Staleness Flagging](../../map/drift-detection/), and the honest state of that dependency is discussed below. The optional final stage regenerates [File-to-Component Reverse Index](../../map/file-component-index/), which is what lets the junior-side signal capture attribute an edited file to a component. The build-tier model choice offered at the cost gate is stored and read through [Conditions, Budgets, Thresholds, and Model Tiers](../../platform/config-schema/), and the protocol is reached from chat through [User-Initiated Entry Points](../../interventions/slash-commands/). The artifact that layout stage writes is [The Frozen Map Document](../../map/map-schema/), the committed geometry the protocol declares off-limits to hand editing, so reading it is the quickest way to see what the model is being kept away from. The terminology rule the skill opens with is only intelligible beside [The Single Skin Boundary](../../viewer/terminology-skin/), the one place the presentation vocabulary is permitted to exist — every paper this protocol writes must stay neutral precisely so that translation has a single home. And the skill itself is shipped to a junior's machine as plain instructional content rather than compiled output, which is the arrangement described in [Bundling and Distributing the Plugin](../../platform/plugin-packaging/).
 
-## Description
+## How it works
 
 The protocol is written as a skill: a single instruction document that a capable model loads and follows, framed as a role — the senior cartographer building a memory a junior will learn from. It opens with the terminology rule, because the system has two vocabularies and only the neutral one may appear in a paper; the strategy-game vocabulary belongs to the map's rendering layer alone. It then restates the output tree, the extended header contract and the seven-section body form, before laying out the five stages.
 
@@ -95,7 +95,7 @@ One honest caveat about sync mode: the drift step it depends on is currently a s
 
 The skill closes with a self-check list covering whether the deterministic size check passes, header completeness, the seven sections, the prose-only rule, dead links, the untouched frozen map, neutral terminology throughout, and honest provenance marking. The accompanying command file is thin by design: it decides between full build and sync by whether a memory already exists, accepts an optional scope argument or a dry-run that produces only the survey plan, and repeats the instruction to stop for approval after the survey.
 
-## Rationale
+## Design decisions
 
 The two human stops are the heart of this protocol, and they guard different risks. The cost gate guards money. The build's expense is concentrated in reading the repository, so an estimate delivered after the survey would arrive after a large share of the spend had happened; putting it before any file is read is what makes declining actually free. The insistence that the table be shown verbatim, rather than summarized, reads as a guard against a model softening an uncomfortable number.
 
@@ -107,6 +107,6 @@ Fanning out per province appears to be chosen for two compounding reasons the es
 
 Forbidding the model to place nodes is the sharpest boundary in the protocol, and the reasoning is stated plainly: spatial stability is the entire point of the map. A person who learns where a component sits should find it in the same place a month later, which is what makes the map a memory aid rather than a diagram. A model asked to place nodes would arrange things differently on each run, and no amount of prompting makes that reliable. Delegating to a deterministic computation, then freezing the result so later builds only add nodes near their neighbours, is what turns a picture into a place.
 
-## Conclusion
+## Where it sits
 
 This protocol is how the coverage memory comes into existence and how it stays current: a cost stop, an approval stop, parallel writing, a linking pass, and a deterministic freeze — followed thereafter by targeted updates rather than rebuilds. It decides almost nothing about the papers themselves, deferring that to the format contract, and it decides nothing at all about geometry, deferring that to the layout command. Those two are the neighbours to read next, along with the cost estimator whose table opens the whole procedure.

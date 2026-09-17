@@ -48,7 +48,7 @@ flowchart LR
     X[schemas, engine, command line] -. never reads .-> T
 ```
 
-## Abstract
+## Summary
 
 This module is the boundary between what the system stores and what the learner reads. Internally
 every component has a neutral coverage state — unexplored, explored, validated, or drifted — and
@@ -57,7 +57,7 @@ maps each state to a colour, a named visual treatment, bilingual labels, and a o
 description, and it holds the same kind of table for the wording of comprehension checks. The
 translation is one-way by design: nothing that records or analyses evidence ever reads from here.
 
-## Introduction
+## What it does
 
 The map's presentation is a deliberate metaphor. Components appear as holdings to be surveyed and
 secured, coverage states are dressed as degrees of control, and a pending comprehension check is
@@ -75,13 +75,13 @@ That is why this component is worth a paper of its own despite being about a hun
 constants. It is not a styling file. It is the enforcement point of a naming discipline that the
 rest of the system depends on staying clean.
 
-## Related Work
+## Related components
 
 The values being translated are defined by [Coverage States and the Three Dimensions](../../comprehension/coverage-schema/):
 that schema names the four states and the three dimensions in neutral terms, and this module is
 downstream of it in one direction only. The largest consumer is [Drawing the Map from Frozen Geometry](../map-canvas/),
 which asks for a treatment per node and branches on the returned category rather than on the state
-name — that indirection is what keeps the canvas honest. [Reading a Paper In-App](../component-panel/)
+name — that indirection is what keeps the canvas honest. [Reading a Doc In-App](../component-panel/)
 uses the labels, the accent colour, and the one-line description together to form its state chip and
 its score bars. [Running a Quest in the Browser](../quest-runner-ui/) draws its modality names, its
 call to action, and its completion wording from the check-vocabulary table here.
@@ -94,7 +94,7 @@ and ring treatment on the map are the entire user-facing consequence of drift. W
 reading this module: that detection path is currently incomplete, so the drifted state is more
 thoroughly designed here than it is produced upstream.
 
-## Description
+## How it works
 
 The core of the module is a record keyed by every coverage state. Each entry carries the state
 itself, so a consumer holding only a skin entry can still recover the neutral value; a Korean label
@@ -137,7 +137,7 @@ the tagline under the product name in the header are inline as well. These are m
 than a broken boundary, but a reader should not assume the file is the exhaustive inventory of
 learner-facing wording that its comment claims.
 
-## Rationale
+## Design decisions
 
 Confining the vocabulary to one module inside the viewer is the decision the whole component exists
 for, and its justification is stated as a principle: the metaphor is a rendering layer, and the
@@ -165,7 +165,7 @@ and it is bilingual, so scattering it would guarantee drift in both languages at
 leaks noted above are exactly the failure this decision was meant to prevent, which suggests the
 boundary needs enforcement rather than only convention.
 
-## Conclusion
+## Where it sits
 
 This module is a hundred lines that hold a design principle in place. It converts four neutral
 coverage states into everything a learner sees about them, keeps that conversion one-directional,

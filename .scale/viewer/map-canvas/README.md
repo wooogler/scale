@@ -49,7 +49,7 @@ flowchart TD
     N --> BADGE[start a pending check]
 ```
 
-## Abstract
+## Summary
 
 This component draws the map: province regions as filled, smoothed outlines, and components as
 circular nodes sized by importance and coloured by their coverage state. It reads positions from
@@ -58,7 +58,7 @@ is that a component stays where the learner last saw it. Zoom is semantic — wh
 continuously with scale, from coarse regions through nodes to labels and links — and pan, zoom, and
 pinch are handled directly so the browser never intercepts them.
 
-## Introduction
+## What it does
 
 A codebase has no natural geography. The map invents one, and then commits to it. That commitment
 is the point: people build survey knowledge of a space by returning to it, and that only works when
@@ -74,7 +74,7 @@ distance the reader sees only coloured regions and their names; moving closer br
 closer still brings names and the links incident to whatever is under the pointer. Each transition
 is a smooth ramp rather than a switch.
 
-## Related Work
+## Related components
 
 Everything drawn here comes from [The Frozen Map Document](../../map/map-schema/) — provinces,
 node positions in normalized coordinates, importance weights, and typed links between components.
@@ -91,11 +91,11 @@ so a reader who wants to know what a filled node actually asserts about a learne
 paper rather than this one. [Composition and the Unification Header](../app-shell/) owns every
 piece of state this canvas does not own itself — which component is selected, which pending checks
 exist, which state the legend is highlighting — and passes them down; the canvas owns only hover
-and the view transform. Selecting a node opens [Reading a Paper In-App](../component-panel/), and
+and the view transform. Selecting a node opens [Reading a Doc In-App](../component-panel/), and
 clicking the small badge on a node with pending work hands that item straight to
 [Running a Quest in the Browser](../quest-runner-ui/) without going through the panel at all.
 
-## Description
+## How it works
 
 The drawing space is a fixed coordinate box with an inset margin, and stored coordinates in the
 zero-to-one range are mapped into it. A single transform group carries a scale and a translation;
@@ -164,7 +164,7 @@ zoom out, and reset the view to the opening framing, and every node is focusable
 the enter or space key when it is bright enough to be interactive. Neither path is decorative — a
 map that could only be navigated by trackpad would exclude the reader who navigates by keyboard.
 
-## Rationale
+## Design decisions
 
 Refusing to compute a layout is the decision this component exists to enforce, and it is the one
 whose reversal would do the most damage. The plan states plainly that spatial stability is the
@@ -199,7 +199,7 @@ the map is readable to someone who knows the component identifiers and slightly 
 who does not. That appears to be a consequence of what the map document carries rather than a
 considered decision, and it is the kind of thing an interview pass should confirm.
 
-## Conclusion
+## Where it sits
 
 The canvas is a pure renderer over frozen geometry, and its discipline about that is what makes the
 map worth returning to. It contributes three things of its own — computed province outlines,
@@ -207,4 +207,4 @@ continuous semantic zoom, and input handling robust enough that the map owns the
 and delegates everything about meaning elsewhere. To understand what it is drawing, read
 [The Frozen Map Document](../../map/map-schema/) for the geometry and [The Single Skin Boundary](../terminology-skin/)
 for the visual vocabulary; to understand what happens when a node is clicked, read
-[Reading a Paper In-App](../component-panel/).
+[Reading a Doc In-App](../component-panel/).

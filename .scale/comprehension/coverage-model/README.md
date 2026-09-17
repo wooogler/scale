@@ -55,11 +55,11 @@ flowchart TD
     IMP[node importance] --> PROG
 ```
 
-## Abstract
+## Summary
 
 This component is the arithmetic of comprehension: how a graded result changes a dimension, how the three dimensions collapse into one comparable number, how code churn becomes a loyalty figure, how those inputs pick one of the four coverage states, and how per-component understanding aggregates into a single progress number across the whole map. It is a set of small pure functions with no dependencies on files, time, or randomness, and every constant it uses is exposed in one overridable object because those constants are research parameters, not facts.
 
-## Introduction
+## What it does
 
 Once you have raw evidence and a place to put the result, the interesting question is the mapping between them, and it is genuinely a design problem rather than a mechanical one. Consider what has to be true of a good mapping. Someone who answers a hard question well should visibly move. Someone who answers badly once, having previously demonstrated real understanding, should dip but not be reset to nothing. Someone who has been shown a component many times but never questioned about it should never reach the state that stops the system asking. And someone whose understanding was real but whose code has since been rewritten should be surfaced as needing another look, no matter how high their scores were.
 
@@ -67,13 +67,13 @@ Those four requirements are exactly what the functions here implement, and each 
 
 Everything here is pure. Churn and component sizes arrive as arguments; nothing reads the repository, the clock, or the configuration file. That makes the model directly testable against hand-written inputs, which is the only practical way to have confidence that a scoring rule behaves as intended across the edge cases that matter.
 
-## Related Work
+## Related components
 
 The values this component produces are stored in the shape defined by [Coverage States and the Three Dimensions](../coverage-schema/), and the evidence that feeds it is defined by [The Append-Only Evidence Log](../evidence-log/). Its immediate caller is [Pure Materialization of Coverage](../state-engine/), which walks the evidence in order and applies these functions one entry at a time while keeping the accumulators the classification rules need. The real churn and size numbers those rules consume are gathered by [Impure Edges: Git Churn, Clock, and Disk](../coverage-materialization/), which is deliberately a separate layer so that this one can stay pure.
 
 The thresholds have defaults here but are overridden in practice from [Conditions, Budgets, Thresholds, and Model Tiers](../../platform/config-schema/), which is where a study operator actually re-fits them. The importance weights used by the progress aggregate come from [The Frozen Map Document](../../map/map-schema/), so overall progress is a property of the map and the coverage together rather than of coverage alone. That aggregate is what a learner actually sees at the top of [Composition and the Unification Header](../../viewer/app-shell/), which renders it and nothing more, so any re-fitting of the weights here shows up immediately as a movement in the headline number. On the consumption side, [The Pure Pre-Commit Decision](../../interventions/commit-gate/) reuses the same weighted-mean helper to rank which touched component is worth asking about, which is why the ranking a developer experiences is consistent with the number they see on the map. Finally, [Source Drift and Staleness Flagging](../../map/drift-detection/) is the intended supplier of the churn figures behind loyalty, and is currently the least complete part of that story.
 
-## Description
+## How it works
 
 The blending rule takes a previous dimension value and a new graded score and returns a mix of the two, weighted by a single parameter. At the default weight the new score and the accumulated history count equally, so one strong result on a dimension that started at zero lands halfway between zero and that score, and a second identical result lands three quarters of the way there. Each further result closes half the remaining gap, so the value approaches the score it is being fed but never quite arrives. The consequence worth internalising is that reaching a high dimension value always takes several separate demonstrations — the arithmetic makes a single answer insufficient even before the separate count-based rule does. The same rule cuts the other way: a weak answer pulls the value down by the same proportion, so the model is not a ratchet.
 
@@ -93,7 +93,7 @@ The active-validation count is not a field of the stored record. It is an accumu
 
 Finally, overall progress sums each mapped node's importance multiplied by its weighted mean dimensions, divided by total importance. Nodes with no coverage record contribute zero to the numerator but their full importance to the denominator. Progress is therefore a fraction of the entire mapped codebase, not a fraction of the parts the person has already met, which is what makes the number meaningful early on when most of the map is untouched.
 
-## Rationale
+## Design decisions
 
 The blending choice looks like a direct answer to two failure modes the code comments allude to when they describe the weight as controlling how fast and how visibly things move. Replacing the value outright would make the display jumpy and would let one hard question erase a genuine record. Averaging all history equally would mean that after a dozen checks nothing a learner does moves the needle, which for a system whose whole point is to make progress visible would be fatal. Exponential blending is the standard compromise, and exposing its weight as a tunable acknowledges that the right decay rate is an empirical question.
 
@@ -103,6 +103,6 @@ Checking staleness first is a statement about which failure is worse. The altern
 
 Collecting the constants into one overridable object is a small structural decision whose stated purpose is that they can be re-fit or overridden per configuration without touching call sites. Its practical value shows up in the way the caller passes only the two thresholds it actually takes from configuration and lets the rest fall back to defaults — a partial override, not a full replacement, which keeps the configuration file from having to enumerate every parameter. The honest cost of that convenience is visible in the minimum-validation-count constant: because a partial override is always accepted, nobody is forced to notice that this particular number was never wired to configuration at all, and it silently stays at its default in every deployment.
 
-## Conclusion
+## Where it sits
 
 This component is where the system's opinions about learning are written down as arithmetic: memory with decay, a deliberately hard bar for claiming understanding, drift that outranks confidence, and a progress figure measured against the whole map rather than the part already visited. It knows nothing about files, git, or time — those arrive as arguments. Read [Pure Materialization of Coverage](../state-engine/) to see these functions applied in order over a real history, [Impure Edges: Git Churn, Clock, and Disk](../coverage-materialization/) to see where the churn and size numbers actually come from, and [Coverage States and the Three Dimensions](../coverage-schema/) for the record these values land in.

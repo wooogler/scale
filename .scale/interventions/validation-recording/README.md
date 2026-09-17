@@ -50,7 +50,7 @@ flowchart TD
     APP -.-> MARK["also serves as the fresh marker<br/>that lets a blocked commit retry"]
 ```
 
-## Abstract
+## Summary
 
 This component is the single write that turns a graded conversation into
 comprehension state. It accepts an outcome in one of two shapes — a score on one
@@ -60,7 +60,7 @@ append-only log, recomputes coverage from the whole log, and prints how far the
 component now sits from the validation bar. The same append is, incidentally, the
 marker that releases a commit the gate blocked.
 
-## Introduction
+## What it does
 
 Every other part of the in-flow arm is either a decision or a conversation. This is
 the only part that changes what the system believes about a person. That makes it the
@@ -77,7 +77,7 @@ people forget on a schedule but because code moves underneath them. Deciding whe
 has moved requires knowing which revision the person actually demonstrated understanding
 against, and that fact is only available at the moment of recording.
 
-## Related Work
+## Related components
 
 The producer of every outcome this command accepts is
 [Quiz and Socratic Protocols](../tutor-skill/), whose two submission shapes correspond
@@ -107,7 +107,7 @@ The post-session arm reaches the same log through
 comparison: two different intervention timings, one common way of writing down what was
 learned.
 
-## Description
+## How it works
 
 The command takes a component identifier and one of two mutually exclusive outcome
 forms. The dialogue form is a single object of dimension names to scores, parsed from
@@ -179,7 +179,7 @@ one. Second, the source's own section header still labels this command a stub ev
 though the implementation is complete and does real work — a leftover from the scaffolding
 phase, not a statement about its maturity.
 
-## Rationale
+## Design decisions
 
 The append-then-recompute shape is the decision everything else here follows from, and it
 is consistent with how the rest of the system treats state. The evident force is that the
@@ -214,7 +214,7 @@ the coverage memory is behind the code — which is also when evidence about wha
 learning is most valuable. Dropping it would lose data precisely when the system is least able
 to afford it; keeping it costs only a line that a future rebuild may well make meaningful.
 
-## Conclusion
+## Where it sits
 
 This is a small command carrying two large invariants: comprehension state is always derived
 from an untouched log, and a validation is pinned to the revision it was earned against.

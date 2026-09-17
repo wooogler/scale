@@ -106,10 +106,10 @@ export const DriftConfigSchema = z
      *  - `metadata` — commit subjects, authors, file counts and the names of the
      *                 declarations touched; NO source lines. The check can still
      *                 ask "what changed in `retryFor`, and what would break?".
-     *  - `off`      — no drift block; recovery is grounded in the paper alone,
+     *  - `off`      — no drift block; recovery is grounded in the doc alone,
      *                 exactly as it was before this existed.
      *
-     * `full` is the default because the paper body — prose describing this same
+     * `full` is the default because the doc body — prose describing this same
      * code — already goes to the model on every check, so the incremental
      * exposure is the source lines themselves, and a recovery check that cannot
      * see the change is the weaker instrument this whole stage exists to fix.
@@ -153,7 +153,7 @@ export type ExemptConfig = z.infer<typeof ExemptConfigSchema>;
  * Interaction language — everything SCALE says TO the junior: the serve web UI,
  * quiz items, Socratic dialogue, and in-flow check instructions.
  *
- * `.scale/` papers are deliberately NOT affected: the coverage memory is
+ * `.scale/` docs are deliberately NOT affected: the coverage memory is
  * repo-shared state (one build serves every user of the repo) and stays English,
  * while `language` lives in per-user config. In either language, code
  * identifiers — function/variable names, file paths, established dev terms —
@@ -302,8 +302,8 @@ export const ThresholdsSchema = z.object({
   validateDim: z.number().default(0.6),
   /** Cap on structure credit from passive touch/prompt alone. */
   passiveStructureCap: z.number().default(0.3),
-  /** Cap on structure credit from paper_read. */
-  paperReadCap: z.number().default(0.4),
+  /** Cap on per-dim credit from a doc_read. */
+  docReadCap: z.number().default(0.4),
 });
 export type Thresholds = z.infer<typeof ThresholdsSchema>;
 
@@ -316,6 +316,7 @@ export type Thresholds = z.infer<typeof ThresholdsSchema>;
  *   condition.timing  inflow→gate.assessment 'sync', postsession→'async'
  *   condition.modality → gate.modality
  *   inflow.triggers    → gate.enabled (did they have pre-commit on at all?)
+ *   thresholds.paperReadCap → thresholds.docReadCap (the academic-vocabulary rename)
  *
  * A legacy `postsession` user therefore gains a gate they never had — intended:
  * under the new design BOTH assessments gate, and only the check's venue
@@ -331,6 +332,24 @@ export function migrateLegacyConfig(raw: unknown): unknown {
   if (cfg.rebellion !== undefined) {
     const { rebellion, ...rest } = cfg;
     cfg = cfg.drift === undefined ? { ...rest, drift: rebellion } : rest;
+  }
+
+  // `paperReadCap` became `docReadCap` when the academic "paper" vocabulary was
+  // retired. An unknown key is STRIPPED at parse, not rejected, so without this
+  // the user's tuned cap would vanish into the default without a word — the one
+  // failure mode a silent migration exists to prevent. An explicit `docReadCap`
+  // always wins.
+  const th = cfg.thresholds;
+  if (th && typeof th === 'object' && !Array.isArray(th)) {
+    const t = th as Record<string, unknown>;
+    if (t.paperReadCap !== undefined) {
+      const { paperReadCap, ...restTh } = t;
+      cfg = {
+        ...cfg,
+        thresholds:
+          t.docReadCap === undefined ? { ...restTh, docReadCap: paperReadCap } : restTh,
+      };
+    }
   }
 
   if (cfg.condition === undefined && cfg.inflow === undefined) return cfg;

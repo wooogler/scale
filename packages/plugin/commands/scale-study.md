@@ -13,7 +13,7 @@ Use the **scale-tutor** skill in voluntary study mode.
 
 - Target component: `$ARGUMENTS` (a component `id`). If empty, offer a short menu
   of the junior's fog / low-coverage / stale territory and ask which to study.
-- Give a **reading guide** over the component's paper first (hero visual, key
+- Give a **reading guide** over the component doc first (hero visual, key
   concepts, rationale; point at the `sources` to read the real code).
 - Then offer a **comprehension check** in the configured modality (quiz or
   socratic). Passing counts as a voluntary validation, recorded via `scale

@@ -52,7 +52,7 @@ flowchart TD
     AP --> DONE["print a one-line confirmation and exit;\nno scores are recomputed"]
 ```
 
-## Abstract
+## Summary
 
 This is the receiving half of signal capture: the small set of commands the hooks call and
 the module that knows where a person's state lives on disk and how to write to it safely. Its
@@ -61,7 +61,7 @@ well under the time a keystroke takes, without ever recomputing anything or cont
 anything. Everything that makes the capture layer feel free to the developer is a consequence
 of how narrow this path is kept.
 
-## Introduction
+## What it does
 
 Capture systems usually die of one of two causes. Either they do too much work at the moment
 of observation and become the slow thing everyone disables, or they process observations
@@ -78,7 +78,7 @@ whole log, which means the model can change and the past can be reinterpreted.
 Before any of that can happen, the path has to answer a question that sounds trivial and is
 not: whose state, for which repository, and where.
 
-## Related Work
+## Related components
 
 The callers of this path are [Capturing Touches, Prompts, and Review Latency](../edit-and-prompt-hooks/)
 during ordinary work and [Session Start and Session End](../session-lifecycle-hooks/) at the
@@ -100,7 +100,7 @@ work this path deliberately refuses to do is
 the full set of commands this one is a corner of is
 [The Command Surface](../../platform/cli-surface/).
 
-## Description
+## How it works
 
 Repository identity is derived best-effort and never throws. The first attempt asks the version
 control system for the origin remote's address; if one exists, it is normalized so the two common
@@ -163,7 +163,7 @@ review signal, no entry at all because the usage check rejects the call. The mat
 index lookup, the fallback behavior, and the append are all real and exercised by direct invocation
 and by tests; the wire between the payload and the arguments is the piece that is missing.
 
-## Rationale
+## Design decisions
 
 Appending raw rather than scoring in place is the decision the whole comprehension model rests on.
 The comments state the position directly: the append path is bounded and must stay under a fraction
@@ -197,7 +197,7 @@ line, once written, is permanent and will be met by every future fold; catching 
 costs one schema check on a small object. A bad line encountered during a read can simply be
 skipped, and a missing or half-written file can be treated as empty.
 
-## Conclusion
+## Where it sits
 
 This path is the narrowest, most frequently traversed piece of the system: identity resolved from
 version control, components resolved from data already on disk, one validated line appended, done.

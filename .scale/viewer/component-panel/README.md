@@ -1,6 +1,6 @@
 ---
 id: component-panel
-title: Reading a Paper In-App
+title: Reading a Doc In-App
 sources:
   - packages/web/src/Panel.tsx
   - packages/web/src/Markdown.tsx
@@ -49,7 +49,7 @@ flowchart TD
     CH -->|none yet| NEW[ask server to create one] --> RUN
 ```
 
-## Abstract
+## Summary
 
 This is the side panel that opens when a component is selected on the map. It is the learner's
 reading surface: current coverage state, the three dimension scores, the declared concepts, and the
@@ -58,7 +58,7 @@ paper is rendered by a hand-written markdown subset that covers headings, paragr
 emphasis, and that deliberately does not render diagrams — it shows their source with a placeholder
 caption instead, which is documented in the code as unfinished work.
 
-## Introduction
+## What it does
 
 The whole system rests on the papers being read. Coverage is scored against what a paper says a
 component's concepts and rationale are; a check is generated from those same entries. If reading a
@@ -71,7 +71,7 @@ at a node, sees that its rationale dimension is low, scrolls down to the reasoni
 paper, and can start a check without navigating anywhere. The panel is small, but it is the place
 the two halves of the system — documentation and assessment — meet.
 
-## Related Work
+## Related components
 
 The structure the panel renders is defined by [Paper Format and Frontmatter Contract](../../memory/paper-format/):
 the stable identifier, the human title, the declared concepts, and the rationale entries all come
@@ -94,7 +94,7 @@ reachable, so the button is never dead for lack of an API key. The numbers in th
 defined by [Coverage States and the Three Dimensions](../../comprehension/coverage-schema/), which
 is where a reader should go to learn what a loyalty value or a validation marker actually means.
 
-## Description
+## How it works
 
 The panel takes a component identifier, that component's coverage record if one exists, and the
 list of pending checks attached to it. When the identifier changes it clears the displayed paper,
@@ -151,7 +151,7 @@ by a comparison against a literal string rather than looked up. All three carry 
 presentation flavour inline — a minor leak across a boundary the vocabulary module explicitly
 claims for itself.
 
-## Rationale
+## Design decisions
 
 Lazy per-selection fetching appears to be a straightforward payload decision. A built coverage
 memory is intended to run to dozens of components, each with a paper of a thousand words or more,
@@ -185,7 +185,7 @@ transparency choice. Those entries drive item generation, so showing them tells 
 they are accountable for before they are asked. This appears to be about making the assessment feel
 fair rather than adversarial.
 
-## Conclusion
+## Where it sits
 
 The panel is where a component stops being a coloured circle and becomes something with an
 explanation, a score, and an invitation. It reads its structure from the paper format, its

@@ -50,7 +50,7 @@ flowchart TD
     LOG --> OUT
 ```
 
-## Abstract
+## Summary
 
 This province is everything the system does while someone is working: it watches an editor
 session and turns what it sees into raw, timestamped observations, without ever making the
@@ -60,7 +60,7 @@ scripts, the scripts themselves — two at the session boundaries and three duri
 conclusions and grades nothing; every judgment about what an observation means is made
 elsewhere, later.
 
-## Introduction
+## What it does
 
 The system's central claim is that a person's real comprehension of a codebase can be tracked
 while they work, rather than asked about afterwards. That claim depends entirely on being able
@@ -87,7 +87,7 @@ here that could have interrupted — the hook that fires before an edit and hold
 veto it, the hook that fires after and could feed a note back to the agent — deliberately stays
 silent.
 
-## Related Work
+## Related components
 
 The four components of this province divide the work as follows.
 [Hook Wiring and the Fail-Open Rule](./plugin-hooks/) is the substrate: the table of editor
@@ -109,7 +109,7 @@ what the capture scripts are refusing to do.
 [Selection, Generation, and Offline Fallback](../quests/quest-generation/) is the work the
 session-closing script launches and then deliberately never hears back from.
 
-## Description
+## How it works
 
 The province is responsible for four things, and each of its components owns one of them.
 
@@ -161,7 +161,7 @@ command rejects the call outright and writes nothing, so that signal is absent f
 rather than merely thin. A reader inspecting a real log should expect all of this, and should not
 conclude the resolution logic is broken — it is simply not being handed anything to resolve.
 
-## Rationale
+## Design decisions
 
 The grouping is drawn around a shared non-functional constraint rather than around a data type
 or a layer, and that is what makes it the right seam. Everything in this province runs on the
@@ -194,7 +194,7 @@ attributable; observation is unlimited and invisible. Merging them would make th
 harder to reason about and would put a decision that can block a person's work inside a body of
 code whose defining property is that it never can.
 
-## Conclusion
+## Where it sits
 
 Signal capture is the system's sensory layer: five small scripts, one shared helper, and a
 narrow append path, all governed by the rule that observing must never cost the person being

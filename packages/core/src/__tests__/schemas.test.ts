@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  PaperFrontmatterSchema,
+  DocFrontmatterSchema,
+  canonicalSectionKey,
+  SECTIONS,
+  SECTION_HEADING,
   MapJsonSchema,
   UserCoverageSchema,
   EvidenceEntrySchema,
@@ -20,8 +23,8 @@ function readJson(name: string): unknown {
 }
 
 describe('schema fixtures', () => {
-  it('paper.frontmatter.json parses', () => {
-    const parsed = PaperFrontmatterSchema.parse(readJson('paper.frontmatter.json'));
+  it('doc.frontmatter.json parses', () => {
+    const parsed = DocFrontmatterSchema.parse(readJson('doc.frontmatter.json'));
     expect(parsed.id).toBe('session-management');
     expect(parsed.concepts.length).toBe(2);
   });
@@ -42,6 +45,29 @@ describe('schema fixtures', () => {
     const parsed = arr.map((q) => QuestSchema.parse(q));
     expect(parsed[0]?.origin).toBe('session');
     expect(parsed[0]?.items.length).toBe(2);
+  });
+
+  it('config.json (legacy fixture) migrates paperReadCap to docReadCap', () => {
+    // An unknown key is STRIPPED at parse, not rejected, so without the mapping
+    // the user's tuned cap would vanish into the default without a word.
+    const parsed = ScaleConfigSchema.parse(readJson('config.json'));
+    expect(parsed.thresholds.docReadCap).toBe(0.4);
+    expect('paperReadCap' in parsed.thresholds).toBe(false);
+  });
+
+  it('an explicit docReadCap wins over a legacy paperReadCap', () => {
+    const parsed = ScaleConfigSchema.parse({
+      user: 'x',
+      thresholds: { paperReadCap: 0.9, docReadCap: 0.2 },
+    });
+    expect(parsed.thresholds.docReadCap).toBe(0.2);
+  });
+
+  it('a legacy paperReadCap survives as the user set it, not as the default', () => {
+    const parsed = ScaleConfigSchema.parse({ user: 'x', thresholds: { paperReadCap: 0.75 } });
+    expect(parsed.thresholds.docReadCap).toBe(0.75);
+    // The rest of thresholds still defaults — this is a migration, not a reset.
+    expect(parsed.thresholds.validateDim).toBe(0.6);
   });
 
   it('config.json (legacy fixture) parses via migration', () => {
@@ -177,7 +203,75 @@ describe('schema fixtures', () => {
     expect((parsed as { origin?: string }).origin).toBe('session');
   });
 
+  it('doc_read parses, and so does the legacy paper_read literal', () => {
+    // Append-only log: the old rows are still there and must keep validating.
+    const base = { ts: '2026-07-14T00:00:00Z', user: 'junior', componentId: 'session-management' };
+    expect(EvidenceEntrySchema.parse({ ...base, type: 'doc_read' }).type).toBe('doc_read');
+    expect(EvidenceEntrySchema.parse({ ...base, type: 'paper_read' }).type).toBe('paper_read');
+  });
+
   it('discriminated union rejects an unknown type', () => {
     expect(() => EvidenceEntrySchema.parse({ type: 'nope', ts: 'x', user: 'y' })).toThrow();
+  });
+});
+
+/**
+ * The section alias table. Docs were first written with the section names of an
+ * academic paper; the headings are now developer-native and the old spellings
+ * are aliases, because every `.scale/` tree built before the change is still on
+ * disk and is never rewritten.
+ */
+describe('canonicalSectionKey', () => {
+  it('resolves every canonical heading and every legacy alias', () => {
+    for (const s of SECTIONS) {
+      expect(canonicalSectionKey(s.heading)).toBe(s.key);
+      for (const alias of s.aliases) expect(canonicalSectionKey(alias)).toBe(s.key);
+    }
+  });
+
+  it('pins the six pairs the rest of the codebase keys off', () => {
+    expect(canonicalSectionKey('Abstract')).toBe('summary');
+    expect(canonicalSectionKey('Introduction')).toBe('what-it-does');
+    expect(canonicalSectionKey('Related Work')).toBe('related-components');
+    expect(canonicalSectionKey('Description')).toBe('how-it-works');
+    expect(canonicalSectionKey('Rationale')).toBe('design-decisions');
+    expect(canonicalSectionKey('Conclusion')).toBe('where-it-sits');
+  });
+
+  it('ignores case, surrounding space and trailing punctuation', () => {
+    expect(canonicalSectionKey('  how it WORKS  ')).toBe('how-it-works');
+    expect(canonicalSectionKey('Rationale:')).toBe('design-decisions');
+    expect(canonicalSectionKey('Design decisions.')).toBe('design-decisions');
+    expect(canonicalSectionKey('Related  Work')).toBe('related-components');
+  });
+
+  it('drops a trailing parenthetical gloss, and trailing punctuation with it', () => {
+    // Writers gloss a heading in place. The gloss is an aside to the reader,
+    // not a different section, and reading it as one would cost the doc a
+    // section it actually has.
+    expect(canonicalSectionKey('Related Work (siblings)')).toBe('related-components');
+    expect(canonicalSectionKey('Summary:')).toBe('summary');
+    expect(canonicalSectionKey('Related components (and why)')).toBe('related-components');
+    // Punctuation OUTSIDE the parenthetical is why the two strips alternate.
+    expect(canonicalSectionKey('Summary (tl;dr):')).toBe('summary');
+    // …and a heading that is genuinely something else stays unrecognized.
+    expect(canonicalSectionKey('Open questions (for review)')).toBeNull();
+  });
+
+  it('matches the FULL heading, never its first word', () => {
+    // The keying this replaced took the first word, which was fine while
+    // headings were single words and wrong the moment they became phrases:
+    // `Where it sits` and `Where the bodies are buried` share their first word,
+    // as do `What it does` and `What breaks`.
+    expect(canonicalSectionKey('Where the bodies are buried')).toBeNull();
+    expect(canonicalSectionKey('What breaks')).toBeNull();
+    expect(canonicalSectionKey('Rationale and trade-offs')).toBeNull();
+    expect(canonicalSectionKey('Notes')).toBeNull();
+    expect(canonicalSectionKey('')).toBeNull();
+  });
+
+  it('SECTION_HEADING names every key, in SECTIONS order', () => {
+    expect(Object.keys(SECTION_HEADING)).toEqual(SECTIONS.map((s) => s.key));
+    expect(SECTION_HEADING['related-components']).toBe('Related components');
   });
 });

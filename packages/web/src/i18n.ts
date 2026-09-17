@@ -19,8 +19,8 @@ import {
  *    references: component ids, file paths, function names, env vars, model
  *    ids, and established dev terms (commit, hook, EMA, pre-commit…).
  *  - 'en' → pure English UI.
- *  - .scale/ papers are repo-shared state and stay English either way — paper
- *    CONTENT is never translated here (Markdown.tsx is untouched).
+ *  - .scale/ component docs are repo-shared state and stay English either way —
+ *    doc CONTENT is never translated here (Markdown.tsx is untouched).
  *
  * Game-skin vocabulary: skin.ts owns the term DEFINITIONS (미탐사/정찰됨/정복/
  * 함락, 공성전, 천하통일 진행도…) and entries reference its labelKo/labelEn
@@ -69,7 +69,7 @@ export interface Strings {
   /** quest origin tags shown next to quest entries (session/drift/voluntary) */
   origin: Record<QuestOrigin, string>;
 
-  /* ---- paper renderer chrome (Markdown) — viewer text, NOT paper content ---- */
+  /* ---- doc renderer chrome (Markdown) — viewer text, NOT doc content ---- */
   mermaidBadge: string;
   mermaidTodo: string;
 
@@ -81,10 +81,10 @@ export interface Strings {
   challenge: string;
   challengePreparing: string;
   challengeError: string;
-  loadingPaper: string;
+  loadingDoc: string;
   conceptsHeading: string;
-  paperHeading: string;
-  noPaper: string;
+  docHeading: string;
+  noDoc: string;
 
   /* ---- quest runner ---- */
   closeQuest: string; // aria-label
@@ -103,7 +103,7 @@ export interface Strings {
   socraticUnavailable: string; // prefix; server error detail is appended
   addApiKey: (provider: string) => string;
   tryAgain: string;
-  readPaperInstead: string;
+  readDocInstead: string;
   dialogueComplete: string;
   inputPlaceholder: string;
   send: string;
@@ -224,10 +224,10 @@ export const STRINGS: Record<Language, Strings> = {
     challenge: 'Challenge',
     challengePreparing: 'Preparing…',
     challengeError: 'Could not prepare a challenge for this territory.',
-    loadingPaper: 'Loading paper…',
+    loadingDoc: 'Loading doc…',
     conceptsHeading: 'Concepts',
-    paperHeading: 'Paper',
-    noPaper: 'No paper found for this component.',
+    docHeading: 'Doc',
+    noDoc: 'No doc found for this component.',
 
     closeQuest: 'Close quest',
     grades: 'grades',
@@ -242,7 +242,7 @@ export const STRINGS: Record<Language, Strings> = {
     socraticUnavailable: 'Socratic dialogue is unavailable:',
     addApiKey: (provider) => `⚙ Add ${provider} API key`,
     tryAgain: 'Try again',
-    readPaperInstead: 'Just read the paper instead →',
+    readDocInstead: 'Just read the doc instead →',
     dialogueComplete: 'Dialogue complete',
     inputPlaceholder: 'Type your reasoning…',
     send: 'Send',
@@ -258,7 +258,7 @@ export const STRINGS: Record<Language, Strings> = {
       loadingSettings: 'Loading settings…',
       language: 'Language',
       languageNote:
-        'Applies to everything SCALE says to you. Coverage papers stay English (repo-shared state).',
+        'Applies to everything SCALE says to you. Component docs stay English (repo-shared state).',
       apiKeysHeading: 'API keys',
       keysNotePre: 'Used for the Socratic tutor and LLM-written quests. Stored in',
       keysNotePost:
@@ -369,10 +369,10 @@ export const STRINGS: Record<Language, Strings> = {
     challenge: '도전',
     challengePreparing: '퀘스트 준비 중…',
     challengeError: '이 영지의 퀘스트를 준비하지 못했습니다.',
-    loadingPaper: '문서를 불러오는 중…',
+    loadingDoc: '문서를 불러오는 중…',
     conceptsHeading: '개념',
-    paperHeading: '문서',
-    noPaper: '이 컴포넌트의 문서를 찾을 수 없습니다.',
+    docHeading: '문서',
+    noDoc: '이 컴포넌트의 문서를 찾을 수 없습니다.',
 
     closeQuest: '퀘스트 닫기',
     grades: '평가',
@@ -386,7 +386,7 @@ export const STRINGS: Record<Language, Strings> = {
     socraticUnavailable: '문답 대련을 진행할 수 없습니다:',
     addApiKey: (provider) => `⚙ ${provider} API 키 추가`,
     tryAgain: '다시 시도',
-    readPaperInstead: '대신 문서를 읽어보기 →',
+    readDocInstead: '대신 문서를 읽어보기 →',
     dialogueComplete: '대련 종료',
     inputPlaceholder: '생각을 적어 보세요…',
     send: '보내기',
@@ -402,7 +402,7 @@ export const STRINGS: Record<Language, Strings> = {
       loadingSettings: '설정을 불러오는 중…',
       language: '언어',
       languageNote:
-        'SCALE이 당신에게 말하는 모든 문구에 적용됩니다. 커버리지 문서는 영어로 유지됩니다 (저장소 공유 상태).',
+        'SCALE이 당신에게 말하는 모든 문구에 적용됩니다. 컴포넌트 문서는 영어로 유지됩니다 (저장소 공유 상태).',
       apiKeysHeading: 'API 키',
       keysNotePre: 'Socratic 문답과 LLM 작성 퀴즈에 사용됩니다. 이 컴퓨터의',
       keysNotePost:

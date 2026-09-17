@@ -50,7 +50,7 @@ sequenceDiagram
     D-->>D: decides from configuration whether to do anything
 ```
 
-## Abstract
+## Summary
 
 These are the two hooks that bracket a working session: one runs as it opens and injects
 a short coverage summary into the agent's context, the other runs as it closes and kicks
@@ -60,7 +60,7 @@ the asymmetry between them: the opening hook is synchronous because its whole pu
 to produce text that must arrive before the first turn, while the closing hook is
 detached because its work may involve a network call and must never delay an exit.
 
-## Introduction
+## What it does
 
 A session boundary is the one moment where a comprehension system can speak to a
 developer's agent without interrupting anything. Nothing is in flight, no edit is
@@ -80,7 +80,7 @@ model call, which may mean seconds and a network. A session that lingers while c
 worse than one that lingers while starting, because the user has already left. So the
 closing hook launches and abandons.
 
-## Related Work
+## Related components
 
 The mechanics that make both of these calls safe — resolution of the command, the timeout
 backstop, the detached launch, the context envelope itself — all live in
@@ -107,7 +107,7 @@ size of that budget, is declared in
 single place the policy these two scripts decline to implement actually lives.
 Both scripts address the system through [The Command Surface](../../platform/cli-surface/).
 
-## Description
+## How it works
 
 The opening script reads the event payload from standard input, makes one synchronous
 call asking for the coverage summary, and — only if that call reported success — wraps
@@ -173,7 +173,7 @@ Together these two scripts define the session as a unit for everything else: the
 limits interruptions is scoped to it, the set of components considered for follow-up is drawn
 from it, and the summary injected at its start reflects everything learned before it.
 
-## Rationale
+## Design decisions
 
 The choice of an explicit envelope over bare text is justified directly in the source
 comment, which notes that plain output is also treated as added context but calls the
@@ -203,7 +203,7 @@ it means an experimental condition can never be half-applied because two impleme
 disagreed. The cost of the road not taken is negligible; the cost of divergence would be
 invalidated study data.
 
-## Conclusion
+## Where it sits
 
 These two scripts frame every session: one opens it by giving the agent a compact picture
 of what the developer actually understands, the other closes it by starting follow-up work

@@ -26,9 +26,8 @@ packages/plugin/
 │   ├── lib/scale.mjs        # shared helper: resolve & run the `scale` CLI, fail-open
 │   ├── session-start.mjs    # SessionStart      → scale context   (inject 3-line coverage)
 │   ├── prompt-submit.mjs    # UserPromptSubmit   → scale log prompt (component mentions)
-│   ├── pre-edit.mjs         # PreToolUse(Edit|Write|MultiEdit) → scale log review (propose ts)
+│   ├── pre-edit.mjs         # PreToolUse(Edit|Write|MultiEdit) → scale gate edit (in-flow gate + propose ts)
 │   ├── post-edit.mjs        # PostToolUse(Edit|Write|MultiEdit)→ scale log touch  (+ review pair)
-│   ├── pre-commit-gate.mjs  # PreToolUse(Bash: git commit)     → scale gate commit (in-flow gate)
 │   └── session-end.mjs      # SessionEnd        → scale quest generate (DETACHED, async)
 ├── skills/
 │   ├── scale-map/SKILL.md   # Mode B coverage-memory builder (senior; forks cluedoc)
@@ -84,7 +83,8 @@ Either way Claude Code reads `.claude-plugin/plugin.json`, wires the hooks from
 ### Per-repo requirement (junior features)
 
 The evidence/gate/tutor features operate on a **coverage memory** that lives in
-the target repo at `.scale/` (markdown papers + `map.json`, git-versioned). Build
+the target repo at `.scale/` (markdown component docs + `map.json`,
+git-versioned). Build
 it first, in the repo you want to learn:
 
 ```
@@ -173,10 +173,11 @@ is resolved in this order:
 Override the sync-call backstop timeout with `$SCALE_HOOK_TIMEOUT_MS` (default
 1500 ms).
 
-The one hook that can affect flow is **`pre-commit-gate.mjs`**: on a `git commit`
-that touched fog/low-coverage/stale territory (and only when the CLI's budget
-policy allows), it returns a `deny` with a reason telling the agent to run the
+The one hook that can affect flow is **`pre-edit.mjs`**, wired on
+`PreToolUse(Edit|Write|MultiEdit)`: it calls `scale gate edit`, and when the edit
+reaches fog/low-coverage/stale territory (and only when the CLI's budget policy
+allows) it returns a `deny` with a reason telling the agent to run the
 `scale-tutor` check; after `scale record` writes a validation marker, the retried
-commit passes. The user's escape hatch is `scale gate defer <componentId>`
+edit passes. The user's escape hatch is `scale gate defer <componentId>`
 (defer = drop). Everything else is silent evidence capture. In post-session
 conditions the gate is a no-op (PLAN §6.1).

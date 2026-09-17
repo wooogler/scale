@@ -5,7 +5,7 @@
  *
  * WHY THIS EXISTS
  * `map.json`'s `importance` is the in-degree of its `reference` edges, and those
- * edges are the markdown links an LLM wrote in each paper's Related Work
+ * edges are the markdown links an LLM wrote in each doc's Related components
  * section. The fidelity report measured them: of 207 linked component pairs,
  * only 51 have any code path behind them — 24.6% precision — and yet that graph
  * decides node size on the map, the gate's candidate ranking, and quest
@@ -143,7 +143,7 @@ async function distill(graphPath) {
   const { loadScaleDir, componentSourcesIndex, buildFileComponentIndex } = await loadCore();
 
   const loaded = loadScaleDir(ROOT);
-  if (loaded.papers.length === 0) {
+  if (loaded.docs.length === 0) {
     die('no coverage memory at .scale/ — nothing to attribute edges to.');
   }
   // EXACT matching only. `componentsForFile`'s nearest-directory fallback maps a
@@ -184,7 +184,7 @@ async function distill(graphPath) {
   // Directed component pairs. `depends_on` means "this component's code reaches
   // into that one", and `importance` is in-degree, so direction is load-bearing
   // and must survive — unlike the fidelity report, which compares against
-  // undirected Related Work links.
+  // undirected Related components links.
   const pairs = new Map(); // "from\u0000to" -> {count, extracted, inferred, ambiguous}
   let linksTotal = 0;
   let linksSkipped = 0;
@@ -229,7 +229,7 @@ async function distill(graphPath) {
     }
   }
 
-  // Deterministic: same graph + same papers -> byte-identical file.
+  // Deterministic: same graph + same docs -> byte-identical file.
   const edges = [...pairs.entries()]
     .map(([key, agg]) => {
       const [from, to] = key.split('\u0000');
@@ -248,7 +248,7 @@ async function distill(graphPath) {
       edges,
     },
     stats: {
-      components: loaded.papers.length,
+      components: loaded.docs.length,
       nodes: nodes.length,
       nodesWithSource,
       nodesAttributed: nodeOwners.size,

@@ -11,7 +11,7 @@ import { z } from 'zod';
  * decided, ships ONE file with a contract that was designed to leave the
  * machine: no prompt text, no file contents, no file paths, no collaborator
  * addresses. Component ids are the only repo-specific names, and those are the
- * team's own paper titles.
+ * team's own component-doc titles.
  *
  * Every row carries `v` so a reader can tell which contract wrote it, and
  * `sessionId` so rows can be grouped into the same working period the budget
@@ -97,7 +97,7 @@ export const SkipRowSchema = z.object({
  * REDIRECT — the first shape of avoidance the gate can see itself: while a
  * deny is still outstanding (no check passed, no skip), an edit was ALLOWED
  * somewhere else. `editedInstead` names the components that edit landed on;
- * `unanchoredFiles` counts files no paper anchors, which the gate cannot
+ * `unanchoredFiles` counts files no component doc anchors, which the gate cannot
  * attribute at all. A redirect is not proof of avoidance — the user may have
  * legitimately moved on — which is why the row records the gap and the target
  * and leaves the judgement to the analysis.

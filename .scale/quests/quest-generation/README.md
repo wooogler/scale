@@ -52,7 +52,7 @@ flowchart TD
     DET & LLM --> MERGE["merge into the quest file:<br/>keep finished + learner-initiated,<br/>replace outstanding automatic ones"]
 ```
 
-## Abstract
+## Summary
 
 This component decides which components a learner should be checked on after a
 working session, turns each of them into a runnable set of items, and writes the
@@ -62,7 +62,7 @@ items directly from the component's paper instead of producing nothing. It also
 serves the learner-initiated path, generating a single quest on demand for any
 component regardless of the configured condition.
 
-## Introduction
+## What it does
 
 At the end of a session the system knows two things it will never know as precisely
 again: which components the learner actually touched, and how well they currently
@@ -79,7 +79,7 @@ contain quests the learner started themselves. And the whole arm is conditional:
 study design also has an in-flow timing, where interventions happen at a commit
 boundary instead, and under that timing this component deliberately does nothing.
 
-## Related Work
+## Related components
 
 The documents produced here are shaped by [Quest Documents and Item Shapes](../quest-schema/),
 whose permissive item validation is what allows generated content of varying shape to
@@ -122,7 +122,7 @@ learner-initiated variant is triggered from somewhere else entirely —
 commands by which someone asks for a challenge on a component of their own choosing,
 which is why that path ignores the configured timing.
 
-## Description
+## How it works
 
 Generation begins with two cheap refusals. If the configured timing is not
 post-session, it returns immediately, reporting that it skipped; in-flow conditions
@@ -243,7 +243,7 @@ per-component churn reporting is not implemented. So staleness reaches this comp
 only indirectly, as a thumb on the ranking scale, and every quest that exists today
 was raised either by a session ending or by the learner asking.
 
-## Rationale
+## Design decisions
 
 The dominant decision is that failure degrades rather than propagates, and the
 source comment says so explicitly: a bad paper, a missing credential, or a failed
@@ -279,7 +279,7 @@ business deleting them. Outstanding automatic quests, by contrast, are stale gue
 superseded by a newer, better-informed guess. Without this filtering, either history
 would be lost or unanswered offers would accumulate until the queue meant nothing.
 
-## Conclusion
+## Where it sits
 
 This is the component that decides what the learner will be asked and makes sure
 something is always askable. Its two halves are worth remembering separately: a

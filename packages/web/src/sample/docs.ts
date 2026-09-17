@@ -1,18 +1,20 @@
-import type { PaperFrontmatter } from '@scale/core/browser';
+import type { DocFrontmatter } from '@scale/core/browser';
 
 /**
- * Hand-seeded papers (PLAN §4.1) keyed by the STABLE component id, which is
- * also the coverage key. `frontmatter` carries the quizzable concepts +
- * rationale; `body` is the cluedoc-style prose (no code symbols in the body).
- * The web panel renders `body` as lightweight markdown; mermaid fences are
- * shown as a placeholder (full mermaid render is a TODO for a later phase).
+ * Hand-seeded component docs (PLAN §4.1) keyed by the STABLE component id,
+ * which is also the coverage key. `frontmatter` carries the quizzable concepts
+ * + rationale; `body` is the doc prose under the canonical section headings
+ * (Summary / What it does / Related components / How it works / Design
+ * decisions / Where it sits). The web panel renders `body` as lightweight
+ * markdown; mermaid fences are shown as a placeholder (full mermaid render is
+ * a TODO for a later phase).
  */
-export interface SamplePaper {
-  frontmatter: PaperFrontmatter;
+export interface SampleDoc {
+  frontmatter: DocFrontmatter;
   body: string;
 }
 
-export const samplePapers: Record<string, SamplePaper> = {
+export const sampleDocs: Record<string, SampleDoc> = {
   'session-management': {
     frontmatter: {
       id: 'session-management',
@@ -38,20 +40,20 @@ flowchart LR
     Store -->|identity + privileges| Middleware
 \`\`\`
 
-## Abstract
+## Summary
 
 Session Management is how the system remembers who a visitor is between
 requests. It keeps the authoritative record of every active session on the
 server and hands the browser only an unguessable identifier.
 
-## Description
+## How it works
 
 A session is created when a person authenticates and is stored server-side
 with its identity, its privileges, and an expiry. The browser receives only
 the identifier. On each request the middleware looks the identifier up, and on
 a hit it refreshes the session and attaches the identity.
 
-## Rationale
+## Design decisions
 
 Sessions are kept server-side and the cookie carries only an opaque identifier
 because revocation has to be immediate: shared-document access control depends
@@ -75,13 +77,13 @@ on being able to cut off a session at once.`,
         },
       ],
     },
-    body: `## Abstract
+    body: `## Summary
 
 The Credential Store owns the secrets that prove a person is who they claim to
 be. It accepts a password at registration, keeps only a one-way hash, and later
 answers a single question: does this presented password match?
 
-## Description
+## How it works
 
 At registration the password is salted and hashed and only the hash is kept.
 At sign-in the presented password is hashed the same way and compared in
@@ -105,12 +107,12 @@ constant time, so timing never leaks how much of a guess was correct.`,
         },
       ],
     },
-    body: `## Abstract
+    body: `## Summary
 
 OAuth Providers let a person sign in through an external identity they already
 trust rather than a password held here.
 
-## Description
+## How it works
 
 The provider vouches for the person; the returned external identity is matched
 to a local account, creating one on first use and linking it thereafter.`,
@@ -133,13 +135,13 @@ to a local account, creating one on first use and linking it thereafter.`,
         },
       ],
     },
-    body: `## Abstract
+    body: `## Summary
 
 The Document Model is the spine of the realm: the record every other feature
 attaches to. It defines what a document is, the states it moves through, and
 the trail it leaves behind.
 
-## Description
+## How it works
 
 A document begins as a draft, is sent for signature, and reaches completion
 once all parties have signed. Each transition is appended to an audit trail
@@ -163,13 +165,13 @@ that is never rewritten.`,
         },
       ],
     },
-    body: `## Abstract
+    body: `## Summary
 
 The Signing Pipeline drives a document from "sent" to "completed", collecting
 each recipient's signature in turn and binding it to the page and field it
 belongs to.
 
-## Description
+## How it works
 
 Recipients are notified in order. Each places a signature bound to a specific
 field, and only when the last recipient signs does the document complete.`,
@@ -192,12 +194,12 @@ field, and only when the last recipient signs does the document complete.`,
         },
       ],
     },
-    body: `## Abstract
+    body: `## Summary
 
 Templates capture a document's field layout and recipient roles once so the
 same shape can be reused for many signings.
 
-## Description
+## How it works
 
 A template names roles rather than people. When instantiated, concrete
 recipients are bound to those roles and a fresh document is produced.`,
@@ -220,12 +222,12 @@ recipients are bound to those roles and a fresh document is produced.`,
         },
       ],
     },
-    body: `## Abstract
+    body: `## Summary
 
 Document Sharing decides who, beyond the owner, may reach a document and what
 they may do with it.
 
-## Description
+## How it works
 
 A share link carries an opaque token that maps to a scoped grant. Every request
 re-checks the grant server-side, so revoking a link takes effect immediately.`,
@@ -248,12 +250,12 @@ re-checks the grant server-side, so revoking a link takes effect immediately.`,
         },
       ],
     },
-    body: `## Abstract
+    body: `## Summary
 
 Team Access lets a group of people share a body of documents through their
 membership rather than one grant at a time.
 
-## Description
+## How it works
 
 Each member holds a role, and roles map to what they may do. A document owned
 by a team inherits the team's permissions.`,
@@ -276,12 +278,12 @@ by a team inherits the team's permissions.`,
         },
       ],
     },
-    body: `## Abstract
+    body: `## Summary
 
 Webhooks let external systems react to what happens here by receiving events
 as they occur.
 
-## Description
+## How it works
 
 When a domain event fires, it is queued and delivered to each subscribed URL.
 Failed deliveries are retried with backoff so a temporary outage is tolerated.`,

@@ -1,23 +1,23 @@
 /**
  * File → component reverse index (regenerated on demand; gitignored as
- * `.scale/index.json`). Built from every paper's `sources`.
+ * `.scale/index.json`). Built from every component doc's `sources`.
  */
 
 export type FileComponentIndex = Record<string, string[]>;
 
 /** Build the reverse index: source file path → componentIds that anchor it. */
 export function buildFileComponentIndex(
-  papers: { id: string; sources: string[] }[],
+  docs: { id: string; sources: string[] }[],
 ): FileComponentIndex {
   const index: FileComponentIndex = {};
-  for (const paper of papers) {
-    for (const source of paper.sources) {
+  for (const doc of docs) {
+    for (const source of doc.sources) {
       const key = normalizePath(source);
       const bucket = index[key];
       if (bucket) {
-        if (!bucket.includes(paper.id)) bucket.push(paper.id);
+        if (!bucket.includes(doc.id)) bucket.push(doc.id);
       } else {
-        index[key] = [paper.id];
+        index[key] = [doc.id];
       }
     }
   }

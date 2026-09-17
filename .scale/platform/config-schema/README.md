@@ -53,17 +53,17 @@ flowchart TD
     TABLE -.-> EST
 ```
 
-## Abstract
+## Summary
 
 This component is the schema that defines what a SCALE user's configuration document may contain and what it means when a field is left out. It carries four kinds of knob in one validated shape: the manipulated study condition, the list of in-flow trigger points, the interruption budget and coverage thresholds, and the two-tier model choice. Because every consumer — the commit gate, the coverage model, quest generation, the cost estimator — reads its policy constants from this one document rather than from constants baked into code, the whole system's behaviour can be retuned or switched between study conditions by editing a single file.
 
-## Introduction
+## What it does
 
 A research prototype has an awkward requirement: the thing being studied is the intervention policy itself, so that policy has to be changeable without a rebuild. SCALE's design describes a two-by-two of interventions — checks that fire in the middle of the coding flow versus checks that wait until after the session, delivered either as a short quiz or as a capped Socratic dialogue — and all four cells must be fully functional and switchable. Alongside that sits a second family of tunables: how often the system is allowed to interrupt, how good a score has to be before a component counts as understood, how fast a new score displaces an old one.
 
 If any of those numbers lived in the source, switching conditions would mean editing and rebuilding, and an interruption audit would mean recompiling to try a different cooldown. So they live in a per-user configuration document instead, and this component is the contract that document must satisfy. It is a schema-only component: it declares shape, defaults, and one small lookup table, and it performs no I/O of its own. The reading and writing of the document on disk belongs to a neighbour.
 
-## Related Work
+## Related components
 
 The configuration document has a home on disk, and that home — along with the read, validate, and write helpers that touch it — is described in [Per-User State Layout and Repository Identity](../state-directory/). The commands that let a user inspect and change individual keys, and the commands whose behaviour those keys govern, are catalogued in [The Command Surface](../cli-surface/).
 
@@ -71,7 +71,7 @@ Three consumers matter most. [The Pure Pre-Commit Decision](../../interventions/
 
 The build-tier model choice is consumed by [Pre-Flight Build Cost Estimation](../../memory/build-cost-estimator/), which prices the one-time coverage-memory build per model before anyone commits to running it. Finally, this schema is one of the modules deliberately re-exported to the browser bundle described in [Keeping Platform Builtins Out of the Viewer](../browser-safe-surface/), because the viewer displays the active condition and model tiers in its header.
 
-## Description
+## How it works
 
 The document has six top-level areas. A user label identifies whose state this is; it is the only field with no default, so a configuration is never anonymous. The condition holds two closed choices: whether interventions fire in flow or after the session, and whether they take the form of a quiz or a Socratic dialogue. Those two axes multiply into the four experimental cells, and flipping either one is a one-key edit.
 
@@ -85,7 +85,7 @@ The model area encodes a fixed two-tier policy. The expensive one-time memory bu
 
 Two invariants hold the whole thing together. First, defaults are exhaustive: every field except the user label carries one, and the nested blocks default as wholes, so a document containing nothing but a user label parses into a complete, usable configuration. The checked-in test fixture demonstrates this directly — it omits the model block entirely and omits the blending weight from its thresholds, and still parses to a full configuration with the build tier set to the high-capability default and the intervention tier to the cheap default. Second, validation is total rather than incremental: when a single dotted key is changed, the resulting document is re-parsed against the whole schema before it is written back, so an edit that puts a value out of range or an unknown token in a closed set is rejected at the moment of the edit rather than at the moment some hook tries to use it.
 
-## Rationale
+## Design decisions
 
 Storing a neutral choice token instead of a raw model identifier appears to be a hedge against churn. The comment on the model block says as much: the concrete identifiers live in one table so a bump is a one-line change. The rejected alternative — writing the identifier straight into each user's document — would mean that every existing configuration silently pins a retired model the day a new generation ships, and it would also dissolve the tier boundary, because nothing would stop someone naming a build-tier model in the intervention slot. The indirection buys both a cheap upgrade path and an enforced policy.
 
@@ -97,6 +97,6 @@ Expressing the in-flow triggers as a list when only one kind is switched on by d
 
 Placing the manipulated condition in the same document as the tunables — rather than in a separate experiment file or an environment variable — seems to follow from the goal of switching a whole cell of the study end to end with one edit. The cost is that the experimental variable and the ordinary preferences are not visibly separated, which a later study-infrastructure layer might want. The benefit is that there is exactly one place to look when asking what mode the system is in, and one place a command has to write to change it.
 
-## Conclusion
+## Where it sits
 
 This component is small in code and large in reach: it is the single declaration of what SCALE's behaviour is allowed to be. Read it and you know the full set of levers — which of four intervention cells is active, where interruptions are permitted to fire, how tightly they are budgeted, how forgiving the comprehension model is, and which two model tiers are in play. From here, the natural next reads are the component that stores and validates this document on disk, [Per-User State Layout and Repository Identity](../state-directory/), and the two components that turn these numbers into behaviour: [The Pure Pre-Commit Decision](../../interventions/commit-gate/) and [Scoring: Exponential Averaging, Loyalty, Classification](../../comprehension/coverage-model/).

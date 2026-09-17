@@ -123,7 +123,7 @@ Fable 5      $58.37–$70.03  ~46 min
 **Then build** with the `/scale-map` command (the Mode B skill): Survey (propose
 the number of components `scale estimate` sized the repo for, grouped into
 provinces of 5–9, stopping for your approval) → Write (subagent fan-out) → Link
-(Related Work cross-links) → Layout → Check. It stops for human approval after
+(`Related components` cross-links) → Layout → Check. It stops for human approval after
 Survey before writing anything, and again if its honest partition falls outside
 the estimate's band.
 
@@ -183,7 +183,7 @@ hooks **fail open** — a missing/slow CLI degrades to a no-op and never blocks 
 ### Comprehension checks (quiz / socratic)
 
 Both modalities run in chat via the `scale-tutor` skill, grounded in the
-component's paper (`concepts` + `rationale`). The active modality is
+component doc (`concepts` + `rationale`). The active modality is
 `gate.modality`:
 
 - **quiz** — 1–2 grounded multiple-choice items.
@@ -192,7 +192,7 @@ component's paper (`concepts` + `rationale`). The active modality is
 Two ways to trigger a check yourself (available in every condition, no budget):
 
 - `/scale-study [component-id]` — **voluntary learning**: a reading guide over the
-  paper, then a check. Passing records a validation with `--origin voluntary`.
+  doc, then a check. Passing records a validation with `--origin voluntary`.
 - `/scale-quiz [component-id]` — a manual/testing shortcut into the same tutor
   path without waiting for the gate.
 
@@ -271,11 +271,12 @@ scale serve --port 4318   # reads .scale/ from cwd + ~/.scale/<repo-id>/ state
 ```
 
 Serves the React map app (build it first with `npm run build -w @scale/web`) plus
-a JSON API (`/api/map`, `/api/coverage`, `/api/paper/:id`, `/api/quests`,
+a JSON API (`/api/map`, `/api/coverage`, `/api/doc/:id`, `/api/quests`,
 `/api/locks`, `/api/settings`). Provinces are tinted regions; components are nodes
 sized by importance and colored by state (fog / explored / validated / 함락·재건).
 A 🔒 badge marks a territory that still **owes a check** from a denied edit; the
-header counts them. Click a node for its rendered paper, dev stats, and any quests.
+header counts them. Click a node for its rendered component doc, dev stats, and any
+quests.
 The quiz runner sends your picks to the server, which grades them and returns the
 reveal (the answer key never reaches the browser); the socratic runner proxies the
 intervention model server-side (needs an API key — see below). Passing either
@@ -308,8 +309,8 @@ invalid value is rejected instead of landing on disk.
 switches everything SCALE says to you into Korean — the web UI, quiz items,
 Socratic dialogue, and in-flow check delivery — while code identifiers, file
 paths, and established dev terms (EMA, hook, commit…) stay English. Default is
-`en` (pure English). The `.scale/` papers always stay English regardless: the
-coverage memory is repo-shared, and `language` is a per-user preference.
+`en` (pure English). The `.scale/` component docs always stay English regardless:
+the coverage memory is repo-shared, and `language` is a per-user preference.
 
 **API keys.** Interventions run on Anthropic (default) or OpenAI; pick the provider
 in Settings. The key comes from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` if set
@@ -334,7 +335,7 @@ scale quest list          # inspect pending quests
 ```
 
 If no API key is available for the configured provider (or the API errors),
-generation falls back to **deterministic** item synthesis from the paper — you
+generation falls back to **deterministic** item synthesis from the doc — you
 still get a valid `quests.json`. Sync-assessment users generate no quests (their
 checks happen in chat).
 

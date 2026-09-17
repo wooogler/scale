@@ -37,7 +37,7 @@ import {
   type MapEdge,
   buildFileComponentIndex,
   loadScaleDir,
-  paperById,
+  docById,
   componentSourcesIndex,
   componentsForFile,
   computeLayout,
@@ -268,7 +268,7 @@ function readMapJsonSafe(cwd: string): MapJson | null {
 function matchComponentsFromText(loaded: LoadedScale, text: string): string[] {
   const hay = ` ${text.toLowerCase().replace(/\s+/g, ' ')} `;
   const ids: string[] = [];
-  for (const p of loaded.papers) {
+  for (const p of loaded.docs) {
     const fm = p.frontmatter;
     const candidates = [
       fm.id,
@@ -487,7 +487,7 @@ program
       };
     }
     syncLocksWithDrift(dir, res.coverage.components, detail);
-    // The map is at hand here, so this is where a deleted/renamed paper stops
+    // The map is at hand here, so this is where a deleted/renamed doc stops
     // haunting the owed-check line and the viewer header (PLAN-GATE §14.4).
     pruneLocksToKnown(
       dir,
@@ -1027,7 +1027,7 @@ gate
     // The nearest-directory fallback is banned on this path (PLAN-GATE §3.2-1):
     // it sprays an unanchored file across every component in the directory
     // (measured at up to 11 here), which would gate new-file creation on a
-    // dozen unrelated unlocks. A file no paper anchors gates nothing.
+    // dozen unrelated unlocks. A file no doc anchors gates nothing.
     const kept = files.filter((f) => !pathMatchesAny(f, config.exempt.paths));
     if (kept.length === 0) {
       emit(true, null, null);
@@ -1280,7 +1280,7 @@ gate
   });
 
 /**
- * An allowed edit that touched only files no paper anchors, while a deny was
+ * An allowed edit that touched only files no doc anchors, while a deny was
  * outstanding: recorded as a redirect with an empty `editedInstead`. Also
  * counts the edit/allow in the session tallies.
  */
@@ -1997,14 +1997,14 @@ map
     const loaded = loadScaleDir(cwd);
     const existing = readMapJsonSafe(cwd);
     const existingIds = new Set((existing?.nodes ?? []).map((n) => n.id));
-    const newCount = loaded.papers.filter((p) => !existingIds.has(p.id)).length;
+    const newCount = loaded.docs.filter((p) => !existingIds.has(p.id)).length;
 
-    const nodeIds = new Set(loaded.papers.map((p) => p.id));
+    const nodeIds = new Set(loaded.docs.map((p) => p.id));
     const dependsOn = loadDependsOnEdges(cwd, nodeIds);
     const mapJson = computeLayout(
       {
         provinces: loaded.provinces,
-        nodes: loaded.papers.map((p) => ({ id: p.id, province: p.province })),
+        nodes: loaded.docs.map((p) => ({ id: p.id, province: p.province })),
         edges: [...loaded.edges, ...dependsOn],
         builtFromSha: headSha(cwd) || existing?.builtFromSha || '',
       },
@@ -2077,7 +2077,7 @@ map
       : path.join(scaleDir, 'index.json');
     fs.writeFileSync(outPath, JSON.stringify(index, null, 2) + '\n');
     console.log(
-      `scale: indexed ${loaded.papers.length} component(s), ` +
+      `scale: indexed ${loaded.docs.length} component(s), ` +
         `${Object.keys(index).length} file(s) → ${path.relative(cwd, outPath) || outPath}`,
     );
   });
@@ -2105,9 +2105,9 @@ map
       return;
     }
     const loaded = loadScaleDir(cwd);
-    const built = loaded.papers.length;
+    const built = loaded.docs.length;
     if (built === 0) {
-      bail('no component papers found — nothing to check.');
+      bail('no component docs found — nothing to check.');
       return;
     }
 
@@ -2115,7 +2115,7 @@ map
     const target = partitionTarget({ loc, files });
 
     // Components per ANCHORED file, not per scanned file: the ratio that
-    // matters is over the files papers actually claim, since those are the only
+    // matters is over the files docs actually claim, since those are the only
     // ones the file→component index can route an edit through.
     const index = buildFileComponentIndex(componentSourcesIndex(loaded));
     const allAnchored = Object.keys(index);
@@ -2146,8 +2146,8 @@ map
 
     // Group sizes, read off the store's own folder layout.
     const byProvince = new Map<string, number>();
-    for (const paper of loaded.papers) {
-      const prov = paper.province || '(none)';
+    for (const doc of loaded.docs) {
+      const prov = doc.province || '(none)';
       byProvince.set(prov, (byProvince.get(prov) ?? 0) + 1);
     }
     const groups = [...byProvince.entries()].map(([id, n]) => ({ id, n })).sort((a, b) => b.n - a.n);
@@ -2156,7 +2156,7 @@ map
     if (deadAnchors.length > 0) {
       // A warning, not a failure. A path that is gone cannot route an edit, but
       // neither does it make the rest of the partition unresolvable — the harm
-      // is that the paper still teaches code that no longer exists. It is kept
+      // is that the doc still teaches code that no longer exists. It is kept
       // out of the density denominator above, so it can no longer flatter the
       // ratio either. (This is how the check found that this repo's own memory
       // still anchors the commit hook removed in PLAN-GATE §6.)
@@ -2165,7 +2165,7 @@ map
         code: 'stale-anchor',
         message:
           `${deadAnchors.length} anchored path(s) no longer exist ` +
-          `(e.g. ${deadAnchors.slice(0, 3).join(', ')}). Those papers describe code that is gone.`,
+          `(e.g. ${deadAnchors.slice(0, 3).join(', ')}). Those docs describe code that is gone.`,
       });
     }
     findings.push(...checkPartition(

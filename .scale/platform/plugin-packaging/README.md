@@ -56,17 +56,17 @@ flowchart TD
     MKT[marketplace manifest at the repository root] -.->|points at| PLUGIN
 ```
 
-## Abstract
+## Summary
 
 This component is how SCALE stops being a monorepo and becomes something a person can install. A build script compiles the engine, the command-line program, and the map viewer, then bundles the entire command-line program into one self-contained module with every dependency inlined, keeps a small shell launcher beside it, and copies the built viewer assets into the plugin folder. Two manifests complete the picture: one describes the plugin to its host, and one at the repository root advertises that plugin so the repository itself can be used as an install source. The result is a plugin folder that runs with no package installation, no build toolchain, and no dependence on the surrounding workspace.
 
-## Introduction
+## What it does
 
 SCALE's hooks fire inside someone else's editing session, in someone else's repository, on someone else's machine. They need to invoke the command-line program, and they need to do it reliably enough that a study participant's setup does not become a research variable. Every ordinary way of arranging that has a defect: asking the participant to install dependencies adds a step that can fail; linking the program globally pollutes their environment and breaks if the workspace moves; invoking it through the workspace's own tooling means the plugin only works when the monorepo is checked out next to the repository being studied.
 
 The chosen answer is to make the plugin folder self-sufficient. If the command-line program is one file that needs nothing beside it, and the viewer's assets are already built and sitting in the same folder, then enabling the plugin is the whole installation. This component is the machinery that produces that folder, plus the small amount of metadata that tells a host what it is looking at.
 
-## Related Work
+## Related components
 
 The program being bundled is [The Command Surface](../cli-surface/), and the reason it must be invocable as a bare command is [Hook Wiring and the Fail-Open Rule](../../capture/plugin-hooks/) — the hook scripts shipped in the same folder call it by name, relying on the host to put the launcher on the search path.
 
@@ -74,7 +74,7 @@ The viewer half of the payload exists for [Serving the Map and Its JSON API](../
 
 The rest of the plugin folder is content rather than build output: the entry points a user types are [User-Initiated Entry Points](../../interventions/slash-commands/), and the two instruction documents that do the system's model-driven work are [The Mode B Build Protocol](../../memory/memory-builder-skill/) on the senior side and [Quiz and Socratic Protocols](../../interventions/tutor-skill/) on the junior side. None of those need compiling — they ship as they are written, which is part of why the packaging step only has to worry about two artifacts.
 
-## Description
+## How it works
 
 The build script runs in four movements. First it compiles: the engine and command-line packages are type-compiled so the bundler can resolve the engine's compiled entry, and the viewer is built so there is a distribution folder to copy. Second it bundles the command-line program from its source entry into a single module inside the plugin's launcher folder, targeting the runtime platform, emitting modern module syntax, and inlining every dependency — the shared engine, the argument parser, the schema library, the YAML parser, the model client — so that nothing but platform builtins remains external. Because some of those inlined dependencies were written for the older module system and expect a synchronous require and directory globals, the bundle is prefixed with a short preamble that reconstructs those from the module's own address. That preamble is the one piece of the build that repays careful reading: without it, a dependency doing a dynamic require of a platform builtin at load time would fail in the bundled form even though it works when installed normally.
 
@@ -88,7 +88,7 @@ The viewer's build configuration contributes one idea that outlives development.
 
 One honest caveat belongs in any account of this component: the bundle and the copied viewer assets are generated files that are committed to the repository. That is what makes the plugin folder usable straight from a checkout, but it also means those artifacts reflect whatever the sources looked like the last time the build script was run. They are not regenerated automatically by an ordinary build, and a source change is not visible to the plugin until the packaging script runs again.
 
-## Rationale
+## Design decisions
 
 Inlining every dependency into one module, rather than shipping a dependency list, appears to follow directly from the project's stated goal of a one-step install with ecological validity. A participant enabling a plugin should not encounter an install step that can fail behind a proxy, on an old runtime, or in an offline room. The rejected alternatives each preserve a failure mode the bundle removes: requiring a package install adds a network dependency at setup time, and linking the program globally makes correctness depend on where the workspace happens to live and on the participant not having a conflicting command of the same name installed. The cost paid is bundle size and the loss of independent dependency updates, which for a research prototype with a pinned dependency set is a cheap price.
 
@@ -98,6 +98,6 @@ Relying on the host to place the launcher folder on the search path is the decis
 
 Using a development-only proxy instead of a configurable data address looks like an attempt to keep a whole class of configuration out of existence. A base address setting would need a default, a way to override it, and a mechanism to make sure the development value never ships. By making the production case same-origin and the development case a proxy handled outside application code, the viewer has no address to get wrong. The tradeoff is that the development port and the server's default port are agreed by convention in a configuration comment rather than derived from a shared source, so changing the server's default port requires remembering to change the proxy target too.
 
-## Conclusion
+## Where it sits
 
 This component is the difference between a workspace and a product. It compiles three things, folds one of them into a single self-contained module, drops the other beside it as static assets, and describes the result twice — once for the host that will enable it and once for anyone who wants to install it from the repository. Understanding it explains why hooks can call a bare command with no setup, why the map is available immediately, and why the viewer contains no notion of a server address. The natural neighbours to read next are [The Command Surface](../cli-surface/) for what is inside the bundle, [Hook Wiring and the Fail-Open Rule](../../capture/plugin-hooks/) for who calls it, and [Serving the Map and Its JSON API](../../viewer/local-server/) for the half that consumes the shipped assets.

@@ -53,7 +53,7 @@ flowchart TD
     REFETCH --> PULSE[one-shot animation marker]
 ```
 
-## Abstract
+## Summary
 
 This component is the application's root: it loads the data, owns every piece of state the other
 three surfaces share, and composes them into one screen with a header showing weighted total
@@ -62,7 +62,7 @@ comprehension check completes — it re-fetches from the server rather than trus
 then flags the affected component for a one-shot animation on the map. It also carries the
 application's entry point and its single global stylesheet.
 
-## Introduction
+## What it does
 
 Everything else in this province does one thing: draw the map, render a paper, run a check, or fetch
 data. None of them knows about the others. Something has to hold the wiring, and the wiring is
@@ -78,12 +78,12 @@ is small enough to list: the map document, the coverage view, the list of checks
 selected, which check is open, which component just moved, and which state the legend is
 highlighting.
 
-## Related Work
+## Related components
 
 The three surfaces this shell composes are [Drawing the Map from Frozen Geometry](../map-canvas/), which receives
 the map, the coverage view, the selection, the grouped pending checks, the just-moved marker, and
 the highlighted state, and reports back hover-independent selections and badge activations;
-[Reading a Paper In-App](../component-panel/), which is mounted only when something is selected; and
+[Reading a Doc In-App](../component-panel/), which is mounted only when something is selected; and
 [Running a Quest in the Browser](../quest-runner-ui/), which is mounted only when a check is open.
 All data comes through [Live Data Versus Sample Fallback](../viewer-data-layer/), so the shell never
 touches the network directly and inherits that layer's fallback behaviour without knowing about it.
@@ -98,7 +98,7 @@ of [Keeping Platform Builtins Out of the Viewer](../../platform/browser-safe-sur
 export surface that omits everything touching file-system builtins so engine logic can be bundled
 into a web page at all.
 
-## Description
+## How it works
 
 The entry point is minimal: it finds the root element, throws if it is missing, and renders the
 shell inside the framework's strict development mode, after importing the global stylesheet. Strict
@@ -164,7 +164,7 @@ visited; only the progress bar and legend exist. And the shell's own leading com
 the application as a read-only shell awaiting a check runner and a live engine, which is no longer
 true — both are present and wired.
 
-## Rationale
+## Design decisions
 
 Owning all shared state in one place appears to be a considered rejection of machinery rather than
 an absence of design. Every piece of state here is read by at least two surfaces, which is normally
@@ -195,7 +195,7 @@ other affordance in the interface, and the legend is already where the eye goes 
 Wiring highlight to both hover and focus, on real buttons, means the same question is answerable
 without a pointer.
 
-## Conclusion
+## Where it sits
 
 The shell is the province's assembly point: it loads once, owns everything shared, composes three
 surfaces, and enforces the rule that the server is the authority on coverage by re-reading after

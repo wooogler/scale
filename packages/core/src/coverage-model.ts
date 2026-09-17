@@ -65,7 +65,7 @@ export function unificationProgress(nodes: MapNode[], coverage: UserCoverage): n
 
 /** Inputs to state classification beyond the component's own record. */
 export interface ClassifyOpts {
-  /** True if a passive signal (touch/prompt/paper_read) just landed. */
+  /** True if a passive signal (touch/prompt/doc_read) just landed. */
   hadPassiveSignal?: boolean;
   /** Count of active validations (quiz/socratic) accrued for this component. */
   activeValidations?: number;

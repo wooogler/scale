@@ -211,7 +211,7 @@ export function gateDenyReason(
         `check unlocks this territory durably.`
       : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH ` +
         `instead — explain what '${component}' does and why, grounded in its ` +
-        `paper under .scale/ and in what this edit is trying to change. Then ` +
+        `component doc under .scale/ and in what this edit is trying to change. Then ` +
         `tell the junior the territory stays locked until they pass its check ` +
         `later (in the SCALE map viewer, or with /scale-study ${component} in a ` +
         `coming session). The edit itself stays blocked for now.`;

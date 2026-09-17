@@ -57,11 +57,11 @@ flowchart LR
     J --> K["human decides whether to proceed, and on which model"]
 ```
 
-## Abstract
+## Summary
 
 Building the coverage memory is the single most expensive thing this system does, and it happens on the most capable model tier. This component answers the question a person needs answered before agreeing to that spend: roughly how much, roughly how long, and roughly how many components will come out. It does so with no model call and no network access at all — a filesystem scan measures the repository's shape, and pure arithmetic derived from one carefully measured real build turns that shape into a component target, a token basis, a time estimate, and a per-model price table. The cost half is deliberately rough and says so; the component target is not, because it is the number the finished partition is later checked against.
 
-## Introduction
+## What it does
 
 A person asked to authorize an expensive, slow, irreversible-feeling operation needs a number first. Without one they will either refuse a worthwhile spend or agree to an unbounded one, and neither is a good outcome. The build protocol therefore opens with a mandatory stop where the estimate is shown and the model tier is chosen, and this component is what fills that stop with something real.
 
@@ -69,11 +69,11 @@ The difficulty is that the true cost of a build is not knowable in advance. It d
 
 The second measurement carries a different kind of weight, and it was added after a build went wrong. How many components a repository deserves is a judgement about content, but how many it can *express* is a hard limit set by how the papers point at code: a paper names whole files. Past one component per file, several components share a file, and everything that turns an edit into a territory — the gate, the credit a junior earns for touching code, the detection that a colleague changed something — can no longer tell them apart. A build that ignored the estimate once produced four and a half components for every source file it anchored, and all three of those mechanisms broke together. So the estimate now reports both limits and which one binds, and the count it prints is a contract rather than a guess.
 
-## Related Work
+## Related components
 
 The direct consumer is [The Mode B Build Protocol](../memory-builder-skill/), whose very first stage is to run this estimate, present its table unaltered, and refuse to read a single source file until the user has confirmed. The model choice made at that stop is stored and read through [Conditions, Budgets, Thresholds, and Model Tiers](../../platform/config-schema/), which is also where the two-tier policy this component enforces in its table is defined. The scan and the rendering live alongside every other subcommand in [The Command Surface](../../platform/cli-surface/), which is why the impure half of this component shares a file with unrelated features. The cheap tier that the table pointedly excludes is the one used by [Selection, Generation, and Offline Fallback](../../quests/quest-generation/), the recurring per-session cost this one-time cost is contrasted against. The component count the estimate produces is the target that [The Mode B Build Protocol](../memory-builder-skill/) proposes a partition against and stops for approval on. The two are no longer independent: the protocol used to carry a fixed range of its own that silently overrode this one, which is how a repository sized for eight components was built with thirty-six. The range is gone, and a partition landing outside the band this component prints is a reason to stop and re-approve rather than a discrepancy to mention afterwards.
 
-## Description
+## How it works
 
 The component is split cleanly in two, along the line between pure and impure.
 
@@ -89,7 +89,7 @@ The impure half lives in the command layer. It walks the working directory count
 
 The rendering shows the repository size and the target component count with its band, then says which of the two limits bound that target and in what terms, then the shape it implies in groups and levels, then the two build-tier models with cost and estimated time, then a footer that does three honest things. It states the accuracy band as roughly plus or minus half. It explains that cached reads dominate the cost and grow faster than linearly for large single-agent builds, so that fanning out per province keeps cost roughly linear and divides wall-clock time by the number of provinces — which means the printed time is a single-agent upper bound rather than what a fan-out build will actually take. And it names the cheap intervention tier and its per-session cost range, so a reader understands that the expensive figure above is a one-time charge and not a recurring one. A machine-readable output mode emits the same numbers without the prose.
 
-## Rationale
+## Design decisions
 
 Splitting the arithmetic from the scan is the structural decision, and the source comment states the intent directly: no filesystem, no version control, no model — the command layer does the scan and feeds a number in. The practical benefit is that the estimate for a given repository shape is exactly reproducible and can be tested without a fixture repository, which matters more now than when it was only a spending decision: the same arithmetic is what a later check re-runs to judge whether the finished partition kept to what was approved. Folding the scan inward would make the estimator depend on disk state, and would make its behaviour on an unusual repository impossible to characterize without building one.
 
@@ -99,6 +99,6 @@ Excluding the cheap tier from the table is a policy statement dressed as a forma
 
 Presenting a wide band rather than a confident figure is the honesty decision. The source calls the estimate rough by design and an order-of-magnitude decision aid rather than a billing figure. With a single calibration point and a cost driver that is admitted to grow non-linearly, a precise-looking number would be a false claim, and the failure mode of false precision is worse than that of admitted roughness: a person who is told a figure is approximate will check their actual spend, while a person given two decimal places will not.
 
-## Conclusion
+## Where it sits
 
 This component turns a repository into a decision. A cheap scan, a handful of constants fitted from one real measured build, and a stated error band are enough to tell a person whether the coverage memory is worth building and on which model to build it — before a single source file has been read. It exists to serve the mandatory stop at the front of the build protocol, so read that next, and read the configuration component to see where the model tiers it enforces are actually defined.

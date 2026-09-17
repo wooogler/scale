@@ -12,7 +12,7 @@ import { z } from 'zod';
 export const ProvenanceSchema = z.string();
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 
-/** A named, quizzable concept unit within a component's paper. */
+/** A named, quizzable concept unit within a component doc. */
 export const ConceptSchema = z.object({
   /** Stable slug for the concept. */
   id: z.string(),
@@ -31,10 +31,10 @@ export const RationaleEntrySchema = z.object({
 export type RationaleEntry = z.infer<typeof RationaleEntrySchema>;
 
 /**
- * Frontmatter of a component paper (`.scale/<province>/<component>/README.md`).
+ * Frontmatter of a component doc (`.scale/<province>/<component>/README.md`).
  * Extends cluedoc's `title`/`sources` with `concepts` and `rationale`.
  */
-export const PaperFrontmatterSchema = z.object({
+export const DocFrontmatterSchema = z.object({
   /**
    * STABLE slug — the coverage key. Never renamed once assigned; renaming
    * would orphan a user's coverage for this component.
@@ -46,4 +46,4 @@ export const PaperFrontmatterSchema = z.object({
   concepts: z.array(ConceptSchema),
   rationale: z.array(RationaleEntrySchema),
 });
-export type PaperFrontmatter = z.infer<typeof PaperFrontmatterSchema>;
+export type DocFrontmatter = z.infer<typeof DocFrontmatterSchema>;

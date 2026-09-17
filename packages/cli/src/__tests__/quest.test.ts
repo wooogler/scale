@@ -5,14 +5,14 @@ import {
   ScaleConfigSchema,
   emptyComponentCoverage,
   type LoadedScale,
-  type LoadedPaper,
+  type LoadedDoc,
   type MapJson,
   type UserCoverage,
 } from '@scale/core';
 
 import { pickComponents, deterministicQuizItems, deterministicSocraticItems } from '../quest.js';
 
-function paper(id: string, title: string): LoadedPaper {
+function doc(id: string, title: string): LoadedDoc {
   return {
     id,
     path: `/tmp/.scale/prov/${id}`,
@@ -39,7 +39,7 @@ function paper(id: string, title: string): LoadedPaper {
 }
 
 const loaded: LoadedScale = {
-  papers: [paper('alpha', 'Alpha'), paper('beta', 'Beta'), paper('gamma', 'Gamma')],
+  docs: [doc('alpha', 'Alpha'), doc('beta', 'Beta'), doc('gamma', 'Gamma')],
   provinces: [{ id: 'prov', name: 'Prov' }],
   edges: [],
 };
@@ -98,7 +98,7 @@ describe('pickComponents', () => {
 
 describe('deterministic quiz items (offline fallback)', () => {
   it('produces exactly 2 valid 4-option MCQ items with a correct answer', () => {
-    const items = deterministicQuizItems(loaded.papers[0]!, loaded);
+    const items = deterministicQuizItems(loaded.docs[0]!, loaded);
     expect(items).toHaveLength(2);
     for (const item of items) {
       const parsed = QuestItemSchema.parse(item); // schema-valid
@@ -115,7 +115,7 @@ describe('deterministic quiz items (offline fallback)', () => {
 
 describe('deterministic socratic items (offline fallback)', () => {
   it('produces a single grounded seed question', () => {
-    const items = deterministicSocraticItems(loaded.papers[0]!);
+    const items = deterministicSocraticItems(loaded.docs[0]!);
     expect(items).toHaveLength(1);
     const parsed = QuestItemSchema.parse(items[0]);
     expect(parsed.prompt).toContain('Alpha');

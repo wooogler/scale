@@ -5,8 +5,8 @@ dist
 coverage/
 .vite/
 
-# Coverage-memory reverse index — derived from every paper's `sources`, rebuilt
-# on demand by `scale map index`. The papers and map.json are committed; this is
+# Coverage-memory reverse index — derived from every doc's `sources`, rebuilt
+# on demand by `scale map index`. The docs and map.json are committed; this is
 # not (PLAN §4.2).
 .scale/index.json
 

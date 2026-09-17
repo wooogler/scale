@@ -3,9 +3,9 @@ import { useStrings } from './i18n.js';
 
 /**
  * Deliberately minimal markdown renderer for the skeleton — enough for the
- * cluedoc paper bodies (headings, paragraphs, inline emphasis/`code`) plus a
+ * component doc bodies (headings, paragraphs, inline emphasis/`code`) plus a
  * mermaid placeholder. Full markdown + real mermaid rendering is a TODO for a
- * later phase (PLAN §7.3 "rendered paper (markdown + mermaid)").
+ * later phase (PLAN §7.3 "rendered doc (markdown + mermaid)").
  */
 
 type Block =
@@ -91,7 +91,7 @@ function inline(text: string, keyPrefix: string): JSX.Element[] {
 }
 
 export function Markdown({ source }: { source: string }): JSX.Element {
-  // Paper CONTENT is never translated (repo-shared, always English) — but the
+  // Doc CONTENT is never translated (repo-shared, always English) — but the
   // placeholder chrome below is the VIEWER speaking, so it follows the language.
   const S = useStrings();
   const blocks = parse(source);

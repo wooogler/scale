@@ -126,11 +126,11 @@ describe('classifyState', () => {
 });
 
 describe('file→component index', () => {
-  const papers = [
+  const docs = [
     { id: 'session-management', sources: ['src/server/auth/sessions.ts', 'src/server/middleware/session.ts'] },
     { id: 'document-sharing', sources: ['src/server/sharing/links.ts'] },
   ];
-  const index = buildFileComponentIndex(papers);
+  const index = buildFileComponentIndex(docs);
 
   it('builds a reverse index', () => {
     expect(index['src/server/auth/sessions.ts']).toEqual(['session-management']);

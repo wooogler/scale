@@ -52,11 +52,11 @@ flowchart TD
     DIR --> SESS[session and budget record — every field defaulted]
 ```
 
-## Abstract
+## Summary
 
 This component decides where a user's SCALE state lives and provides the only sanctioned way to read and write it. It derives a stable identifier for the repository being worked on, resolves that identifier to a directory under the user's home, and exposes narrow helpers for each file inside: the configuration document, the materialized coverage view, the append-only evidence log, the pending quest list, and a small per-session budget record. Its defining discipline is that hook-path callers get fast, non-throwing accessors, so a missing or damaged file degrades into a harmless no-op instead of breaking the user's editing flow.
 
-## Introduction
+## What it does
 
 SCALE splits its persistent data along a sharp line. The coverage memory — the papers, the frozen map, the reverse index — belongs to the repository and is committed with it, because it describes the code and is shared by everyone who works on that code. Everything about a particular person's comprehension is the opposite: it is private, it changes constantly, and it must never end up in a commit. So it lives outside the repository entirely, under the user's home directory, in one subdirectory per repository.
 
@@ -64,7 +64,7 @@ That split immediately raises a question this component has to answer: what iden
 
 Once the directory is chosen, a second concern takes over. Several commands run inside Claude Code hooks, on a strict latency budget, at moments when the user is mid-thought. Those commands must never block, never wait on the network, and never fail loudly because a file happened to be absent. This component is where that discipline is enforced, one accessor at a time.
 
-## Related Work
+## Related components
 
 The shape of the configuration document this module reads and writes — its defaults, its closed choice sets, its budget and threshold blocks — is defined by [Conditions, Budgets, Thresholds, and Model Tiers](../config-schema/). Every command that touches per-user state goes through the helpers here; the catalogue of those commands is [The Command Surface](../cli-surface/).
 
@@ -72,7 +72,7 @@ Three data-owning components sit directly on top of this layer. [The Append-Only
 
 Two further neighbours depend on parts of this module that are easy to overlook. [Deny, Retry, and Defer-as-Drop](../../interventions/gate-enforcement/) is the sole consumer of the session record — the small file that counts how many interventions have fired and remembers which component the last denial was waiting on. And [File-to-Component Reverse Index](../../map/file-component-index/) is fed by the deliberately minimal frontmatter scanner that also lives here, which extracts just enough from each paper to build the reverse index without pulling in a full parser. The frontmatter contract those two regular expressions are matching against — which guarantees that a stable identifier and a source list are always present and always in the same place — is [Paper Format and Frontmatter Contract](../../memory/paper-format/), and it is what makes so minimal a scanner safe.
 
-## Description
+## How it works
 
 Repository identity is resolved by a short cascade of best-effort git queries, each of which swallows its own failure. The first attempt asks for the origin remote's URL; if one exists it is normalized — a shorthand secure-shell form is rewritten into a host-plus-path form — and then reduced to a filesystem-safe slug by lowercasing, stripping any protocol prefix and trailing repository suffix, collapsing everything that is not alphanumeric into single dashes, and trimming dashes from both ends. That gives a name derived from host, owner, and repository, so the same project cloned twice on the same machine resolves to the same state. If there is no remote, the second attempt asks git for the top of the working tree and slugs its folder name. If that fails too — the directory is not a repository at all — the working directory's own folder name is slugged. The slugging function guarantees a non-empty result, so this cascade always terminates in a usable name.
 
@@ -86,7 +86,7 @@ The session record is the one piece of state with no shared schema, and its comm
 
 Finally, this module carries a lightweight frontmatter scanner used when building the file-to-component reverse index. It walks the coverage-memory tree, finds every paper, and extracts only two fields with regular expressions — the stable identifier and the list of source paths — deliberately avoiding a YAML dependency. Its own comment is explicit that the authoritative paper parser lives elsewhere and that this one is meant to stay minimal.
 
-## Rationale
+## Design decisions
 
 Deriving repository identity from the origin remote first, and only then from folder names, looks like a deliberate ordering by stability. A remote is the closest thing a repository has to a global name: it survives re-cloning, moving, and renaming the local folder, so a person's accumulated comprehension follows the project rather than the path. The folder-name fallbacks exist because the remote is not always there — a fresh local repository, a detached export, a directory that is not under version control at all — and the alternative of refusing to run in those cases would have made the tool unusable during exactly the early exploration it is meant to support. The cost of the fallback is real and worth stating: two unrelated local projects with the same folder name and no remotes will share one state directory.
 
@@ -96,6 +96,6 @@ The strict-versus-safe reader split is the code's own stated concession to the l
 
 Leaving the session record unvalidated by a shared schema, while every other file is validated, seems to follow from where each file travels. The four schema-backed files are read by the CLI, the local server, and in some cases the viewer, so they need one agreed definition. The session record is written and read by exactly one process for one purpose. The code suggests the field-by-field defaulting reader was judged both cheaper and more forgiving than a schema here, since a partial or stale record should degrade rather than be rejected. If this were reversed and the record were strictly validated, a schema change would make old records unreadable and silently reset live budgets — a worse failure than the one being avoided.
 
-## Conclusion
+## Where it sits
 
 This is the component that answers "where does my state live, and how do I touch it safely". It converts a working directory into a stable repository identity, owns every path under that identity, and hands out accessors whose error behaviour is chosen per caller: forgiving on the hook path, strict where the user asked a direct question. Everything the comprehension model persists passes through here. From this point the two most useful directions are [Conditions, Budgets, Thresholds, and Model Tiers](../config-schema/), which defines the one document this module validates most carefully, and [The Append-Only Evidence Log](../../comprehension/evidence-log/), which explains why the single append helper here is the only mutation the system's most important file will ever accept.

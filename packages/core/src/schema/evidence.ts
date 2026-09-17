@@ -44,10 +44,23 @@ export const DiffReviewEvidenceSchema = z.object({
   proposeToExecuteMs: z.number(),
 });
 
-/** A paper was opened/read in the web app. */
-export const PaperReadEvidenceSchema = z.object({
+/**
+ * The canonical literal for "a component doc was opened/read in the web app",
+ * and the legacy spelling it replaced.
+ *
+ * Both are accepted, and the state engine credits them identically. This is not
+ * politeness about an old name: `evidence.jsonl` is APPEND-ONLY, every row ever
+ * written is still on disk, and coverage is re-materialized by folding the whole
+ * log from the beginning. Dropping `paper_read` would not deprecate it — it
+ * would make every historical row fail to parse and silently erase the reading
+ * credit of every user who has one.
+ */
+export const DocReadTypeSchema = z.enum(['doc_read', 'paper_read']);
+
+/** A component doc was opened/read in the web app. */
+export const DocReadEvidenceSchema = z.object({
   ...baseEvidence,
-  type: z.literal('paper_read'),
+  type: DocReadTypeSchema,
   componentId: z.string(),
 });
 
@@ -150,7 +163,7 @@ export const EvidenceEntrySchema = z.discriminatedUnion('type', [
   PromptEvidenceSchema,
   TouchEvidenceSchema,
   DiffReviewEvidenceSchema,
-  PaperReadEvidenceSchema,
+  DocReadEvidenceSchema,
   QuizResultEvidenceSchema,
   SocraticResultEvidenceSchema,
   InterventionEvidenceSchema,
@@ -160,7 +173,7 @@ export type EvidenceEntry = z.infer<typeof EvidenceEntrySchema>;
 export type PromptEvidence = z.infer<typeof PromptEvidenceSchema>;
 export type TouchEvidence = z.infer<typeof TouchEvidenceSchema>;
 export type DiffReviewEvidence = z.infer<typeof DiffReviewEvidenceSchema>;
-export type PaperReadEvidence = z.infer<typeof PaperReadEvidenceSchema>;
+export type DocReadEvidence = z.infer<typeof DocReadEvidenceSchema>;
 export type QuizResultEvidence = z.infer<typeof QuizResultEvidenceSchema>;
 export type SocraticResultEvidence = z.infer<typeof SocraticResultEvidenceSchema>;
 export type InterventionEvidence = z.infer<typeof InterventionEvidenceSchema>;

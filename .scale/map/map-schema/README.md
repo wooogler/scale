@@ -50,17 +50,17 @@ flowchart TD
     S --> DRIFT[staleness reporting]
 ```
 
-## Abstract
+## Summary
 
 The frozen map document is the single artifact that turns a folder of markdown papers into a place. It records, once, where every component sits on a unit-square canvas, how heavy each component is, which components reference which, and which revision of the code the whole picture was drawn from. This component is the schema for that document: the shape every producer must emit and every consumer may rely on.
 
-## Introduction
+## What it does
 
 The coverage memory is a tree of prose papers. A tree has no geometry — it has nesting, and nesting alone gives you a file browser, not a map. But the reason for drawing a codebase as a map at all is spatial memory: a person who has visited a place remembers roughly where things were, and can navigate back to them without re-reading an index. That only works if the place stops moving. A layout recomputed on every open is not a map; it is a new city each morning.
 
 So the system computes geometry once and writes it down. The document that holds it needs to be small, boring, and stable enough that half a dozen unrelated readers — the viewer, the progress calculation, the commit gate, the status report — can all depend on it without coordinating with each other. That is what this schema pins down. It also decides, by what it does and does not contain, which questions the rest of the system is allowed to ask cheaply: because importance is stored rather than derived, asking "how heavy is this component" is a field read everywhere, forever.
 
-## Related Work
+## Related components
 
 The document is produced by [Deterministic Layout and Incremental Placement](../frozen-layout/), which is the only writer; everything in this schema exists because that computation needs somewhere to put its result. Its input comes from [Loading the Coverage Memory Tree](../../memory/paper-loader/), which walks the papers and yields the component identifiers, province groupings, and the cross-links that become edges. The paths those papers declare feed a different derived artifact entirely, described in [File-to-Component Reverse Index](../file-component-index/), so a reader should not expect this document to say anything about files.
 
@@ -68,7 +68,7 @@ On the consuming side, [Scoring: Exponential Averaging, Loyalty, Classification]
 
 The document also has to travel. [Serving the Map and Its JSON API](../../viewer/local-server/) reads the committed file off disk and hands it to the browser unchanged over a single endpoint, which is why the shape defined here is effectively a public interface rather than an internal one. On the far side of that call, [Live Data Versus Sample Fallback](../../viewer/viewer-data-layer/) either receives it or substitutes a bundled fictional stand-in built to this same shape, so anything added here has to be mirrored in that sample or the offline development path silently diverges. The definitions themselves reach the browser through [Keeping Platform Builtins Out of the Viewer](../../platform/browser-safe-surface/), which re-exports this schema on an entry point that excludes anything touching the filesystem — the reason viewer and command line can never disagree about what a node is.
 
-## Description
+## How it works
 
 The document has five top-level parts. A version number marks the document format itself, so a future reader can tell an old file from a new one. A build commit stamp records the revision of the repository the papers were written against. Then three lists: provinces, nodes, and edges.
 
@@ -76,7 +76,7 @@ A province entry is only an identifier and a human display name. Provinces have 
 
 A node entry names a component, names the province it belongs to, and carries a horizontal and a vertical coordinate plus an importance value. All three numbers are constrained to the range from zero to one inclusive, and the schema enforces those bounds rather than trusting the producer. The coordinates are normalized: the canvas is the unit square, and any real display maps that square onto its own pixels. Importance is likewise a normalized weight rather than a raw count, so it can be multiplied against a coverage fraction without unit confusion.
 
-An edge entry names a source component, a target component, and a kind drawn from a fixed set of three: parent-child nesting, cross-reference, and direct dependency. Only the first two are produced today — the loader emits nesting edges between papers that contain one another and cross-reference edges from the links in each paper's Related Work section. Nothing in the current system emits dependency edges; the value is declared and reserved. A reader should treat it as an empty slot, not as evidence that dependency analysis exists.
+An edge entry names a source component, a target component, and a kind drawn from a fixed set of three: parent-child nesting, cross-reference, and direct dependency. Only the first two are produced today — the loader emits nesting edges between papers that contain one another and cross-reference edges from the links in each doc's Related components section. Nothing in the current system emits dependency edges; the value is declared and reserved. A reader should treat it as an empty slot, not as evidence that dependency analysis exists.
 
 The nesting kind deserves a sharper caveat than "produced". A nesting edge is emitted only when one component paper's folder sits inside another component paper's folder. A paper filed directly under a province has no component above it — a province is a grouping, not a component, and gets no node of its own — so it produces no nesting edge. In a memory laid out two levels deep, which is the ordinary arrangement, the nesting kind is therefore declared, implemented, and still entirely unused. Only cross-reference edges actually populate a typical document.
 
@@ -84,7 +84,7 @@ The invariant the schema is really protecting is that this document is the contr
 
 There are gaps worth stating plainly. Nothing in the schema constrains referential integrity: an edge may name a component that has no node, a node may claim a province that is not listed, and the schema will accept it. Those consistency properties are maintained by the producer, not enforced here. Nor does the document say anything about coverage. It is deliberately static — geometry and weight only — while everything that changes as a person learns lives in separate per-user state described in the comprehension province. That separation is what allows the map document to be committed to the repository and shared, while comprehension stays private to each reader.
 
-## Rationale
+## Design decisions
 
 Normalized coordinates are the load-bearing choice. The code suggests the motivation is display independence: the map has to render on a laptop and a phone, at several zoom levels, without the stored numbers changing. If coordinates were pixels, every one of those situations would either distort the layout or require rewriting the frozen document — and rewriting the frozen document is exactly the failure the whole design is arranged to prevent, because a moved component breaks the reader's memory of where it was. With normalized coordinates the document is written once and every viewer solves its own scaling problem locally.
 
@@ -96,6 +96,6 @@ Declining to check referential integrity is a decision the schema makes by omiss
 
 Reserving a third edge kind that nothing emits is a small forward-compatibility bet. This appears to be because adding an enumerated value later is a breaking change for any reader that validates strictly: documents containing the new kind would be rejected by older readers, requiring every consumer to upgrade in lockstep. Declaring it now costs nothing and means a future dependency-analysis pass can start emitting those edges without a version bump. The risk of the bet is documentation drift — a reader may reasonably assume a declared kind is a produced kind — which is why it is called out explicitly here.
 
-## Conclusion
+## Where it sits
 
 This document is the map's skeleton: normalized positions, a per-component weight, a grouping into provinces, a link graph, and a provenance stamp. Understanding it means understanding what the rest of the system is permitted to assume — that positions never move on their own, that importance is a fact rather than a calculation, and that coverage lives somewhere else entirely. The two neighbours that matter most next are the layout computation that produces this document and guarantees its stability, and the coverage model that multiplies its importance values into the number a learner watches climb.

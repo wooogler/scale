@@ -1,7 +1,8 @@
 // @scale/core — shared schema types, coverage model, and state engine.
 
 // Schemas + inferred types.
-export * from './schema/paper.js';
+export * from './schema/doc.js';
+export * from './schema/sections.js';
 export * from './schema/map.js';
 export * from './schema/coverage.js';
 export * from './schema/evidence.js';
@@ -17,7 +18,7 @@ export * from './coverage-model.js';
 export * from './index-map.js';
 
 // Coverage-memory (.scale/) loader.
-export * from './paper-loader.js';
+export * from './doc-loader.js';
 export * from './grounding.js';
 
 // Deterministic frozen map layout.

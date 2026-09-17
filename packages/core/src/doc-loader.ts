@@ -1,17 +1,17 @@
 /**
  * Loader for a repo's `.scale/` coverage-memory tree (the artifact the
  * `scale-map` skill produces). Repo-agnostic: given any repo root it walks
- * `<repoRoot>/.scale/`, parses each component paper's YAML frontmatter, and
+ * `<repoRoot>/.scale/`, parses each component doc's YAML frontmatter, and
  * derives the province clustering and the edge graph used by layout + serve.
  *
  * Tree shape (PLAN §4.1, SKILL.md):
- *   .scale/README.md                        → root paper       (depth 0)
- *   .scale/<province>/README.md             → province paper   (depth 1)
- *   .scale/<province>/<component>/README.md → component paper  (depth ≥ 2) → node
+ *   .scale/README.md                        → root doc       (depth 0)
+ *   .scale/<province>/README.md             → province doc   (depth 1)
+ *   .scale/<province>/<component>/README.md → component doc  (depth ≥ 2) → node
  *
- * Only component papers (depth ≥ 2) become map nodes; their frontmatter `id`
+ * Only component docs (depth ≥ 2) become map nodes; their frontmatter `id`
  * is the STABLE node key (never the folder slug). Provinces are the first path
- * segment under `.scale/`. Papers with invalid frontmatter are skipped + warned.
+ * segment under `.scale/`. Docs with invalid frontmatter are skipped + warned.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,30 +19,31 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 
 import {
-  PaperFrontmatterSchema,
-  type PaperFrontmatter,
-} from './schema/paper.js';
+  DocFrontmatterSchema,
+  type DocFrontmatter,
+} from './schema/doc.js';
+import { canonicalSectionKey } from './schema/sections.js';
 import { type Province, type MapEdge } from './schema/map.js';
 
-export interface LoadedPaper {
+export interface LoadedDoc {
   /** Stable frontmatter id — the coverage key and map node id. */
   id: string;
-  /** Absolute path to the paper's folder. */
+  /** Absolute path to the doc's folder. */
   path: string;
   /** Province slug (first path segment under `.scale/`). */
   province: string;
-  /** Frontmatter id of the paper in the immediate parent folder, or null. */
+  /** Frontmatter id of the doc in the immediate parent folder, or null. */
   parentId: string | null;
-  frontmatter: PaperFrontmatter;
+  frontmatter: DocFrontmatter;
   /** Markdown body after the frontmatter block. */
   body: string;
 }
 
 export interface LoadedScale {
-  papers: LoadedPaper[];
+  docs: LoadedDoc[];
   provinces: Province[];
   edges: MapEdge[];
-  rootPaper?: LoadedPaper;
+  rootDoc?: LoadedDoc;
 }
 
 /** Split a README into { frontmatter yaml string | null, body }. */
@@ -101,7 +102,7 @@ function titleize(slug: string): string {
     .join(' ');
 }
 
-/** Lenient frontmatter read for province/root orientation papers. */
+/** Lenient frontmatter read for province/root orientation docs. */
 function lenientTitle(yaml: string | null): string | undefined {
   if (!yaml) return undefined;
   try {
@@ -125,13 +126,21 @@ function normalizeRel(p: string): string {
 }
 
 /**
- * Extract the markdown links inside a paper's "Related Work" section. Returns
- * the raw link targets (hrefs). Falls back to scanning the whole body if no
- * Related Work heading is found.
+ * Extract the markdown links inside a doc's "Related components" section.
+ * Returns the raw link targets (hrefs). Falls back to scanning the whole body
+ * if no such heading is found.
+ *
+ * The heading is resolved through {@link canonicalSectionKey}, so a doc written
+ * with the legacy academic heading (`## Related Work`) and one written with the
+ * current heading (`## Related components`) yield the same `reference` edges —
+ * every `.scale/` tree built before the rename is still on disk.
  */
-function relatedWorkLinks(body: string): string[] {
+function relatedLinks(body: string): string[] {
   const lines = body.split(/\r?\n/);
-  const start = lines.findIndex((l) => /^#{1,6}\s+related work\b/i.test(l));
+  const start = lines.findIndex((l) => {
+    const m = /^#{1,6}[^\S\n]+(.*)$/.exec(l);
+    return m !== null && canonicalSectionKey(m[1] ?? '') === 'related-components';
+  });
   let scope = body;
   if (start >= 0) {
     const startLevel = /^(#{1,6})/.exec(lines[start] ?? '')?.[1]?.length ?? 2;
@@ -164,22 +173,22 @@ export function loadScaleDir(repoRoot: string): LoadedScale {
   const readmes = collectReadmes(scaleDir);
 
   // Index folders by their relative path so both component-parent lookups and
-  // Related Work link resolution can map a folder → its frontmatter id.
+  // related-component link resolution can map a folder → its frontmatter id.
   const relOfDir = (absDir: string): string =>
     normalizeRel(path.relative(scaleDir, absDir));
 
-  const papers: LoadedPaper[] = [];
+  const docs: LoadedDoc[] = [];
   const folderPathToId = new Map<string, string>(); // rel folder → node id
-  let rootPaper: LoadedPaper | undefined;
+  let rootDoc: LoadedDoc | undefined;
 
-  // First pass: parse component papers (depth ≥ 2) and the root paper.
+  // First pass: parse component docs (depth ≥ 2) and the root doc.
   for (const r of readmes) {
     if (r.depth === 0) {
-      // Root orientation paper — set rootPaper only if it fully validates.
+      // Root orientation doc — set rootDoc only if it fully validates.
       if (r.yaml) {
         try {
-          const fm = PaperFrontmatterSchema.parse(parseYaml(r.yaml));
-          rootPaper = {
+          const fm = DocFrontmatterSchema.parse(parseYaml(r.yaml));
+          rootDoc = {
             id: fm.id,
             path: r.absDir,
             province: '',
@@ -193,18 +202,18 @@ export function loadScaleDir(repoRoot: string): LoadedScale {
       }
       continue;
     }
-    if (r.depth === 1) continue; // province orientation paper — handled below
+    if (r.depth === 1) continue; // province orientation doc — handled below
 
-    // Component paper.
+    // Component doc.
     if (!r.yaml) {
       console.warn(
         `scale: skipping ${path.join(r.absDir, 'README.md')} — no frontmatter`,
       );
       continue;
     }
-    let fm: PaperFrontmatter;
+    let fm: DocFrontmatter;
     try {
-      fm = PaperFrontmatterSchema.parse(parseYaml(r.yaml));
+      fm = DocFrontmatterSchema.parse(parseYaml(r.yaml));
     } catch (err) {
       console.warn(
         `scale: skipping ${path.join(r.absDir, 'README.md')} — invalid frontmatter: ${
@@ -214,7 +223,7 @@ export function loadScaleDir(repoRoot: string): LoadedScale {
       continue;
     }
     const province = r.segments[0] ?? '';
-    papers.push({
+    docs.push({
       id: fm.id,
       path: r.absDir,
       province,
@@ -225,12 +234,12 @@ export function loadScaleDir(repoRoot: string): LoadedScale {
     folderPathToId.set(relOfDir(r.absDir), fm.id);
   }
 
-  const nodeIds = new Set(papers.map((p) => p.id));
+  const nodeIds = new Set(docs.map((d) => d.id));
 
   // Resolve parentId from folder nesting (parent folder's node id, if any).
-  for (const p of papers) {
-    const parentRel = normalizeRel(relOfDir(p.path).split('/').slice(0, -1).join('/'));
-    p.parentId = folderPathToId.get(parentRel) ?? null;
+  for (const d of docs) {
+    const parentRel = normalizeRel(relOfDir(d.path).split('/').slice(0, -1).join('/'));
+    d.parentId = folderPathToId.get(parentRel) ?? null;
   }
 
   // Provinces: one per distinct first path segment, sorted for stability.
@@ -241,7 +250,7 @@ export function loadScaleDir(repoRoot: string): LoadedScale {
       provinceTitles.set(slug, lenientTitle(r.yaml) ?? titleize(slug));
     }
   }
-  const provinceSlugs = new Set<string>(papers.map((p) => p.province));
+  const provinceSlugs = new Set<string>(docs.map((d) => d.province));
   for (const slug of provinceTitles.keys()) provinceSlugs.add(slug);
   const provinces: Province[] = [...provinceSlugs]
     .filter(Boolean)
@@ -261,43 +270,43 @@ export function loadScaleDir(repoRoot: string): LoadedScale {
   };
 
   // Hierarchy edges: parent/child between nested component nodes.
-  for (const p of papers) {
-    if (p.parentId && nodeIds.has(p.parentId)) {
-      pushEdge({ from: p.parentId, to: p.id, kind: 'hierarchy' });
+  for (const d of docs) {
+    if (d.parentId && nodeIds.has(d.parentId)) {
+      pushEdge({ from: d.parentId, to: d.id, kind: 'hierarchy' });
     }
   }
 
-  // Reference edges: Related Work links resolving to another node's folder.
-  for (const p of papers) {
-    for (const href of relatedWorkLinks(p.body)) {
+  // Reference edges: related-component links resolving to another node's folder.
+  for (const d of docs) {
+    for (const href of relatedLinks(d.body)) {
       const targetRel = normalizeRel(
-        path.posix.join(relOfDir(p.path), href.replace(/#.*$/, '')),
+        path.posix.join(relOfDir(d.path), href.replace(/#.*$/, '')),
       );
       const targetId = folderPathToId.get(targetRel);
-      if (targetId && targetId !== p.id) {
-        pushEdge({ from: p.id, to: targetId, kind: 'reference' });
+      if (targetId && targetId !== d.id) {
+        pushEdge({ from: d.id, to: targetId, kind: 'reference' });
       }
     }
   }
 
-  return { papers, provinces, edges, rootPaper };
+  return { docs, provinces, edges, rootDoc };
 }
 
-/** Find a loaded paper (component or root) by its stable id. */
-export function paperById(loaded: LoadedScale, id: string): LoadedPaper | undefined {
-  if (loaded.rootPaper?.id === id) return loaded.rootPaper;
-  return loaded.papers.find((p) => p.id === id);
+/** Find a loaded doc (component or root) by its stable id. */
+export function docById(loaded: LoadedScale, id: string): LoadedDoc | undefined {
+  if (loaded.rootDoc?.id === id) return loaded.rootDoc;
+  return loaded.docs.find((d) => d.id === id);
 }
 
 /**
- * Project component papers into the `{ id, sources }[]` shape that
+ * Project component docs into the `{ id, sources }[]` shape that
  * `buildFileComponentIndex` consumes.
  */
 export function componentSourcesIndex(
   loaded: LoadedScale,
 ): { id: string; sources: string[] }[] {
-  return loaded.papers.map((p) => ({
-    id: p.frontmatter.id,
-    sources: p.frontmatter.sources,
+  return loaded.docs.map((d) => ({
+    id: d.frontmatter.id,
+    sources: d.frontmatter.sources,
   }));
 }

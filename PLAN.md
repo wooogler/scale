@@ -120,7 +120,7 @@ rationale:
 ---
 ```
 
-Body sections (cluedoc's six + one): hero visual (mermaid) → Abstract → Introduction → Related Work (cross-paper links = the graph) → Description → **Rationale** (new; prose form of the frontmatter entries) → Conclusion. cluedoc's prose rules kept: no code symbols/paths/snippets in the body; anchoring lives in `sources` only.
+Body sections (cluedoc's six + one): hero visual (mermaid) → `Summary` → `What it does` → `Related components` (cross-doc links = the graph) → `How it works` → **`Design decisions`** (new; prose form of the frontmatter entries) → `Where it sits`. *These replaced the academic headings (Abstract / Introduction / Related Work / Description / Rationale / Conclusion) on 2026-09-17; the loader still accepts the old ones as aliases — see [Vocabulary](#vocabulary-2026-09-17).* cluedoc's prose rules kept: no code symbols/paths/snippets in the body; anchoring lives in `sources` only.
 
 ### 4.2 `map.json` — frozen spatial layout
 
@@ -160,13 +160,13 @@ Single local user for the prototype (multi-user later = separate state dirs).
 
 - **`coverage.json`** — per component: `state` (fog|explored|validated|stale), `dims {structure, concepts, rationale}` ∈ [0,1], `lastValidatedSha`, `loyalty` ∈ [0,1].
 - **`evidence.jsonl`** — append-only raw signals (kept raw so the coverage model can be re-fit later without data loss):
-  - `prompt` (component mentions extracted by keyword/slug match), `touch` (files edited → components via index), `diff_review` (proposal→execution latency per Edit), `paper_read` (opened in web), `quiz_result` / `socratic_result` (per-dim scores), `intervention` (shown/deferred/completed).
+  - `prompt` (component mentions extracted by keyword/slug match), `touch` (files edited → components via index), `diff_review` (proposal→execution latency per Edit), `doc_read` (component doc opened in web; legacy `paper_read` rows still read), `quiz_result` / `socratic_result` (per-dim scores), `intervention` (shown/deferred/completed).
 - **`quests.json`** — pending web quests: `{id, componentId, modality, items, origin: session|rebellion|voluntary, status}`.
 - **`config.json`** — `condition: {timing: inflow|postsession, modality: quiz|socratic}`, `inflow.triggers` (§6.1), `language: en|ko` (interaction language, §6), budgets/thresholds (all tunable), user label.
 
 ### 5.1 Coverage model v1 (simple, config-tunable constants)
 
-- **Passive signals explore, never conquer.** `touch`/`prompt` → fog→explored, small structure credit (cap 0.3 from passive alone). `paper_read` → cap 0.4. Diff-review latency: logged only, not modeled in v1.
+- **Passive signals explore, never conquer.** `touch`/`prompt` → fog→explored, small structure credit (cap 0.3 from passive alone). `doc_read` → cap 0.4 (`thresholds.docReadCap`). Diff-review latency: logged only, not modeled in v1.
 - **Active validation conquers.** Quiz items are tagged with a dim; result updates that dim by EMA (`dim ← 0.7·dim + 0.3·score`). Socratic yields rubric scores per dim touched. `validated` when weighted dims ≥ 0.6 with ≥ 2 active validations; sets `lastValidatedSha`.
 - **Staleness.** `loyalty = 1 − min(1, churn(sources since lastValidatedSha) / size)`; recomputed by `scale map drift` (async at SessionStart, and on web refresh). Previously-validated component with loyalty < 0.5 → `stale` → re-validation quest.
 - **Unification progress** = Σ(importance × mean dims) / Σ(importance).
@@ -274,3 +274,27 @@ Shortlist (validate top candidates with a 30-min survey dry-run in Phase 1):
 ## 11. Deferred (explicitly out of scope now)
 
 Study infra (condition assignment, analytics, consent), senior rationale interviews (schema-ready via `provenance`), Mode A live co-construction (hook infra will already exist), mobile PWA/push, multi-user server & sync, any competitive mechanics (leaderboards — intentionally never).
+
+---
+
+## Vocabulary (2026-09-17)
+
+The content model is unchanged; the **vocabulary** is not. A component doc has always been an engineering artifact — six fixed sections, file anchors, quizzable `concepts`, ADR-shaped `rationale` entries (decision / why / alternatives / provenance) — and calling it a "paper" with an "Abstract" and a "Related Work" section invited the writer to hedge, survey and generalize where the reader needs a claim about this code; arc42, Backstage TechDocs and Diátaxis all name a section after the question it answers, which is what the six headings now do.
+
+| canonical (now) | legacy alias (still read) |
+|---|---|
+| `Summary` | Abstract |
+| `What it does` | Introduction |
+| `Related components` | Related Work |
+| `How it works` | Description |
+| `Design decisions` | Rationale |
+| `Where it sits` | Conclusion |
+
+**Why this cost a rename and the game skin did not.** §1 holds the strategy-game metaphor to a UI skin: `territory` and `conquest` never reach a schema, so the skin can be re-themed without touching code. The academic metaphor was never held to that line, and it had leaked all the way down — `schema/paper.ts`, `paper-loader.ts`, `paperGrounding`, the `paper_read` evidence kind, `thresholds.paperReadCap`, `GET /api/paper/:id`. Those are now `doc` throughout: the same discipline, applied late. Component **ids** are deliberately exempt — `paper-format` and `paper-loader` are coverage keys, and §4.1's "NEVER renamed" binds them like any other id.
+
+**Deliberately not done.**
+
+- `doc_read` is defined (and legacy `paper_read` rows still count), but **nothing emits it** — the viewer still does not log a doc open, so `thresholds.docReadCap` remains unexercised. This was true before the rename and is unchanged by it.
+- **No id renames, no state migration.** The rename touches text and code only; nothing under `~/.scale/` is rewritten.
+
+**Migration.** Legacy headings load as aliases and `/scale-map` never writes them again; legacy `paper_read` evidence still counts toward coverage; a config carrying `thresholds.paperReadCap` is migrated to `docReadCap` silently on read. An existing `.scale/` build and an existing state dir both keep working untouched.

@@ -63,17 +63,17 @@ flowchart TD
     HEAVY --> MEM
 ```
 
-## Abstract
+## Summary
 
 This component is the single command-line program through which everything in SCALE is driven — initialization, signal logging, the pre-commit decision, recording a comprehension check, recomputing coverage, generating and completing quests, freezing the map, estimating build cost, serving the viewer, reading or changing configuration, and clearing a person's state back to nothing. It matters because it has two callers with very different tolerances: a person typing at a terminal, and automated hooks running inside someone's editing session. The surface is therefore organized around a latency contract rather than around features, splitting commands into those that may only do fast local file and git work and those that are allowed to be slow because they never run in the way of a keystroke.
 
-## Introduction
+## What it does
 
 SCALE could have exposed its engine as a library and let each caller wire it up. It does not, and the reason is that its most timing-sensitive caller is not a program a developer writes — it is a set of hooks that fire while a person is in the middle of thinking. Those hooks need something they can invoke as a plain command, that starts fast, that never hangs on a network, and that fails in a way which cannot damage the session. Meanwhile a senior building the coverage memory and a junior checking their progress need a comfortable human interface over the same engine.
 
 Rather than maintain two surfaces, this component makes one program serve both, and pushes the difference into a documented contract stated at the top of the file: the hook-path commands must remain pure fast reads and appends, under a fifth of a second, with no model calls and no network, while anything heavy runs detached and out of the way. Every command in the program can be placed on one side or the other of that line, and knowing which side a command is on tells you most of what you need to know about it.
 
-## Related Work
+## Related components
 
 Almost every command here is a thin shell around another component. The state helpers that resolve which directory to operate on and how to read and write each file are described in [Per-User State Layout and Repository Identity](../state-directory/); the configuration keys the read-and-change commands manipulate are defined in [Conditions, Budgets, Thresholds, and Model Tiers](../config-schema/).
 
@@ -85,7 +85,7 @@ The map group has three neighbours of its own. The freeze command is the entry p
 
 Three further neighbours sit on the calling side, or just behind a single command. The three logging leaves exist because of [Capturing Touches, Prompts, and Review Latency](../../capture/edit-and-prompt-hooks/), which is both what invokes them and what fixes the budget their cheap substring-and-lookup resolution has to fit inside. The session-context command and the detached generation call are the two ends of [Session Start and Session End](../../capture/session-lifecycle-hooks/), which is why beginning a session is the act that refills the interruption budget the gate later spends. And the grading vocabulary the record command accepts, along with the reason a validation is stamped with a commit identifier, belongs to [Recording a Validation Outcome](../../interventions/validation-recording/).
 
-## Description
+## How it works
 
 The program is built from a command framework as a tree of subcommands, several of them grouped: signal logging has three leaves for prompts, file touches, and review latency; the gate has a decision leaf and a skip leaf; coverage, quests, map operations, and configuration each form their own small group, and a handful of commands sit at the top level on their own. Every command resolves the current working directory as the repository under study and asks the state layer for the matching per-user directory. There is no global installation-wide state and no notion of a "current project" other than where you are standing.
 
@@ -101,7 +101,7 @@ The heavy side is small and explicitly fenced. Quest generation is invoked detac
 
 Three honesty notes belong here. The drift command is a documented minimal placeholder and is the only one left: it reports the commit the map was built from and the current one, and then says plainly that per-component source-churn detection is not implemented. It is easy to mistake for a finished feature because it prints a plausible-looking pair of commit identifiers, so anyone reading its output should treat it as reporting a reference point rather than reporting drift. The file also still carries a small helper for announcing placeholders — print what is missing, exit successfully — expressing the rule that a stub which fails is worse than a stub that is honest, because hooks and scripts calling it would break; that helper now has no callers, since every other command has been filled in and the drift command prints its own message directly. Finally, the explanatory comment at the top of the file describes an earlier state of the program in which most commands were stubs, and it has not been refreshed; the command list below it is the reliable account.
 
-## Rationale
+## Design decisions
 
 Making one program serve both humans and hooks appears to be a direct consequence of the ecological-validity goal: the junior uses unmodified tooling, so the integration point has to be something a hook can shell out to. The rejected alternatives are visible in the shape of what exists. A long-running daemon would have given lower per-call latency but introduces lifecycle, staleness, and cleanup problems on a machine the study does not control. A separate hook-only binary would have duplicated the state layer and invited the two copies to drift. One program with a stated per-command latency contract keeps a single implementation and makes the contract reviewable in one place.
 
@@ -113,6 +113,6 @@ Running quest generation detached and catching its own failures seems to follow 
 
 Re-validating the entire configuration after a single-key change, instead of validating just the changed key, appears to be about catching combinations rather than values. A value can be individually plausible and still produce a document the schema rejects, and the write helper refuses to persist anything that does not parse. The cost is that an unrelated pre-existing problem in the document will surface on an unrelated edit; the benefit is that no invalid configuration ever reaches disk to be discovered later by a hook that cannot report it.
 
-## Conclusion
+## Where it sits
 
 This component is the seam where SCALE's engine becomes usable — by a person, and, more importantly, by the automation running silently inside someone's session. Its organizing idea is not a feature list but a latency and failure contract: fast commands read local files and git and are built never to fail in a way the user must act on, heavy commands run detached and swallow their own errors, and the pre-commit decision is a printed value rather than an enforced verdict — with the caller's fail-open rule supplying the half of that promise this program cannot keep alone. To go deeper, read [Hook Wiring and the Fail-Open Rule](../../capture/plugin-hooks/) for the caller that makes those constraints necessary, [Deny, Retry, and Defer-as-Drop](../../interventions/gate-enforcement/) for what happens to the decision this surface prints, and [Per-User State Layout and Repository Identity](../state-directory/) for the layer every one of these commands stands on.

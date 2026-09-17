@@ -55,7 +55,7 @@ flowchart LR
     BSKILL --> MEM["papers and frozen layout"]
 ```
 
-## Abstract
+## Summary
 
 This component is the set of user-typed entry points the plugin exposes: build or
 sync the coverage memory, study a component voluntarily, fire a comprehension check
@@ -65,7 +65,7 @@ work happens in the two skills and the deterministic report they delegate to. Th
 real content is the framing: which protocol, with what target, under which budget
 rules, and recorded under which origin.
 
-## Introduction
+## What it does
 
 Almost everything else in the system is system-initiated: a hook fires, a gate
 refuses, a signal is appended. That is deliberate, because system-initiated
@@ -81,7 +81,7 @@ that they carry the framing, and the framing changes the meaning of the outcome:
 same tutor protocol, entered voluntarily, produces evidence tagged differently and
 governed by different rules than the same protocol entered through a refused commit.
 
-## Related Work
+## Related components
 
 Two of the four entries route into [Quiz and Socratic Protocols](../tutor-skill/),
 which defines everything they deliberately do not restate — grounding, caps, the
@@ -105,11 +105,11 @@ entries only exist for a user because they are copied there. The map-side
 equivalent of the voluntary study path — starting a check from a component's panel
 rather than from the chat — is [Running a Quest in the Browser](../../viewer/quest-runner-ui/),
 launched from the reading surface described in
-[Reading a Paper In-App](../../viewer/component-panel/); together they are the useful
+[Reading a Doc In-App](../../viewer/component-panel/); together they are the useful
 contrast, since the panel offers the same voluntary check next to the paper itself
 rather than behind a typed command.
 
-## Description
+## How it works
 
 Each entry is a markdown file with a one-line description and a body of instructions
 addressed to the agent. There is no executable behaviour here at all; the file is
@@ -164,7 +164,7 @@ anything. The configured modality is what a check uses when a check happens, and
 happens only when the gate refuses a commit or when someone types one of these entries.
 There is no timer and no automatic firing.
 
-## Rationale
+## Design decisions
 
 Implementing these as instruction files rather than as subcommands follows from what they
 start. Three of the four begin something conversational — a reading guide, a graded
@@ -201,7 +201,7 @@ into seconds. The cost is a command that can inflate coverage under the system-i
 origin without any real interruption having occurred, which is worth knowing when reading
 evidence produced during development.
 
-## Conclusion
+## Where it sits
 
 These four short files are the system's front door: they decide which protocol runs, with
 what target, under which budget rules, and under which origin — and then get out of the

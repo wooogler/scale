@@ -5,7 +5,7 @@ sources:
   - packages/web/src/data.ts
   - packages/web/src/sample/map.ts
   - packages/web/src/sample/coverage.ts
-  - packages/web/src/sample/papers.ts
+  - packages/web/src/sample/docs.ts
   - packages/web/src/sample/quests.ts
 concepts:
   - id: same-origin-relative-calls
@@ -48,7 +48,7 @@ flowchart LR
     SAMPLE --> UI
 ```
 
-## Abstract
+## Summary
 
 This component is the single place the map application talks to the outside world. It wraps four
 read operations and three write operations, each of which tries the local server first and, on any
@@ -57,7 +57,7 @@ interface developable and demonstrable with no backend running — and it is als
 main hazard, because the sample describes a fictional repository and the offline write helpers
 fabricate results that are never recorded anywhere.
 
-## Introduction
+## What it does
 
 The map application is a single-page front end that in production is served by the same local
 process that exposes its data. That arrangement makes the normal case trivial: a relative path is
@@ -71,13 +71,13 @@ resolves to something usable. The cost of that guarantee is that a reader must b
 at a glance, whether what is on screen is the real repository or a fiction — and the only signal
 is a warning logged to the browser console.
 
-## Related Work
+## Related components
 
 The live half of every call in this module is answered by [Serving the Map and Its JSON API](../local-server/),
 whose endpoint shapes this layer mirrors exactly; the response interfaces declared here are the
 client-side statement of that server's contract. [Composition and the Unification Header](../app-shell/)
 is the main reader: it loads the map, the coverage view, and the pending work items together on
-mount and re-loads the latter two whenever a check completes. [Reading a Paper In-App](../component-panel/)
+mount and re-loads the latter two whenever a check completes. [Reading a Doc In-App](../component-panel/)
 uses the per-component paper loader lazily as the learner selects nodes, and the on-demand quest
 creator behind its challenge action. [Running a Quest in the Browser](../quest-runner-ui/) drives
 the three write helpers and is the only consumer of their offline synthesis.
@@ -90,7 +90,7 @@ it reimplements that module's blending rule and its validation threshold locally
 demonstration moves the same way the real engine would. That duplication is the interesting
 contrast — it is correct today by inspection, not by construction.
 
-## Description
+## How it works
 
 The read side is four functions with an identical shape: attempt a call, return the parsed result,
 and on any thrown error log a note naming what became unavailable and return the corresponding
@@ -147,7 +147,7 @@ to the running local server, forwarding every method so the write endpoints reac
 why the module has no notion of a base address anywhere: the two environments differ in
 configuration outside this file, not in code inside it.
 
-## Rationale
+## Design decisions
 
 Falling back rather than failing appears to be the founding decision, and everything else follows
 from it. The code suggests the motivation is straightforward developer ergonomics: interface work
@@ -183,7 +183,7 @@ the browser console. Someone who opens the map with no server running sees a pla
 well-populated map of a repository they have never worked in, and nothing on screen says so. Any
 reader of this paper should treat an unfamiliar three-province document-signing map as the tell.
 
-## Conclusion
+## Where it sits
 
 This is the application's entire relationship with the world: seven functions, each of which
 prefers the learner's real repository and settles for a bundled fiction. Understanding it means

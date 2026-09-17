@@ -19,7 +19,7 @@ import {
   explainConfig,
   unsetPath,
   loadScaleDir,
-  paperById,
+  docById,
   resolveInterventionModel,
   LlmProviderSchema,
   migrateLegacyConfig,
@@ -33,8 +33,8 @@ import {
   type MapJson,
   type DimName,
   type LlmProvider,
-  type LoadedPaper,
-  paperGrounding,
+  type LoadedDoc,
+  docGrounding,
   neighbourIndex,
   componentSourcesIndex,
   type DriftContext,
@@ -305,7 +305,7 @@ function serveStatic(res: http.ServerResponse, urlPath: string): void {
       '<h1>SCALE map</h1><p>The web app has not been built yet. Run:</p>' +
       '<pre>npm run build -w @scale/web</pre>' +
       '<p>then restart <code>scale serve</code>. The JSON API is already live at ' +
-      '<code>/api/map</code>, <code>/api/coverage</code>, <code>/api/paper/:id</code>, ' +
+      '<code>/api/map</code>, <code>/api/coverage</code>, <code>/api/doc/:id</code>, ' +
       '<code>/api/quests</code>.</p></body>';
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(html);
@@ -532,16 +532,16 @@ async function handle(
     return;
   }
 
-  const paperMatch = /^\/api\/paper\/([^/]+)\/?$/.exec(pathname);
-  if (paperMatch) {
-    const id = decodeURIComponent(paperMatch[1]!);
+  const docMatch = /^\/api\/doc\/([^/]+)\/?$/.exec(pathname);
+  if (docMatch) {
+    const id = decodeURIComponent(docMatch[1]!);
     const loaded = loadScaleDir(cwd);
-    const paper = paperById(loaded, id);
-    if (!paper) {
+    const doc = docById(loaded, id);
+    if (!doc) {
       sendJson(res, 404, { error: 'unknown component', id });
       return;
     }
-    sendJson(res, 200, { frontmatter: paper.frontmatter, body: paper.body });
+    sendJson(res, 200, { frontmatter: doc.frontmatter, body: doc.body });
     return;
   }
 
@@ -606,7 +606,7 @@ async function handleQuestComplete(
  * Create a voluntary quest for one component (PLAN §6.3). Body: `{ componentId }`.
  * Available in EVERY condition and spends no interruption budget — this is the
  * junior's own initiative. Uses the configured intervention model when an API
- * key is present, otherwise deterministic paper-grounded items, so the map's
+ * key is present, otherwise deterministic doc-grounded items, so the map's
  * Challenge button always produces a runnable quest. Responds with the new quest
  * so the runner can open immediately.
  */
@@ -773,20 +773,20 @@ async function handleKeySet(req: http.IncomingMessage, res: http.ServerResponse)
 // POST /api/socratic/:id/message  (socratic proxy — INTERVENTION model)
 // ---------------------------------------------------------------------------
 
-/** Component-paper grounding for the socratic system prompt. */
-function paperContext(paper: LoadedPaper | undefined, cwd?: string): string {
-  if (!paper) return 'No component paper is available; keep the dialogue general but rigorous.';
+/** Component-doc grounding for the socratic system prompt. */
+function docContext(doc: LoadedDoc | undefined, cwd?: string): string {
+  if (!doc) return 'No component doc is available; keep the dialogue general but rigorous.';
   // Shared with quest generation. This path used to drop `alternatives` — the
   // exact material the rationale rubric's top band asks the junior to explain.
   // Measured dependencies come along too: a Socratic opener is exactly the place
   // for "what breaks if this changed", which needs to know what depends on it.
   const map = cwd ? readMapJson(cwd) : null;
-  const neighbours = map ? neighbourIndex(map).get(paper.frontmatter.id) : undefined;
+  const neighbours = map ? neighbourIndex(map).get(doc.frontmatter.id) : undefined;
   // And, on a component that has drifted, what actually changed. This proxy is
   // the async user's recovery surface, so it is the one path that most needs to
   // ask about the change rather than re-ask the original questions.
-  const drift = cwd ? driftForComponent(cwd, paper.frontmatter.id) : null;
-  return paperGrounding(paper, { neighbours, ...(drift ? { drift } : {}) });
+  const drift = cwd ? driftForComponent(cwd, doc.frontmatter.id) : null;
+  return docGrounding(doc, { neighbours, ...(drift ? { drift } : {}) });
 }
 
 /** Drift context for a `stale` component, or null. Best-effort; never throws. */
@@ -806,10 +806,10 @@ function driftForComponent(cwd: string, componentId: string): DriftContext | nul
 /** The dialogue's grounding, computed once and reused for every later turn. */
 function groundingFor(
   state: DialogueState,
-  paper: LoadedPaper | undefined,
+  doc: LoadedDoc | undefined,
   cwd?: string,
 ): string {
-  state.grounding ??= paperContext(paper, cwd);
+  state.grounding ??= docContext(doc, cwd);
   return state.grounding;
 }
 
@@ -875,7 +875,7 @@ const SOCRATIC_KO_FINAL =
 async function socraticReply(
   provider: LlmProvider,
   model: string,
-  paper: LoadedPaper | undefined,
+  doc: LoadedDoc | undefined,
   history: DialogueTurn[],
   language: Language = 'en',
   grounding = '',
@@ -887,7 +887,7 @@ async function socraticReply(
     system:
       'You are a Socratic tutor helping a junior engineer build genuine comprehension ' +
       'of a codebase component. Ask ONE probing follow-up question at a time, grounded ' +
-      'in the component paper below. Do NOT reveal answers or lecture — draw the ' +
+      'in the component doc below. Do NOT reveal answers or lecture — draw the ' +
       'reasoning out of the learner. Keep each turn to 1-3 sentences; be brief and ' +
       'supportive.' +
       (language === 'ko' ? SOCRATIC_KO_DIALOGUE : '') +
@@ -905,7 +905,7 @@ async function socraticReply(
 async function socraticFinal(
   provider: LlmProvider,
   model: string,
-  paper: LoadedPaper | undefined,
+  doc: LoadedDoc | undefined,
   history: DialogueTurn[],
   language: Language = 'en',
   grounding = '',
@@ -941,7 +941,7 @@ async function socraticFinal(
 
 /**
  * Server-side socratic proxy (PLAN §7.3). Maintains a ≤3-exchange dialogue keyed
- * by quest id; grounds every turn in the quest component's paper via the
+ * by quest id; grounds every turn in the quest component's doc via the
  * configured INTERVENTION model. On the final exchange, grades per-dim, records a
  * socratic_result (origin 'session'), marks the quest completed, and returns
  * `{ reply, done, grades, component }`. No API auth → a clear `{ error }`, never a
@@ -970,7 +970,7 @@ async function handleSocraticMessage(
   const config = readConfigOrDefault(cwd, dir);
   const provider = config.models.provider;
   const model = resolveInterventionModel(config.models);
-  const paper = paperById(loadScaleDir(cwd), quest.componentId);
+  const doc = docById(loadScaleDir(cwd), quest.componentId);
 
   pruneDialogues(Date.now());
   const state: DialogueState = socraticDialogues.get(questId) ?? {
@@ -1008,10 +1008,10 @@ async function handleSocraticMessage(
       const reply = await socraticReply(
         provider,
         model,
-        paper,
+        doc,
         state.history,
         config.language,
-        groundingFor(state, paper, cwd),
+        groundingFor(state, doc, cwd),
       );
       state.history.push({ role: 'assistant', content: reply });
       socraticDialogues.set(questId, state);
@@ -1022,10 +1022,10 @@ async function handleSocraticMessage(
     const { reply, grades } = await socraticFinal(
       provider,
       model,
-      paper,
+      doc,
       state.history,
       config.language,
-      groundingFor(state, paper, cwd),
+      groundingFor(state, doc, cwd),
     );
     const sha = shortHeadSha(cwd);
     const now = new Date().toISOString();

@@ -45,8 +45,8 @@ function codes(): string[] {
   return (j.findings ?? []).map((f) => `${f.level}:${f.code}`);
 }
 
-/** One component paper anchoring `sources`, under province `prov`. */
-function paper(prov: string, id: string, sources: string[]): void {
+/** One component doc anchoring `sources`, under province `prov`. */
+function doc(prov: string, id: string, sources: string[]): void {
   const dir = path.join(repo, '.scale', prov, id);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
@@ -90,7 +90,7 @@ describe('exit code is the contract', () => {
   it('a partition matching its estimate passes', () => {
     for (let i = 0; i < 6; i++) {
       source(`src/m${i}.ts`, 280);
-      paper('core', `m${i}`, [`src/m${i}.ts`]);
+      doc('core', `m${i}`, [`src/m${i}.ts`]);
     }
     const r = check();
     expect(r.code).toBe(0);
@@ -100,7 +100,7 @@ describe('exit code is the contract', () => {
   it('a partition finer than one component per file fails on both counts', () => {
     // Koa in miniature: one file, many components.
     source('src/big.ts', 1400);
-    for (let i = 0; i < 12; i++) paper('core', `c${i}`, ['src/big.ts']);
+    for (let i = 0; i < 12; i++) doc('core', `c${i}`, ['src/big.ts']);
     expect(check().code).toBe(1);
     expect(codes()).toContain('fail:unresolvable-anchors');
     expect(codes()).toContain('fail:too-fine');
@@ -108,7 +108,7 @@ describe('exit code is the contract', () => {
 
   it('a partition far coarser than its estimate fails', () => {
     for (let i = 0; i < 40; i++) source(`src/f${i}.ts`, 300);
-    paper('core', 'only', ['src/f0.ts']);
+    doc('core', 'only', ['src/f0.ts']);
     expect(check().code).toBe(1);
     expect(codes()).toContain('fail:too-coarse');
   });
@@ -118,11 +118,11 @@ describe('what counts as an anchored file', () => {
   it('a path that no longer exists warns and does not flatter the density', () => {
     for (let i = 0; i < 6; i++) {
       source(`src/m${i}.ts`, 280);
-      paper('core', `m${i}`, [`src/m${i}.ts`]);
+      doc('core', `m${i}`, [`src/m${i}.ts`]);
     }
     // Add a seventh component whose only anchor is gone. Were the missing path
     // counted, density would read 7/7; it must read 7/6.
-    paper('core', 'ghost', ['src/deleted.ts']);
+    doc('core', 'ghost', ['src/deleted.ts']);
     const r = check();
     const j = JSON.parse(r.out) as { anchoredFiles: number; anchoredPaths: number; deadAnchors: string[] };
     expect(j.deadAnchors).toEqual(['src/deleted.ts']);
@@ -138,7 +138,7 @@ describe('what counts as an anchored file', () => {
     for (let i = 0; i < 5; i++) source(`src/s${i}.ts`, 300);
     for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(repo, `doc${i}.md`), '# d\n');
     for (let i = 0; i < 10; i++) {
-      paper('core', `c${i}`, [`src/s${i % 5}.ts`, `doc${i % 5}.md`]);
+      doc('core', `c${i}`, [`src/s${i % 5}.ts`, `doc${i % 5}.md`]);
     }
     const j = JSON.parse(check().out) as { anchoredFiles: number; anchoredPaths: number };
     expect(j.anchoredFiles).toBe(5);
@@ -154,7 +154,7 @@ describe('--json answers on every path', () => {
     expect(JSON.parse(r.out)).toMatchObject({ ok: false });
   });
 
-  it('is valid JSON when the memory holds no component papers', () => {
+  it('is valid JSON when the memory holds no component docs', () => {
     fs.mkdirSync(path.join(repo, '.scale'), { recursive: true });
     const r = check();
     expect(r.code).toBe(1);
@@ -163,7 +163,7 @@ describe('--json answers on every path', () => {
 
   it('agrees with the human report', () => {
     source('src/a.ts', 300);
-    paper('core', 'a', ['src/a.ts']);
+    doc('core', 'a', ['src/a.ts']);
     const j = JSON.parse(check(true).out) as { built: number; findings: { message: string }[] };
     const human = check(false).out;
     expect(human).toContain(`${j.built} components`);

@@ -62,7 +62,7 @@ sequenceDiagram
     Hook-->>Agent: silence — the commit proceeds
 ```
 
-## Abstract
+## Summary
 
 This component is everything around the pre-commit decision that makes it real:
 the hook that notices a commit is about to happen, the command that gathers the
@@ -72,7 +72,7 @@ governing rule is that a refusal is only ever issued on an explicit, well-formed
 refusal from the policy — every other outcome, including every kind of breakage,
 lets the commit through.
 
-## Introduction
+## What it does
 
 The pre-commit decision is a pure function that returns a verdict. A verdict does
 not stop anything. Something has to notice that a commit is being attempted,
@@ -87,7 +87,7 @@ commands before anything heavier starts. Second, it must never fail into blockin
 a person whose commits stop working because a learning tool was misconfigured will
 uninstall the learning tool, and rightly.
 
-## Related Work
+## Related components
 
 The verdict this component gathers inputs for and acts on is defined in
 [The Pure Pre-Commit Decision](../commit-gate/); that paper explains what the
@@ -113,7 +113,7 @@ themselves are two entries on the surface documented in
 [The Command Surface](../../platform/cli-surface/), which explains why the whole
 hook path is restricted to deterministic file and git reads.
 
-## Description
+## How it works
 
 The hook receives a payload describing the tool call the agent is about to make.
 Its first act is a cheap pattern test on the command string to see whether this is
@@ -185,7 +185,7 @@ unvalidated and the map shows it. Both commands fall back to schema defaults whe
 configuration has been written yet, so the gate and the skip both work before the state
 directory has been initialized.
 
-## Rationale
+## Design decisions
 
 The split between a policy-free hook and a policy-owning command is stated outright in
 the hook's header, and the forces behind it are easy to reconstruct. The hook scripts
@@ -223,7 +223,7 @@ consequence of the decision is deliberately left visible rather than enforced: t
 component stays unvalidated on the map, and it will come around again only through
 genuine re-encounter or through the junior's own initiative.
 
-## Conclusion
+## Where it sits
 
 This component is the mechanical body around a purely logical decision: it notices,
 gathers, charges, blocks, and offers a way out — and it is built so that every way it

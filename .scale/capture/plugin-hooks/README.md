@@ -61,7 +61,7 @@ flowchart TD
     R -- no --> NOOP
 ```
 
-## Abstract
+## Summary
 
 This component is the wiring and the shared plumbing that connect a running editor
 session to the coverage system: a declarative map from editor lifecycle events to
@@ -72,7 +72,7 @@ installation degrades to nothing happening at all, never to a blocked or noisy
 session. Everything else in signal capture is built on the guarantee this component
 provides.
 
-## Introduction
+## What it does
 
 Observing a developer at work is easy to do badly. The obvious approach is to insert
 code into the path between the person and their tool, and the obvious failure mode is
@@ -88,7 +88,7 @@ layer that is boring by design: a table saying which editor events run which scr
 and a helper that makes running anything from those scripts as close to unobservable
 as a subprocess can be.
 
-## Related Work
+## Related components
 
 The two families of scripts this wiring points at are documented separately:
 [Session Start and Session End](../session-lifecycle-hooks/) covers the two ends of a
@@ -108,7 +108,7 @@ asking for it, [User-Initiated Entry Points](../../interventions/slash-commands/
 a developer types on purpose, and reading the two together gives the complete surface through
 which the system can be reached from a session.
 
-## Description
+## How it works
 
 The declarative half is a small table. It names each editor lifecycle event the system
 cares about — the start of a session, the submission of a prompt, the moment before and
@@ -169,7 +169,7 @@ call in this layer contacts a model or a network. And every failure — missing 
 malformed payload, crashed child, timeout — resolves to the same outcome: nothing
 happened, the session continues.
 
-## Rationale
+## Design decisions
 
 The fail-open rule is stated directly in the source comments, which describe the working
 flow as sacred and say a broken installation should degrade to a no-op rather than a
@@ -205,7 +205,7 @@ configuration — cannot work at all, because the decision depends on command te
 matcher never receives. Pushing the test into the script is not merely tidier; it is the
 only placement that can work.
 
-## Conclusion
+## Where it sits
 
 This component is the contract every other capture component relies on: editor events
 arrive, small scripts translate them, a shared helper runs the real work under a bound

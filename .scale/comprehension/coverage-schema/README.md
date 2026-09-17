@@ -46,11 +46,11 @@ stateDiagram-v2
     end note
 ```
 
-## Abstract
+## Summary
 
 This component defines the shape of what SCALE knows about one person's understanding of one component: three bounded comprehension dimensions, a coarse state label, an anchor to the commit at which understanding was last confirmed, and a loyalty number describing how far the code has moved since. Every other part of the system — the commit gate, the map viewer, quest generation, the status summary — reads this shape and nothing more. It is deliberately tiny, because it is the one structure that must survive every future change to how scores are computed.
 
-## Introduction
+## What it does
 
 A learning system needs somewhere to put the answer to "how well does this person understand this part of the codebase?" The naive answer is a percentage. That collapses too much: a junior who can navigate a module's files but cannot say why it was built that way has real, partial understanding, and a system that reports one number cannot tell those two situations apart, cannot choose a question that targets the gap, and cannot show the learner what is actually missing.
 
@@ -58,13 +58,13 @@ SCALE therefore splits comprehension into three dimensions. Structure is knowing
 
 On top of the three numbers sits a coarse state, because most consumers do not want to reason about thresholds. A map wants to know whether to draw a node dark or lit. A pre-commit decision wants to know whether this is unfamiliar ground. Four states cover it: fog for never encountered, explored for passive contact only, validated for demonstrated understanding, and stale for previously validated understanding whose code has since moved.
 
-## Related Work
+## Related components
 
 The raw signals that eventually become these numbers are defined by [The Append-Only Evidence Log](../evidence-log/), which is the input side of the same story this component is the output side of. The arithmetic that turns those signals into dimension values, and the rules that pick one of the four states, live in [Scoring: Exponential Averaging, Loyalty, Classification](../coverage-model/). The fold that walks the whole evidence history and produces a record of exactly this shape is [Pure Materialization of Coverage](../state-engine/), and the layer that supplies it with real churn numbers and writes the result to disk is [Impure Edges: Git Churn, Clock, and Disk](../coverage-materialization/).
 
 Most of the thresholds that decide where one state ends and the next begins are tunable and come from [Conditions, Budgets, Thresholds, and Model Tiers](../../platform/config-schema/) — the validation bar, the staleness floor, the blending weight, and the two passive credit ceilings. Not all of them are: the minimum number of separate graded results required for validation has no entry in the configuration and is fixed at the scoring model's own default, so it can only be changed by editing the model. Either way this schema stores results, never policy. The identifiers this record is keyed on are not invented here either: they are the permanent identities fixed by [Paper Format and Frontmatter Contract](../../memory/paper-format/), which is why renaming one orphans a person's accumulated history rather than carrying it across. The most demanding consumer is [The Pure Pre-Commit Decision](../../interventions/commit-gate/), which reads states and dimensions to decide whether to interrupt a commit — a good illustration of why the coarse label is worth storing. [Selection, Generation, and Offline Fallback](../../quests/quest-generation/) is the other major reader, choosing which components deserve a check after a session by looking at exactly these states and dimensions and nothing else. Finally, [The Single Skin Boundary](../../viewer/terminology-skin/) is the only place where these four neutral state names are translated into the strategy-game vocabulary the map viewer displays; everything upstream of that boundary, including this schema, stays neutral.
 
-## Description
+## How it works
 
 A single component's record holds four things. The dimensions object carries the three comprehension numbers, each validated on parse to lie within zero and one. The state field carries one of the four labels. The validation anchor carries the short commit identifier at which this component was last confirmed understood, and when it never has been, the field is present and explicitly holds nothing rather than being left out. That explicit nothing is meaningful, not merely absent, and downstream code branches on it to decide whether a component is even eligible to go stale. It is worth distinguishing it from a blank identifier, which is a different thing entirely: a blank arises when a validation is recorded outside a git repository, and it counts as previously validated for classification purposes even though no diff can ever be measured from it. Loyalty carries a number, also bounded to zero and one, that is one minus the proportion of the component's source lines that have churned since the anchor.
 
@@ -78,7 +78,7 @@ The document is per-user and lives in the user's own state directory rather than
 
 A fixture in the repository shows the shape concretely. It holds two components: one validated, carrying a real anchor and a loyalty value just under full; and one explored, with no anchor at all, full loyalty, a moderate amount of structure credit, a little concepts credit, and no rationale credit whatsoever. That second record is the typical silhouette of passive contact — movement on structure, a trace on concepts, nothing on the dimension that only grading can move. It is worth knowing that this fixture is a hand-written illustration of the schema, not the computed result of folding the evidence fixture that sits beside it; folding that evidence would leave the weighted mean far below the validation bar and would only ever count one graded result, so nothing in it could reach the validated state. The two fixtures exercise their schemas independently.
 
-## Rationale
+## Design decisions
 
 The three-dimension split is the load-bearing decision, and the code suggests it was made for the sake of the interventions rather than for reporting. Every active check in the system tags its result with exactly one dimension, and the grading rubric produces per-dimension scores; if comprehension were a single number, a check could report only that the learner did badly, and the next check would have no basis for asking about rationale rather than structure. Reversing this decision would not just coarsen the display — it would remove the signal that lets question selection be targeted at all.
 
@@ -88,6 +88,6 @@ Keeping loyalty and the validation anchor in the per-user record rather than in 
 
 Bounding every number in the schema itself, rather than trusting the callers, is a smaller decision with a real payoff. The fold already clamps each dimension as it writes it, and the loyalty formula already limits its own ratio, but neither guard covers a file that arrives from somewhere else. The schema is the backstop, so a hand-edited or hand-seeded coverage file cannot introduce a value that pushes the weighted mean past one and silently validates everything. It is also the last check before a rebuilt view is returned, which turns an arithmetic bug into a loud failure rather than a plausible-looking number on disk.
 
-## Conclusion
+## Where it sits
 
 This component is a vocabulary, not a mechanism. It fixes what can be said about a person's understanding of a component — three dimensions, one of four states, a point in history where understanding was confirmed, and a measure of how far the code has since travelled from that point — and it deliberately says nothing about how those values are arrived at. Read [The Append-Only Evidence Log](../evidence-log/) next to see what flows in, and [Scoring: Exponential Averaging, Loyalty, Classification](../coverage-model/) to see the rules that turn that flow into these fields. If you want to see the whole pipeline in one place, [Pure Materialization of Coverage](../state-engine/) is where the two meet.

@@ -49,7 +49,7 @@ flowchart TD
     A --> E[append graded outcome to evidence]
 ```
 
-## Abstract
+## Summary
 
 This component is the small local web server that turns a repository's coverage memory and a
 learner's per-user state into something a browser can render. It is plain Node with no web
@@ -59,7 +59,7 @@ work items. It also carries the only path in the whole viewer that cannot functi
 access — a server-side proxy that runs a short Socratic dialogue against the configured
 intervention model and records the resulting grades.
 
-## Introduction
+## What it does
 
 The coverage memory lives as markdown in the repository, and the learner's comprehension state
 lives as files under a per-user directory in their home folder. Neither is reachable from a
@@ -75,7 +75,7 @@ locally and speaks only to whoever launched it, and it keeps no persistent state
 reads and writes — with one exception, an in-flight dialogue, which is deliberately allowed to
 vanish on restart.
 
-## Related Work
+## Related components
 
 The browser side of this boundary is [Live Data Versus Sample Fallback](../viewer-data-layer/),
 which calls every endpoint described here through same-origin relative paths and quietly
@@ -108,7 +108,7 @@ privileged side of the line drawn by
 to read directories and parse files precisely so that the code it serves never has to, which is why
 the browser receives papers already parsed.
 
-## Description
+## How it works
 
 Before any route is considered, one thing is already settled: the directory. The server captures the
 directory it was launched in when it starts and answers every subsequent request against that single
@@ -190,7 +190,7 @@ path performs its own evidence append, its own work-item update, and its own rec
 rather than calling the equivalent shared routine. The behaviour matches today, but the
 single-source-of-truth property that protects the quiz path does not currently protect this one.
 
-## Rationale
+## Design decisions
 
 The absence of a web framework is the loudest decision. The code suggests it was made because the
 route surface is tiny and fixed while the installation cost of a framework is paid by every
@@ -224,7 +224,7 @@ choice. The turn counter drives the cap, so an unrolled failed turn would consum
 exchanges without producing a question, and a learner who supplied a key and retried would get a
 shortened, incoherent dialogue.
 
-## Conclusion
+## Where it sits
 
 This is the seam where files become a web application. It is intentionally thin: it relays the
 frozen map, reads papers through the memory loader, keeps the coverage view honest by comparing it

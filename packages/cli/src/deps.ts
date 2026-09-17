@@ -33,7 +33,7 @@ export interface DepsFile {
  * distiller — they only ever read what a senior committed.
  *
  * These edges live ALONGSIDE the LLM's `reference` links rather than replacing
- * them. The map keeps both because the difference between what a paper claims
+ * them. The map keeps both because the difference between what a doc claims
  * and what the code does is the measurement (`npm run check:map`).
  */
 export function loadDependsOnEdges(cwd: string, nodeIds: Set<string>): MapEdge[] {

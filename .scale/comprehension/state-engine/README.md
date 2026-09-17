@@ -54,11 +54,11 @@ flowchart TD
     STAMP --> OUT[schema-validated coverage view]
 ```
 
-## Abstract
+## Summary
 
 This component is the fold that turns a history of raw signals into a coverage view: it seeds an empty record for every component on the map, walks the evidence in timestamp order applying the scoring rules, then applies a separate drift pass that sets loyalty and flips drifted components to stale. It is entirely pure — no repository access, no filesystem, no clock — so the same evidence and the same injected inputs always produce exactly the same result. That determinism is what makes the whole comprehension model testable and what makes a rebuild safe to run at any time.
 
-## Introduction
+## What it does
 
 The design that makes the capture path fast — append raw signals and compute nothing — pushes all the work here. Nothing in the system ever writes a comprehension number directly; the numbers exist only as the output of this fold. That is a strong claim, and it has an important consequence for anyone reading the coverage file: it is a cache, and deleting it loses nothing that the evidence log cannot reproduce.
 
@@ -66,7 +66,7 @@ The reason this component is separated from the code that reads the repository i
 
 The third thing to understand before the details is that this fold is not a state machine advancing through time so much as a replay. It always starts from nothing. Every rebuild re-derives the same past from the same lines, which is why the anchoring rules about commits matter so much: any input that depends on "now" would make yesterday's history look different today.
 
-## Related Work
+## Related components
 
 The entries this fold consumes are defined by [The Append-Only Evidence Log](../evidence-log/), and the record it produces is defined by [Coverage States and the Three Dimensions](../coverage-schema/). Every piece of arithmetic it applies — the blending rule, the weighted mean, the loyalty formula, and the classification order — lives in [Scoring: Exponential Averaging, Loyalty, Classification](../coverage-model/); this component supplies the ordering, the accumulators, and the seeding, not the formulas. Its only real caller is [Impure Edges: Git Churn, Clock, and Disk](../coverage-materialization/), which gathers churn, sizes, the current commit and the timestamp, calls this fold, and writes the result to disk.
 
@@ -74,7 +74,7 @@ Two external components complete the picture. The set of components that get see
 
 [The Shared Completion Path](../../quests/quest-completion/) is the clearest illustration of the whole-history rule in ordinary use: having graded a set of answers it appends them as new evidence and then re-derives the entire coverage view rather than adjusting the affected component in place, which is precisely the discipline the caller-owned validation count forces on everyone.
 
-## Description
+## How it works
 
 Materialization runs in five steps. It first seeds an empty record — fog, all three dimensions at zero, no validation anchor, full loyalty — for every node on the frozen map. This is why the map, not the evidence, determines the universe of components: a component with evidence but no map node would have nowhere to be recorded, and a component with a node but no evidence still appears, correctly, as fog.
 
@@ -94,7 +94,7 @@ Finally the supplied timestamp is stamped in — the function never reads the cl
 
 There is one behaviour that surprises people and is worth stating plainly. Because loyalty starts at full for every seeded component and is only ever lowered by the drift pass, the staleness branch inside classification effectively never fires during the evidence walk. Staleness is decided entirely by the second pass. Combined with the fact that the caller derives churn from the previously written coverage file, this means recovering from stale takes two rebuilds: the first re-validates and moves the anchor forward but is still measured against the old churn figure, and only the next rebuild measures zero churn and reports the component as validated again.
 
-## Rationale
+## Design decisions
 
 Purity here is not stylistic. The header comment states the goal directly — the same evidence and options always fold to an identical result — and the practical payoff is that the entire comprehension model can be tested with hand-written inputs and no repository at all. Reversing this would make results depend on when they were computed, and a learner would see their own scores change for reasons unrelated to anything they did.
 
@@ -104,6 +104,6 @@ Capping passive credit is the arithmetic form of the project's central rule that
 
 Handling drift as a second pass rather than inside the walk reflects what churn actually is: a comparison between two commits, not an event that happened at a point in the history. There is no entry in the log at which it would be correct to apply it, and applying it on every entry would repeat the same figure meaninglessly. The cost of the separation is the one-rebuild lag described above — a real and currently unmitigated wrinkle, not an intended feature.
 
-## Conclusion
+## Where it sits
 
 This is the component where the system's raw record becomes its opinion: seed from the map, replay the history in order, apply the drift comparison once at the end, and validate before returning. Understanding it means understanding why the coverage file can be deleted without loss, why coverage must always be rebuilt whole, and why passive editing alone can never move a component into the validated state. Read [Scoring: Exponential Averaging, Loyalty, Classification](../coverage-model/) for the formulas this fold applies, [Impure Edges: Git Churn, Clock, and Disk](../coverage-materialization/) for where its injected inputs come from, and [The Append-Only Evidence Log](../evidence-log/) for the history it replays.

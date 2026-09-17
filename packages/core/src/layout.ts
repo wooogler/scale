@@ -36,7 +36,7 @@ export interface LayoutInput {
   provinces: Province[];
   nodes: { id: string; province: string }[];
   edges: MapEdge[];
-  /** Git SHA the papers were built from; falls back to existing or ''. */
+  /** Git SHA the docs were built from; falls back to existing or ''. */
   builtFromSha?: string;
 }
 

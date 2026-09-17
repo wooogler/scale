@@ -25,7 +25,7 @@ flowchart TD
     EV --> COV["re-derived coverage"]
 ```
 
-## Abstract
+## Summary
 
 This province is the post-session arm of the intervention design: the part of the
 system that does not interrupt a learner while they work, but instead leaves a small
@@ -34,7 +34,7 @@ responsibilities — the shape of a pending check, the decision about which comp
 deserve one and what its questions should be, and the path a graded answer takes
 back into the comprehension record.
 
-## Introduction
+## What it does
 
 The system offers interventions in two timings, and they are deliberately kept
 independent. Under the in-flow timing, a check happens at a natural boundary during
@@ -52,7 +52,7 @@ those two facts: the offer must be written down rather than held in memory, it m
 be produced without any assumption that a network is available, and it must be
 gradable identically wherever it is eventually answered.
 
-## Related Work
+## Related components
 
 Within this province, [Quest Documents and Item Shapes](./quest-schema/) defines the
 persisted contract — what a pending check is made of, and why its items are validated
@@ -79,7 +79,7 @@ paper material, and grades on the same three dimensions — but in chat, immedia
 with no persisted document in between. The contrast is the clearest way to see what
 this province is actually for.
 
-## Description
+## How it works
 
 The three components divide the work along a producer, contract, consumer seam.
 
@@ -120,7 +120,7 @@ matching a concept name to a component title, matching a recorded reason to a
 decision — which keeps the loop alive without being equivalent to a real
 comprehension check.
 
-## Rationale
+## Design decisions
 
 The seam that defines this province is timing, not mechanism. Item generation,
 paper grounding, dimension tagging, and per-dimension grading are all shared with the
@@ -147,7 +147,7 @@ score directly, since it knows exactly what moved — would make the evidence lo
 stop being the authority, and would quietly break the ability to re-score history
 under different constants.
 
-## Conclusion
+## Where it sits
 
 Read this province as one loop with three stations: a contract that says what a
 deferred check is, a producer that decides which checks are worth deferring and

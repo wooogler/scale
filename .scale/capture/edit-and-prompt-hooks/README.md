@@ -49,7 +49,7 @@ flowchart LR
     LT --> EV
 ```
 
-## Abstract
+## Summary
 
 These three scripts are everything the system observes while a developer is actually
 working: what they ask for, which files change as a result, and how long they spend
@@ -59,7 +59,7 @@ matter what happens downstream. The pre-edit and post-edit pair is the only plac
 system that can measure human review time, and the pre-edit hook is notable for holding
 the power to veto an edit and refusing to use it.
 
-## Introduction
+## What it does
 
 The comprehension model needs to know where a person has been. Not where they claim to
 have been, and not where they were told to go — where their attention actually went during
@@ -78,7 +78,7 @@ the structural dimension, capped well below the threshold for validation. Only a
 check can validate. That deliberate weakness is what licenses these hooks to be so cheap and
 so tolerant of noise: they build a map of attention, not a set of grades.
 
-## Related Work
+## Related components
 
 Everything about how these scripts run — resolution, timeouts, failure absorption — is in
 [Hook Wiring and the Fail-Open Rule](../plugin-hooks/), and the two hooks that bracket the
@@ -100,7 +100,7 @@ Finally, the pre-edit hook is best understood by contrast with
 [Deny, Retry, and Defer-as-Drop](../../interventions/gate-enforcement/), which is the one
 hook that does interrupt and which shows exactly what these three are refusing to do.
 
-## Description
+## How it works
 
 The prompt hook fires when the user submits a prompt. It reads the payload, makes one call
 asking for the prompt signal to be logged, and exits successfully. Its source comment is
@@ -160,7 +160,7 @@ scores. Appending a raw trace is cheap and bounded; folding the whole history in
 neither, and doing it on every keystroke-adjacent event would make the latency budget
 unmeetable. Scores are materialized at deliberate, less frequent moments instead.
 
-## Rationale
+## Design decisions
 
 The bracketing design exists because review latency has no single-event representation. The
 comment on the pre-edit script ties it directly to the plan's note about pairing timestamps
@@ -192,7 +192,7 @@ sessions. Reversing this — folding latency into the score now — would mean i
 firing on a signal nobody has validated, and would also make the historical data unusable for
 testing whether the signal was ever any good.
 
-## Conclusion
+## Where it sits
 
 These three scripts are the system's eyes during ordinary work: intent from prompts, location
 from file modifications, engagement from the pause between proposal and execution. They are

@@ -35,7 +35,7 @@ flowchart TD
     REC -- "progress line" --> TUTOR
 ```
 
-## Abstract
+## Summary
 
 This province is the in-flow arm of the system: the part that acts on a junior while
 they are working, rather than after. It contains one deterministic decision about
@@ -46,7 +46,7 @@ and the typed entry points through which a junior can start the same protocols o
 purpose. Its organizing constraint is that interrupting someone is expensive, so the
 decision to do it is small, pure, budgeted, and always escapable.
 
-## Introduction
+## What it does
 
 Everything else in the system observes. The memory province writes down what the
 codebase is; the capture province records what the junior did; the comprehension
@@ -68,7 +68,7 @@ junior asks to learn something, they enter it themselves, with no budget and a r
 guide first. That the imposed path and the chosen path share one protocol but differ in
 their framing is the most important idea in this province.
 
-## Related Work
+## Related components
 
 The province's five components divide as follows. [The Pure Pre-Commit
 Decision](./commit-gate/) is the policy itself â€” an ordered set of guards and a ranking
@@ -97,7 +97,7 @@ counterpart that takes over when it does is
 [Selection, Generation, and Offline Fallback](../quests/quest-generation/), the
 post-session arm, and the contrast between the two is the study's central comparison.
 
-## Description
+## How it works
 
 The province is responsible for four things: deciding whether to interrupt, enforcing
 that decision, conducting the check, and writing down its result. The components split
@@ -156,7 +156,7 @@ configuration carries a per-commit budget number that the decision never reads â
 per-commit cap is produced by the marker mechanic instead, so tuning that number has no
 effect.
 
-## Rationale
+## Design decisions
 
 The seam that defines this province is between observing and acting. Every component here
 either decides to act, acts, or records the result of having acted; nothing here interprets
@@ -189,7 +189,7 @@ this was intentional: the same protocol serves both, and the only differences ar
 the reading guide, and a recorded origin marker. Splitting them into separate provinces would
 have duplicated the protocol and lost the very comparison that makes the origin marker useful.
 
-## Conclusion
+## Where it sits
 
 This province is small in code and large in consequence: one pure decision, one enforcement
 path built to fail toward permitting, one conversational protocol with hard caps, one write

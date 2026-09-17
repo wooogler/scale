@@ -46,23 +46,23 @@ flowchart TD
     FLOOR -- no --> NONE[return nothing]
 ```
 
-## Abstract
+## Summary
 
 Every signal the system collects arrives as a file path — a file was edited, a file appeared in a staged diff — while everything the system reasons about is a component. This index closes that gap. It inverts the source anchors declared across all papers into a lookup from file to owning components, and resolves unknown files by falling back to the nearest directory that some anchor lives in.
 
-## Introduction
+## What it does
 
 The coverage memory describes components, and a component declares which files it covers. That direction is the useful one for a reader: open a paper, see what code it explains. But every runtime question runs the other way. A hook fires because someone edited a file; the commit gate inspects a staged diff full of paths. Neither can act until the paths become component identifiers.
 
 Inverting a small mapping is trivial. What makes this component worth its own paper is the case the inversion cannot handle: a file that no paper claims. That is not an exotic edge case — it is the normal condition of any repository where work continues after the memory was built. Every new file starts unclaimed. If unclaimed files resolved to nothing, the system would be blind to exactly the code most likely to be poorly understood, and a person could write an entire new subsystem without a single signal being recorded. So the index carries a deliberate guess, and with it a deliberate limit on how wild that guess is allowed to be.
 
-## Related Work
+## Related components
 
 The anchors this index inverts are declared under the contract set out in [Paper Format and Frontmatter Contract](../../memory/paper-format/), and they reach this component through [Loading the Coverage Memory Tree](../../memory/paper-loader/), which projects each paper down to an identifier and a list of paths. It is a sibling artifact to [The Frozen Map Document](../map-schema/): both are derived from the same papers, but the map is committed and frozen while this one is regenerated freely. Regenerating it is one of the closing steps of [The Mode B Build Protocol](../../memory/memory-builder-skill/), which is what keeps the lookup honest: a paper whose declared anchors were never re-inverted attributes edits to whatever the previous build believed.
 
 Its consumers are all on the signal side. [Capturing Touches, Prompts, and Review Latency](../../capture/edit-and-prompt-hooks/) needs it to turn an edited file into the component that gets explore credit, and [The Pure Pre-Commit Decision](../../interventions/commit-gate/) needs it to turn a staged diff into the set of components a commit is touching before it can decide whether to ask for a check. What both of them ultimately write is described in [The Append-Only Evidence Log](../../comprehension/evidence-log/), so an attribution mistake here becomes a permanently recorded mistake there. The moment of resolution is owned by [The Fast-Append Path](../../capture/evidence-append/), which consults this lookup as the line is written rather than deferring it, and which supplies the nearest-directory guess when no paper claims the file — meaning the latency budget that path lives under is the real reason this lookup has to be a plain table and not a search. The index is built and written by a subcommand of [The Command Surface](../../platform/cli-surface/), which also implements the read-or-rebuild behaviour that makes the persisted file optional.
 
-## Description
+## How it works
 
 Building the index is a single pass over the papers. For each paper, each declared source path is normalized and used as a key, and the paper's identifier is appended to that key's list, skipping duplicates. Normalization rewrites backslash separators into forward slashes, strips a leading current-directory prefix, and strips trailing slashes, so the same file written three ways collapses to one key. The result is a plain mapping from path to a list of component identifiers.
 
@@ -78,7 +78,7 @@ The fallback's guesses are still guesses, and they are not marked as such. A com
 
 Finally, the index is disposable. It is written out as a derived file that is not committed, and consumers that fail to read it simply rebuild it in memory from the loaded papers. That makes a missing or stale index a non-event rather than an error, and it means the persisted copy is purely an optimization.
 
-## Rationale
+## Design decisions
 
 Deriving everything from paper anchors is the decision that keeps the system coherent. There is exactly one place where a file is claimed by a component, and it is the paper that explains that file. Any alternative — a separate ownership file, directory conventions, a build-time registry — creates a second authority that can disagree with the first, and when the two disagree there is no principled way to choose. Reversing this decision would mean a file could be documented by one component and attributed to another, which would make coverage numbers describe something other than the papers a learner is actually reading.
 
@@ -88,6 +88,6 @@ The shared-segment floor is what makes the crude heuristic acceptable rather tha
 
 Treating the index as regenerable rather than committed follows from it being a pure function of committed inputs. Storing it would create merge conflicts on every change to any paper's anchors, in exchange for information that can be reproduced exactly at any time. The frozen map is committed for the opposite reason: its coordinates carry history that cannot be recomputed, because recomputing them would move things. Holding those two artifacts side by side is a good way to see the distinction the design draws between derived data and frozen data.
 
-## Conclusion
+## Where it sits
 
 This component is a small piece of machinery with outsized consequences: it decides which component gets credit for every edit anyone makes. Its exact path is simple, its fallback is a deliberate, bounded guess, and its floor is what stops that guess from becoming quiet corruption. To see why it matters, follow it forward into the hooks that record touches and the pre-commit decision that acts on them, and backward into the paper format where the anchors it inverts are declared.

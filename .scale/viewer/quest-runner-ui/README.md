@@ -50,7 +50,7 @@ flowchart TD
     OUT --> NOTIFY[tell the map coverage moved]
 ```
 
-## Abstract
+## Summary
 
 This component runs a comprehension check inside the map application. It is one modal shell that
 branches on modality: a card-based multiple-choice runner that withholds all feedback until
@@ -59,7 +59,7 @@ sends one learner turn at a time to a server-side proxy and finishes when that p
 graded conclusion. Both end in the same outcome summary, and both notify the surrounding
 application so the map can refresh and animate the component whose coverage just moved.
 
-## Introduction
+## What it does
 
 The system's central claim is that comprehension has to be actively demonstrated, not inferred from
 activity. Passive signals move a component out of the unexplored state and no further; only an
@@ -77,7 +77,7 @@ The runner therefore has two jobs. Deliver the check honestly — no leaked answ
 before the attempt — and reduce whatever happened into the small numeric shape the coverage engine
 consumes.
 
-## Related Work
+## Related components
 
 The item sets this component renders are defined by [Quest Documents and Item Shapes](../../quests/quest-schema/),
 which is also the reason the code reads most item fields through a loose accessor: the item shape
@@ -96,7 +96,7 @@ call to action, the completion wording, and the state colours in the outcome sum
 [The Single Skin Boundary](../terminology-skin/); a handful of smaller labels — the send and submit
 buttons, the two speaker names on the dialogue transcript, and the offer to read the paper instead —
 are written inline in this file rather than drawn from there, which is a real if minor breach of
-that boundary. The runner is normally opened from [Reading a Paper In-App](../component-panel/),
+that boundary. The runner is normally opened from [Reading a Doc In-App](../component-panel/),
 either from a listed pending item or from the challenge action, and it can hand control back to that panel when a dialogue
 cannot proceed. Its closest relative in another province is
 [Quiz and Socratic Protocols](../../interventions/tutor-skill/), which delivers the same two
@@ -106,7 +106,7 @@ one of [User-Initiated Entry Points](../../interventions/slash-commands/); this 
 map-side equivalent of that same voluntary intent, and holding the two side by side isolates the
 surface from the protocol, since the questions asked are the same either way.
 
-## Description
+## How it works
 
 The shell is a modal overlay. It shows the modality's display name, the component title it was
 given, the component identifier, and the item set's origin — whether this check was generated after
@@ -170,7 +170,7 @@ header reads as a slug. And the seeded first message in the dialogue is presente
 is never sent to the server, so the model's conversation history begins with the learner's first
 reply and it never sees the question the learner believes it asked.
 
-## Rationale
+## Design decisions
 
 Housing both modalities in one shell appears to be a methodological requirement rather than a
 convenience. The two are cells of the same experiment, and if they lived in separate screens with
@@ -198,7 +198,7 @@ local fallback — without model access the proxy simply cannot produce a probin
 something has to catch the learner. Redirecting them into the paper preserves the intent that
 brought them there, and it costs nothing, since the panel is already one selection away.
 
-## Conclusion
+## Where it sits
 
 The runner is the browser's half of active validation: it presents a check, refuses to leak the
 answers, reduces the attempt into the shape the coverage engine wants, and reports the result back

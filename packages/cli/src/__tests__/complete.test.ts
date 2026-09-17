@@ -21,7 +21,7 @@ let home: string;
 let repo: string;
 let prevHome: string | undefined;
 
-/** A minimal .scale/ component paper the loader + coverage recompute can read. */
+/** A minimal .scale/ component doc the loader + coverage recompute can read. */
 function seedComponent(repoRoot: string, id: string): void {
   const dir = path.join(repoRoot, '.scale', 'prov', id);
   fs.mkdirSync(dir, { recursive: true });

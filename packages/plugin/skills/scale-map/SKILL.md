@@ -2,11 +2,11 @@
 name: scale-map
 description: >-
   Mode B coverage-memory builder for SCALE (senior side, run with Opus or
-  better). Surveys a target repository into the number of component "papers"
-  `scale estimate` sizes it for, groups them into provinces, writes each paper
+  better). Surveys a target repository into the number of component docs
+  `scale estimate` sizes it for, groups them into provinces, writes each doc
   (structure + concepts + inferred rationale), cross-links them, and freezes a
   spatial map. Use this to build the
-  coverage memory from scratch, or in sync mode to update papers after code
+  coverage memory from scratch, or in sync mode to update docs after code
   changes. Forked and extended from cluedoc (MIT). Invoke via /scale-map or when
   asked to "build the scale map", "survey the repo into components", or "update
   the coverage memory".
@@ -16,14 +16,15 @@ license: MIT
 # scale-map — Mode B coverage-memory builder
 
 You are the **senior cartographer**. You build the coverage memory that a junior
-engineer will learn from: a tree of markdown **papers** under `.scale/` in the
-target repository, one folder per component, plus a frozen spatial `map.json`.
+engineer will learn from: a tree of markdown **component docs** under `.scale/`
+in the target repository, one folder per component, plus a frozen spatial
+`map.json`.
 
-This skill is a **fork/extension of cluedoc** (a capability-tree-of-papers
-documentation method, MIT). You keep cluedoc's discipline — the academic "paper"
-form, prose-only bodies, cross-paper Related Work links as the graph — and add
+This skill is a **fork/extension of cluedoc** (a capability-tree-of-docs
+documentation method, MIT). You keep cluedoc's discipline — the structured doc
+form, prose-only bodies, cross-doc Related components links as the graph — and add
 four SCALE-specific things: a **stable `id`**, a **`concepts[]`** list, a
-**`rationale[]`** block with provenance, a body **Rationale** section, and a
+**`rationale[]`** block with provenance, a body **Design decisions** section, and a
 **frozen `map.json`** layout. See PLAN §4.1–§4.3.
 
 Run this once per repo to build, then in **sync mode** after changes.
@@ -34,16 +35,16 @@ Run this once per repo to build, then in **sync mode** after changes.
 
 SCALE has two vocabularies. **The memory you write uses only the neutral one.**
 
-| Neutral (schema / papers / code — ALWAYS use this) | Map UI skin (never in papers) |
+| Neutral (schema / docs / code — ALWAYS use this) | Map UI skin (never in docs) |
 |---|---|
 | component | castle / territory / 성 |
 | province | province / 주 |
 | coverage / dims (structure, concepts, rationale) | dev stats / 내정 3스탯 |
 | coverage states: fog, explored, validated, stale | fog, scouted, conquered, rebellion |
 
-The strategy-game skin (conquest, territories) is a **UI layer only**. Papers,
-`id`s, and prose must be plainly professional documentation. A junior reading a
-paper should see a clear technical description, not game flavor.
+The strategy-game skin (conquest, territories) is a **UI layer only**. Component
+docs, `id`s, and prose must be plainly professional documentation. A junior
+reading a doc should see a clear technical description, not game flavor.
 
 ---
 
@@ -51,11 +52,11 @@ paper should see a clear technical description, not game flavor.
 
 ```
 .scale/
-├── README.md                        # root paper: the whole realm
+├── README.md                        # root doc: the whole realm
 ├── <province-id>/
-│   ├── README.md                    # province paper: this feature group
+│   ├── README.md                    # province doc: this feature group
 │   └── <component-id>/
-│       └── README.md                # component paper (the quizzable unit)
+│       └── README.md                # component doc (the quizzable unit)
 └── map.json                         # frozen layout — written by `scale map layout`
 ```
 
@@ -83,11 +84,11 @@ paper should see a clear technical description, not game flavor.
 - Bodies are **prose only**: no code symbols, no file paths, no snippets in the
   body text. All code anchoring lives in the `sources` frontmatter field. (This
   is cluedoc's core rule and it is load-bearing — it forces genuine explanation
-  and keeps papers robust to code drift.)
+  and keeps docs robust to code drift.)
 
 ---
 
-## Extended frontmatter (every component paper)
+## Extended frontmatter (every component doc)
 
 ```yaml
 ---
@@ -146,36 +147,43 @@ list representative `sources`.
 
 ---
 
-## The paper form (7 body sections)
+## The component doc form (7 body sections)
 
-cluedoc's six sections, **plus a new Rationale section** (§4.1). Keep them in this
-order. Prose only.
+cluedoc's six sections under SCALE's own heading names, **plus a new Design
+decisions section** (§4.1). Keep them in this order. Prose only.
 
 1. **Hero visual** — one Mermaid diagram at the top that captures the component's
    shape at a glance (a flow, a state machine, a sequence, or a small component
-   graph). This is the "figure 1" of the paper and anchors spatial memory.
-2. **Abstract** — 2–4 sentences: what this component is and why it exists, self
-   contained. A reader should grasp the whole from the abstract alone.
-3. **Introduction** — the problem this component solves and the context a newcomer
-   needs before the details. Motivate before you explain.
-4. **Related Work** — cross-links to *other papers* (`[Session Management](../session-management/)`).
+   graph). This is the "figure 1" of the doc and anchors spatial memory.
+2. **`## Summary`** — 2–4 sentences: what this component is and why it exists,
+   self contained. A reader should grasp the whole from the summary alone.
+3. **`## What it does`** — the problem this component solves and the context a
+   newcomer needs before the details. Motivate before you explain.
+4. **`## Related components`** — cross-links to *other docs* (`[Session Management](../session-management/)`).
    **These links ARE the graph** — they become `reference` edges in `map.json`.
    Link every component this one collaborates with, depends on, or contrasts
    against. No dead links (Link step verifies this).
-5. **Description** — the substance: how it works, the moving parts, the data and
-   control flow, the invariants. Still prose — describe the mechanism, don't paste
-   the code. This is where `concepts` are explained in narrative form.
-6. **Rationale** *(new)* — the prose form of the `rationale[]` frontmatter. Explain
-   the key decisions, why the alternatives were rejected, and what would break if
-   the decision were reversed. Mark inferred reasoning honestly ("The code
-   suggests…") so a later interview pass knows what to confirm. This section is
-   what makes the *rationale* coverage dimension gradable.
-7. **Conclusion** — a short synthesis: where this component sits in the larger
-   system and what a reader now understands. Point forward to the most important
-   Related Work neighbors.
+5. **`## How it works`** — the substance: the moving parts, the data and control
+   flow, the invariants. Still prose — describe the mechanism, don't paste the
+   code. This is where `concepts` are explained in narrative form.
+6. **`## Design decisions`** *(new)* — the prose form of the `rationale[]`
+   frontmatter. Explain the key decisions, why the alternatives were rejected, and
+   what would break if the decision were reversed. Mark inferred reasoning
+   honestly ("The code suggests…") so a later interview pass knows what to
+   confirm. This section is what makes the *rationale* coverage dimension
+   gradable.
+7. **`## Where it sits`** — a short synthesis, not a list of limitations: what
+   this component is in one sentence, and where it sits among its neighbours in
+   the larger system. Point forward to the most important Related components
+   neighbours.
+
+**Write the canonical headings exactly as listed. The loader also accepts the
+legacy academic headings (Abstract, Introduction, Related Work, Description,
+Rationale, Conclusion) as aliases for docs built before this change, but never
+write them.**
 
 Do not add a code section, an API reference, or file listings — that lives in the
-source, and duplicating it rots. The paper explains; the code is the ground truth
+source, and duplicating it rots. The doc explains; the code is the ground truth
 (`sources` is the bridge).
 
 ---
@@ -200,7 +208,7 @@ in `scale estimate`), so the user must see the cost and pick the build model fir
    That is precisely why the count has to be honoured rather than merely noted:
    nothing about the price will stop you. Measured on koa, built twice from one
    commit — 36 components against a target of 8 spent about 1.4× the tokens of
-   the 8-component build. More, because the papers are the output, but nowhere
+   the 8-component build. More, because the docs are the output, but nowhere
    near the 4.5× the count overshot by, since most of a build is reading the
    same source either way.
 3. **State the model YOU are running on.** The build happens in this Claude Code
@@ -211,10 +219,10 @@ in `scale estimate`), so the user must see the cost and pick the build model fir
    `/scale-map`; do not proceed on a smaller model just because they asked.
 4. **Ask the user to confirm and STOP for their answer:** given the estimate and
    the model you just named, do they want to run the (paid) build now?
-5. **Do not begin Survey (or any repo analysis / paper writing) until the user
+5. **Do not begin Survey (or any repo analysis / doc writing) until the user
    explicitly confirms.** If they decline, stop cleanly. This gate is mandatory
    on every fresh build; only **Sync mode** (§5, updating an existing `.scale/`)
-   skips it, since sync touches only drifted papers, not a full build.
+   skips it, since sync touches only drifted docs, not a full build.
 
 ### 1. Survey  →  propose, get approval
 
@@ -255,16 +263,16 @@ or the user has accepted a named exception.
 
 ### 2. Write  →  subagent fan-out, one province at a time
 
-Write every paper. **Fan out with subagents** so papers are built in parallel and
-each subagent holds only its slice of the repo in context. Give each subagent: its
-components with `sources`, this paper form, the terminology rule, and — this is
-the part that decides the map's quality — the accuracy rule below.
+Write every component doc. **Fan out with subagents** so docs are built in
+parallel and each subagent holds only its slice of the repo in context. Give each
+subagent: its components with `sources`, this doc form, the terminology rule, and
+— this is the part that decides the map's quality — the accuracy rule below.
 
 **One subagent per province, unless there is only one province.** A small repo
 sizes to a single province, and then per-province fan-out is no fan-out at all:
-one subagent writes every paper in sequence. In that case fan out **per
+one subagent writes every doc in sequence. In that case fan out **per
 component** instead, hand each writer the full component roster so its Related
-Work links resolve, and write the province and root papers afterwards from the
+components links resolve, and write the province and root docs afterwards from the
 finished set.
 
 **Accuracy is the writer's job, not the reviewer's.** Instruct every subagent to:
@@ -272,44 +280,44 @@ read its anchored sources end to end before writing; verify every falsifiable
 claim against the code, and where a claim is about behaviour, against the repo's
 own tests or by running it; check that a causal chain is the chain the code
 actually takes, not a plausible one; and **omit anything it cannot confirm** — a
-shorter true paper beats a fuller false one. Require each subagent to report what
-it could not verify. Without this, papers come back confidently wrong: one build
-asserted in two separate papers that middleware registered after the request
+shorter true doc beats a fuller false one. Require each subagent to report what
+it could not verify. Without this, docs come back confidently wrong: one build
+asserted in two separate docs that middleware registered after the request
 handler is created does not run, argued a design rationale for it, and was
-refuted by a five-line script. A false paper is worse than a missing one, because
+refuted by a five-line script. A false doc is worse than a missing one, because
 the tutor grades a junior against it.
 
-**This applies to the province and root papers too, and they are where it gets
-forgotten.** They are written last, from the finished component papers, and it is
+**This applies to the province and root docs too, and they are where it gets
+forgotten.** They are written last, from the finished component docs, and it is
 tempting to let them summarise rather than verify — at which point they
-generalise. Measured on one build: the province paper stated a count of shared
+generalise. Measured on one build: the province doc stated a count of shared
 files that `scale map check` contradicts, claimed a uniform default-handling rule
 that two of the settings do not follow, and gave a reason for one grouping that
-its own component paper disproves. Every claim in an orienting paper is a claim
+its own component doc disproves. Every claim in an orienting doc is a claim
 about the code, so hold it to the same standard: check it, or drop it to the
-level of generality you can actually support. Also read the component papers
+level of generality you can actually support. Also read the component docs
 against each other — two of them describing the same edge in opposite terms is a
 contradiction only a reader of both will catch, and that reader is you.
 
-Each component paper must have: complete extended frontmatter (with
+Each component doc must have: complete extended frontmatter (with
 `provenance: inferred` on every rationale entry), a hero Mermaid visual, and all
-seven sections. Explain the `concepts` in the Description; explain the `rationale`
-in the Rationale section. Prose only — re-check for leaked code/paths before
+seven sections. Explain the `concepts` in How it works; explain the `rationale`
+in Design decisions. Prose only — re-check for leaked code/paths before
 finishing.
 
-Papers are **always written in English**, regardless of the per-user
+Docs are **always written in English**, regardless of the per-user
 `config.language` setting: the coverage memory is repo-shared state, while
 `language` is a per-user *interaction* preference (it changes what the tutor and
 the web UI say to the junior, not what the memory contains). A Korean-language
-session must not drift into Korean papers.
+session must not drift into Korean docs.
 
 Also write the province READMEs (orienting the province, linking its components)
 and the root `.scale/README.md` (orienting the whole realm, linking provinces).
 
-### 3. Link  →  Related Work cross-links, verify no dead links
+### 3. Link  →  Related components cross-links, verify no dead links
 
-Ensure every paper's Related Work section links its true neighbors, and that every
-link resolves to an existing paper folder. Add reciprocal links where the
+Ensure every doc's Related components section links its true neighbors, and that
+every link resolves to an existing component doc folder. Add reciprocal links where the
 relationship is mutual. **Verify there are zero dead links** before proceeding —
 broken links corrupt the graph and the map edges built from it.
 
@@ -325,13 +333,13 @@ This is deterministic — a seeded PRNG keyed off the sorted node ids, a compact
 sunflower spiral per province, then collision relaxation against fixed neighbours;
 coordinates normalized 0–1 — and writes `map.json` with `provinces`, `nodes` (each
 with `x`, `y`, `importance`), and `edges` (`hierarchy` from the folder tree +
-`reference` from Related Work links).
+`reference` from Related components links).
 
 `importance` is the **normalized in-degree of a component's `reference` /
-`depends_on` edges** — how many other papers link *to* it. It is not dependency
+`depends_on` edges** — how many other docs link *to* it. It is not dependency
 centrality and not git churn: that measure was designed and never built, and the
-component's own paper records why (`.scale/map/frozen-layout/`). Write Related
-Work links because they are true, not to inflate a component's size.
+component's own doc records why (`.scale/map/frozen-layout/`). Write Related
+components links because they are true, not to inflate a component's size.
 
 **You never hand-place nodes and never edit `map.json` coordinates.** Spatial
 stability is the entire point of the map (survey knowledge / method-of-loci —
@@ -351,7 +359,7 @@ Then (optional, regenerable) build the reverse index used by the junior's hooks:
 scale map index      # file→component reverse index (index.json, gitignored)
 ```
 
-Commit `.scale/` (papers + `map.json`). `index.json` is gitignored and rebuilt on
+Commit `.scale/` (docs + `map.json`). `index.json` is gitignored and rebuilt on
 demand.
 
 ### 5. Sync mode  →  update after code changes (later runs)
@@ -360,13 +368,13 @@ When invoked after the code has changed, do **not** rebuild from scratch. Instea
 
 1. Run `scale map drift` — it flags components whose `sources` changed since the
    map's `builtFromSha` (this is what surfaces staleness / "rebellion").
-2. For each flagged component, re-read its `sources` and update its paper
-   **progressively, up and down the tree** (cluedoc's progressive model): fix the
-   Description, revise `concepts` if the shape changed, and revise `rationale`
+2. For each flagged component, re-read its `sources` and update its component doc
+   **progressively, up and down the tree** (cluedoc's progressive model): fix How
+   it works, revise `concepts` if the shape changed, and revise `rationale`
    (keep provenance honest — new inferred reasoning stays `inferred`). Ripple
-   changes up to the province/root papers when a component's role shifts.
+   changes up to the province/root docs when a component's role shifts.
 3. If genuinely new components appeared (new files matching no `sources`), add
-   them: new folder, full paper, Related Work links — then re-run `scale map
+   them: new folder, full doc, Related components links — then re-run `scale map
    layout`, which **places the new nodes incrementally without moving existing
    ones**. Never re-run a global re-layout after the initial freeze (it would
    destroy spatial memory — PLAN §10).
@@ -379,11 +387,12 @@ When invoked after the code has changed, do **not** rebuild from scratch. Instea
 - [ ] `scale map check` exits zero (partition inside the estimate's band, at most
       ~1 component per anchored file, provinces of 5–9), all within a clean tree
       under `.scale/`.
-- [ ] Every component paper has a stable `id`, `sources` (files only), 2–6 concrete
+- [ ] Every component doc has a stable `id`, `sources` (files only), 2–6 concrete
       `concepts`, 1–4 `rationale` entries each with `provenance`.
-- [ ] Every paper has a hero Mermaid visual and all seven sections in order.
+- [ ] Every doc has a hero Mermaid visual and all seven sections in order, under
+      the canonical headings.
 - [ ] Bodies are prose only — zero code symbols, paths, or snippets in the text.
-- [ ] Related Work links resolve (zero dead links); the graph is connected.
+- [ ] Related components links resolve (zero dead links); the graph is connected.
 - [ ] `map.json` was produced by `scale map layout`, not hand-edited.
-- [ ] Terminology is neutral throughout — no game-skin words in any paper.
+- [ ] Terminology is neutral throughout — no game-skin words in any doc.
 - [ ] Every rationale a fresh build inferred is honestly marked `inferred`.

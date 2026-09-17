@@ -16,7 +16,7 @@
  *   ANCHOR MODE (always available) — needs only `.scale/` plus the filesystem:
  *     0. stale anchors   — anchors that changed since map.json's builtFromSha
  *     1. orphan files    — source files no component claims
- *     2. bad anchors     — paths a paper claims that are missing / not a file /
+ *     2. bad anchors     — paths a doc claims that are missing / not a file /
  *                          spelled with the wrong case
  *     3. double-claimed  — files claimed by more than one component
  *
@@ -43,7 +43,7 @@
  * Exit codes: 0 = report produced (even when it finds problems — findings are the
  * point, not a failure). 1 only on a real error, of which there are exactly six:
  *   - no `.scale/` directory at the repo root
- *   - `.scale/` exists but holds no valid component paper
+ *   - `.scale/` exists but holds no valid component doc
  *   - `@scale/core` cannot be imported (unbuilt or uninstalled)
  *   - an unknown argument, or `--graph` with no path
  *   - an explicit `--graph <path>` that does not exist (an explicit request that
@@ -78,11 +78,11 @@ const ROOT = rootArg();
 //
 // The surface is DERIVED, not listed: every file git tracks or would track
 // (`git ls-files --cached --others --exclude-standard`) minus the exclusions
-// here. A hardcoded root list silently exempts whatever it forgets — papers in
+// here. A hardcoded root list silently exempts whatever it forgets — docs in
 // this repo already anchor `scripts/`, `packages/core/fixtures/`,
 // `.claude-plugin/` and repo-root `*.md`, none of which live under a `src/`.
 // Deriving makes THIS LIST the single auditable definition of the surface, and
-// the report cross-checks it: any path a paper claims that these exclusions
+// the report cross-checks it: any path a doc claims that these exclusions
 // would hide is printed back as a finding.
 // ---------------------------------------------------------------------------
 
@@ -110,7 +110,7 @@ const FALLBACK_SCAN_ROOTS = [
 
 /**
  * Directory names pruned anywhere in a path. `__tests__` is test code (never a
- * learning target — no paper should anchor it), `dist` / `web-dist` are compiler
+ * learning target — no doc should anchor it), `dist` / `web-dist` are compiler
  * and bundler output, `node_modules` is vendored. Matching on the NAME rather
  * than a path makes the rule total: a package added later cannot smuggle a build
  * directory back into the scan.
@@ -127,14 +127,14 @@ const EXCLUDED_DIR_NAMES = new Set([
  * Repo-relative path prefixes pruned outright.
  *   `.scale`             — the coverage memory itself. It is the artifact under
  *                          audit, not a learning target; scanning it would
- *                          report every paper as an orphan of itself. (The
+ *                          report every doc as an orphan of itself. (The
  *                          `scale-sample` fixture tree under packages/core is
  *                          NOT covered by this prefix, and two of its files are
- *                          legitimately anchored by papers.)
+ *                          legitimately anchored by docs.)
  *   `packages/plugin/bin` — the single-file CLI bundle `scripts/build-plugin.mjs`
  *                          generates. Tens of thousands of generated lines that
  *                          would swamp the orphan count while being exactly the
- *                          thing no paper should ever anchor.
+ *                          thing no doc should ever anchor.
  */
 const EXCLUDED_PATH_PREFIXES = ['.scale', 'packages/plugin/bin'];
 
@@ -149,7 +149,7 @@ const EXCLUDED_FILE_NAMES = new Set(['package-lock.json']);
  * Extensions counted as source. An allowlist rather than a denylist so that a
  * future binary asset (an image, a font, a `.tsbuildinfo`) cannot silently
  * appear as an "orphan source file" nobody wrote. `.jsonl` and `.html` are here
- * because papers already anchor `packages/core/fixtures/evidence.jsonl` and the
+ * because docs already anchor `packages/core/fixtures/evidence.jsonl` and the
  * web entry point is real hand-written source.
  */
 const SOURCE_EXTENSIONS = new Set([
@@ -252,7 +252,7 @@ const normalizePath = (p) =>
   String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
 
 /**
- * Repo-relative POSIX path, matching the spelling used in every paper's `sources`.
+ * Repo-relative POSIX path, matching the spelling used in every doc's `sources`.
  * A path outside the repo (a `--graph` pointing elsewhere) keeps its absolute
  * form rather than becoming an unreadable pile of `../`.
  */
@@ -341,9 +341,9 @@ function countLoc(rel) {
 }
 
 /**
- * Lenient `sources:` reader for the province and root orientation papers, which
- * the loader never parses (paper-loader.ts skips depth 1 and only keeps a root
- * paper that fully validates — this repo's does not). Deliberately not a YAML
+ * Lenient `sources:` reader for the province and root orientation docs, which
+ * the loader never parses (doc-loader.ts skips depth 1 and only keeps a root
+ * doc that fully validates — this repo's does not). Deliberately not a YAML
  * parser: it reads the frontmatter block, finds the top-level `sources:` key and
  * takes its `- item` lines. Used ONLY for anchor liveness, never for attribution.
  */
@@ -412,8 +412,8 @@ async function run(options) {
   // loadScaleDir takes the REPO ROOT and appends '.scale' itself. It never throws
   // on a missing/malformed tree — it returns empty results — so check the result.
   const loaded = loadScaleDir(ROOT);
-  if (loaded.papers.length === 0) {
-    fail('.scale/ exists but contains no valid component papers');
+  if (loaded.docs.length === 0) {
+    fail('.scale/ exists but contains no valid component docs');
   }
 
   /**
@@ -452,23 +452,23 @@ async function run(options) {
     if (Array.isArray(v)) fileIndex[k] = v;
   }
 
-  /** Exact owners of a path, or [] when no paper claims it. Never guesses. */
+  /** Exact owners of a path, or [] when no doc claims it. Never guesses. */
   const ownersOf = (p) => {
     const v = fileIndex[normalizePath(p)];
     return Array.isArray(v) ? v : [];
   };
 
-  const componentIds = loaded.papers.map((p) => p.frontmatter.id).sort();
-  const sourceEntryCount = loaded.papers.reduce(
+  const componentIds = loaded.docs.map((p) => p.frontmatter.id).sort();
+  const sourceEntryCount = loaded.docs.reduce(
     (n, p) => n + p.frontmatter.sources.length,
     0,
   );
 
-  // Papers the loader dropped for invalid frontmatter reach stdout only as a
+  // Docs the loader dropped for invalid frontmatter reach stdout only as a
   // console.warn, and every path they anchor then shows up as a phantom orphan.
   // Count README-bearing component folders directly and report the difference.
-  const paperFolders = [];
-  const collectPaperFolders = (absDir, depth) => {
+  const docFolders = [];
+  const collectDocFolders = (absDir, depth) => {
     let entries;
     try {
       entries = fs.readdirSync(absDir, { withFileTypes: true });
@@ -476,16 +476,16 @@ async function run(options) {
       return;
     }
     if (depth >= 2 && entries.some((e) => e.isFile() && e.name.toLowerCase() === 'readme.md')) {
-      paperFolders.push(relToRepo(absDir));
+      docFolders.push(relToRepo(absDir));
     }
     for (const e of entries) {
-      if (e.isDirectory()) collectPaperFolders(resolve(absDir, e.name), depth + 1);
+      if (e.isDirectory()) collectDocFolders(resolve(absDir, e.name), depth + 1);
     }
   };
-  collectPaperFolders(resolve(ROOT, '.scale'), 0);
-  paperFolders.sort();
-  const loadedFolders = new Set(loaded.papers.map((p) => relToRepo(p.path)));
-  const papersSkipped = paperFolders.filter((f) => !loadedFolders.has(f));
+  collectDocFolders(resolve(ROOT, '.scale'), 0);
+  docFolders.sort();
+  const loadedFolders = new Set(loaded.docs.map((p) => relToRepo(p.path)));
+  const docsSkipped = docFolders.filter((f) => !loadedFolders.has(f));
 
   // -------------------------------------------------------------------------
   // Audit surface
@@ -523,8 +523,8 @@ async function run(options) {
   const scannedSet = new Set(scannedFiles);
 
   // The exclusion list is the definition of the surface, so it has to be
-  // falsifiable: any real file a component paper claims that the list would hide
-  // is a bug in the list (or in the paper), and is printed rather than swallowed.
+  // falsifiable: any real file a component doc claims that the list would hide
+  // is a bug in the list (or in the doc), and is printed rather than swallowed.
   // Filled in after metric 2, which is what decides whether the path is a file.
   const claimedButExcluded = [];
 
@@ -532,8 +532,8 @@ async function run(options) {
   // Metric 0 — stale anchors
   // -------------------------------------------------------------------------
 
-  // The failure class this whole report feeds: a paper whose anchors moved under
-  // it since the map was built. Both stale papers PLAN-GRAPHIFY §1.2 names by
+  // The failure class this whole report feeds: a doc whose anchors moved under
+  // it since the map was built. Both stale docs PLAN-GRAPHIFY §1.2 names by
   // hand (config-schema, memory-builder-skill) are invisible to metrics 1-3
   // because their sources still exist — but they are mechanically obvious from
   // `git diff <builtFromSha>..HEAD`.
@@ -609,7 +609,7 @@ async function run(options) {
         // Churn leads because anchor COUNT is not a staleness signal — a file
         // claimed by six components (index.ts here) hands all six an anchor
         // apiece, so counting anchors ranks by how widely a file is shared
-        // rather than by how much the paper's subject actually moved.
+        // rather than by how much the doc's subject actually moved.
         .sort(
           (a, b) =>
             b.changedLines - a.changedLines ||
@@ -681,14 +681,14 @@ async function run(options) {
   // Metric 2 — bad anchors (dead / non-file / case-mismatched)
   // -------------------------------------------------------------------------
 
-  // Every path any paper anchors, across all three tiers. The ORPHAN definition
+  // Every path any doc anchors, across all three tiers. The ORPHAN definition
   // stays component-only on purpose (that is what `scale map index` builds, so
-  // that is what miscredits an edit), but a province or root paper teaching a
+  // that is what miscredits an edit), but a province or root doc teaching a
   // deleted file is the same staleness defect and used to be invisible.
   const anchorClaims = [];
-  for (const paper of loaded.papers) {
-    for (const src of paper.frontmatter.sources) {
-      anchorClaims.push({ path: normalizePath(src), owner: paper.frontmatter.id, tier: 'component' });
+  for (const doc of loaded.docs) {
+    for (const src of doc.frontmatter.sources) {
+      anchorClaims.push({ path: normalizePath(src), owner: doc.frontmatter.id, tier: 'component' });
     }
   }
   const scaleDir = resolve(ROOT, '.scale');
@@ -712,7 +712,7 @@ async function run(options) {
   }
 
   // Case-exact existence: `fs.existsSync` is case-INSENSITIVE on the default
-  // macOS filesystem, so a casing typo in a paper passes the liveness check on a
+  // macOS filesystem, so a casing typo in a doc passes the liveness check on a
   // laptop and fails it in Linux CI — two different fidelity reports for one
   // commit. Verify every segment against its parent's real directory listing.
   const dirListings = new Map();
@@ -744,7 +744,7 @@ async function run(options) {
     } catch {
       return 'missing';
     }
-    // `sources` is documented as file-granularity (schema/paper.ts). A directory
+    // `sources` is documented as file-granularity (schema/doc.ts). A directory
     // passes existsSync, matches no file in the index, and silently orphans its
     // whole subtree with no explanation.
     if (!st.isFile()) return 'not-file';
@@ -1003,19 +1003,19 @@ async function run(options) {
       (linksTotal > 0 && linksSkipped > 0 && linksSkipped === linksTotal - linksSelfLoop);
     const unattributedSample = [...unattributedFiles].sort().slice(0, 5);
 
-    // --- the map's own Related Work links --------------------------------------
+    // --- the map's own Related components links --------------------------------------
     //
     // map.json is the committed artifact the report is about, so it is the primary
     // source. Its builtFromSha can lag HEAD; when the file is absent we fall back
-    // to the edges loadScaleDir derives live from each paper's Related Work links,
+    // to the edges loadScaleDir derives live from each doc's Related components links,
     // and say which was used.
     let referenceEdgeSource = 'map.json';
     let mapEdges = Array.isArray(mapJson?.edges) ? mapJson.edges : null;
     if (!mapEdges) {
-      referenceEdgeSource = 'papers (Related Work links; .scale/map.json unreadable)';
+      referenceEdgeSource = 'docs (Related components links; .scale/map.json unreadable)';
       mapEdges = loaded.edges;
     }
-    // Unordered: a Related Work link in either direction is the same claim.
+    // Unordered: a Related components link in either direction is the same claim.
     const referencePairs = new Set();
     for (const e of mapEdges) {
       if (e?.kind !== 'reference') continue;
@@ -1027,11 +1027,11 @@ async function run(options) {
     for (const owners of nodeOwners.values()) for (const c of owners) componentsWithNodes.add(c);
 
     // Metric 4 — link recall: of the component pairs the AST says are connected,
-    // how many did the map remember to link? Low recall = missing Related Work.
+    // how many did the map remember to link? Low recall = missing Related components.
     let recallHits = 0;
     for (const k of crossPairs) if (referencePairs.has(k)) recallHits++;
     // Metric 5 — link precision: of the pairs the map links, how many does the AST
-    // corroborate? Low precision = Related Work asserting conceptual kinship with
+    // corroborate? Low precision = Related components asserting conceptual kinship with
     // no code path behind it (PLAN-GRAPHIFY §1.2 flags 24.3% edge density as suspect).
     let precisionHits = 0;
     for (const k of referencePairs) if (crossPairs.has(k)) precisionHits++;
@@ -1228,7 +1228,7 @@ async function run(options) {
     head,
     builtFromSha,
     components: componentIds.length,
-    papersSkipped,
+    docsSkipped,
     sources: {
       entries: sourceEntryCount,
       unique: Object.keys(fileIndex).length,
@@ -1282,10 +1282,10 @@ async function run(options) {
           : '   (map lags HEAD)'
         : ''),
   );
-  if (papersSkipped.length > 0) {
+  if (docsSkipped.length > 0) {
     say('');
-    say(`  PAPERS SKIPPED — ${papersSkipped.length} README folder(s) the loader rejected`);
-    for (const f of papersSkipped) say(`     ${f}`);
+    say(`  DOCS SKIPPED — ${docsSkipped.length} README folder(s) the loader rejected`);
+    for (const f of docsSkipped) say(`     ${f}`);
     say('     Their anchors show up below as orphans and their links vanish from');
     say('     recall/precision. Fix the frontmatter before trusting the numbers.');
   }
@@ -1363,7 +1363,7 @@ async function run(options) {
         const t = byTier.get(tier);
         say(`       ${pad(tier, 8)} ${String(t.files).padStart(3)} files, ${String(t.loc).padStart(5)} LOC`);
       }
-      say('     A paper CAN legitimately anchor a manifest, doc or fixture; these are');
+      say('     A doc CAN legitimately anchor a manifest, doc or fixture; these are');
       say('     unclaimed, not wrong. Decide the policy before treating them as work.');
     }
     say('');
@@ -1396,7 +1396,7 @@ async function run(options) {
   }
   say('');
 
-  say(`  2. BAD ANCHORS — a paper claims a path that does not resolve to a file`);
+  say(`  2. BAD ANCHORS — a doc claims a path that does not resolve to a file`);
   const anchorRows = (title, rows) => {
     if (rows.length === 0) return;
     say(`     ${title}`);
@@ -1475,7 +1475,7 @@ async function run(options) {
     say('');
     if (graph.attributionCollapsed) {
       say('  !! ATTRIBUTION COLLAPSED — metrics 4-6 are NOT scored.');
-      say('     No graph node (or no edge) matched any path a paper claims. That is a');
+      say('     No graph node (or no edge) matched any path a doc claims. That is a');
       say('     configuration error — a graph extracted from another cwd, another repo,');
       say('     or with absolute paths outside this root — not a finding about the map.');
       if (graph.nodes.unattributedSample.length > 0) {

@@ -1,7 +1,7 @@
 import type {
   MapJson,
   UserCoverage,
-  PaperFrontmatter,
+  DocFrontmatter,
   Quest,
   ComponentCoverage,
   DimName,
@@ -30,9 +30,9 @@ import type {
  * looking at is not your repo.
  */
 
-/** Shape returned by GET /api/paper/:id (frontmatter + markdown body). */
-export interface PaperResponse {
-  frontmatter: PaperFrontmatter;
+/** Shape returned by GET /api/doc/:id (frontmatter + markdown body). */
+export interface DocResponse {
+  frontmatter: DocFrontmatter;
   body: string;
 }
 
@@ -214,15 +214,15 @@ export async function loadLocks(): Promise<LocksResponse> {
 }
 
 /**
- * GET /api/paper/:id -> { frontmatter, body }. Falls back to the bundled sample
- * paper for that id (or null if none is seeded).
+ * GET /api/doc/:id -> { frontmatter, body }. Falls back to the bundled sample
+ * doc for that id (or null if none is seeded).
  */
-export async function loadPaper(id: string): Promise<PaperResponse | null> {
+export async function loadDoc(id: string): Promise<DocResponse | null> {
   try {
-    return await getJson<PaperResponse>(`/api/paper/${encodeURIComponent(id)}`);
+    return await getJson<DocResponse>(`/api/doc/${encodeURIComponent(id)}`);
   } catch (err) {
-    return useSample(`paper ${id}`, err, async () => {
-      const s = (await import('./sample/papers.js')).samplePapers[id];
+    return useSample(`doc ${id}`, err, async () => {
+      const s = (await import('./sample/docs.js')).sampleDocs[id];
       return s ? { frontmatter: s.frontmatter, body: s.body } : null;
     });
   }
@@ -421,8 +421,8 @@ const OFFLINE_MCQ: Record<
 /**
  * POST /api/quests — create a VOLUNTARY quest for a component on demand: the
  * map's Challenge button (§6.3). Works in every condition; the server falls back
- * to deterministic paper-grounded items when there's no API key. Offline (vite
- * dev with no backend) we synthesize a small quest from the sample paper — in
+ * to deterministic doc-grounded items when there's no API key. Offline (vite
+ * dev with no backend) we synthesize a small quest from the sample doc — in
  * the caller's interaction `language` — so the runner still opens. Returns null
  * only when nothing could be prepared.
  */
@@ -439,8 +439,8 @@ export async function createVoluntaryQuest(
     note(`voluntary quest for ${componentId}`, err);
     if (!SAMPLE_FALLBACK_ALLOWED) throw err;
     sampleActive = true;
-    const paper = (await import('./sample/papers.js')).samplePapers[componentId];
-    const concepts = paper?.frontmatter.concepts ?? [];
+    const doc = (await import('./sample/docs.js')).sampleDocs[componentId];
+    const concepts = doc?.frontmatter.concepts ?? [];
     const t = OFFLINE_MCQ[language];
     const items = concepts.slice(0, 2).map((c, i) => {
       const opts = [c.name, ...t.distractors];

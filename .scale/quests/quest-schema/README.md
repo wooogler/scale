@@ -46,7 +46,7 @@ flowchart TD
     I --> X["optional choice list<br/>+ any extra keys, preserved"]
 ```
 
-## Abstract
+## Summary
 
 This component is the data contract for a quest: the small document that carries a
 pending comprehension check from the moment it is generated to the moment it is
@@ -57,7 +57,7 @@ outer envelope is strict and fully enumerated, while the items inside are valida
 permissively, because those items are written by a language model whose exact output
 shape cannot be pinned down in advance.
 
-## Introduction
+## What it does
 
 The post-session arm of this system produces work for the learner to do later:
 after a coding session ends, a few components are selected and turned into checks
@@ -77,7 +77,7 @@ stricter than this one, and would have broken constantly. The shape described he
 is the compromise that lets generated content flow through unharmed while still
 guaranteeing enough structure for the grading path to rely on.
 
-## Related Work
+## Related components
 
 The producer side is [Selection, Generation, and Offline Fallback](../quest-generation/),
 which is the only code that ever constructs one of these documents; every field
@@ -106,7 +106,7 @@ decides that a validated component's sources have moved far enough for its
 comprehension record to be doubted. Reading that component is the fastest way to see
 why the value was reserved and what would have to exist before it appears.
 
-## Description
+## How it works
 
 A quest document has six fields and no nesting beyond its item list. It carries its
 own identifier, generated fresh for each offer, so a component can be quizzed many
@@ -177,7 +177,7 @@ validation complaint — it presents as a learner who suddenly has no pending ch
 at all. A junior debugging a queue that has mysteriously emptied should suspect a
 single malformed document before suspecting the generator.
 
-## Rationale
+## Design decisions
 
 The permissive item shape is the decision that defines this component, and the
 source comment states the reason directly: item shape varies by modality, and the
@@ -208,7 +208,7 @@ and both values correspond to behaviour the design describes but the implementat
 has not reached. A junior should treat them as declarations of intent, not as
 features, and should not write code that assumes either one can appear.
 
-## Conclusion
+## Where it sits
 
 This component is small, and that is its point: it is the narrow, stable contract
 across which generated content passes on its way to being graded. Read it as two

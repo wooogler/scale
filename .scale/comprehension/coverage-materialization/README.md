@@ -62,11 +62,11 @@ flowchart TD
     WRITE --> TALLY[per-state counts and overall progress]
 ```
 
-## Abstract
+## Summary
 
 This component is the impure shell around the comprehension model. It reads the coverage memory tree, the frozen map, the configuration, the evidence log and the previously written coverage file, asks git for the current commit and for how many lines have changed since each component's validation anchor, measures how large each component is, calls the pure fold, and writes the result to the user's state directory. It also provides the tally that turns a coverage view into the per-state counts and overall progress figure shown by the status summary and the map viewer.
 
-## Introduction
+## What it does
 
 Every design decision in this province pushes side effects outward, and this is where they land. That arrangement is only useful if the boundary is genuinely clean, so it is worth being precise about what crosses it: the fold receives a set of components to seed, a configuration, a list of evidence entries, the current commit identifier, a table of per-component churn, a table of per-component sizes, and a timestamp. Nothing else. Everything on that list is produced here by touching the outside world.
 
@@ -74,7 +74,7 @@ Two of those inputs are more interesting than the rest. Sizes are the denominato
 
 The last thing a newcomer needs is a sense of when this runs. It is not continuous. Hooks append evidence and do nothing else; coverage is rebuilt only when some command is about to read it, which keeps the cost off the path that fires while somebody is typing. Between those points the coverage file is simply out of date, and that is by design.
 
-## Related Work
+## Related components
 
 The fold this component wraps is [Pure Materialization of Coverage](../state-engine/); everything here exists to give that function honest inputs and a place to put its output. The evidence it reads is defined by [The Append-Only Evidence Log](../evidence-log/), and the tolerant line-by-line parsing here is the counterpart to the fast, unconditional appends made elsewhere. The directory it reads and writes, and the rule that maps a working directory to a per-user state folder, belong to [Per-User State Layout and Repository Identity](../../platform/state-directory/).
 
@@ -82,7 +82,7 @@ On the repository side it depends on [Loading the Coverage Memory Tree](../../me
 
 Two of the recompute points described below are worth following to their own papers. [Session Start and Session End](../../capture/session-lifecycle-hooks/) is the tightest of them, because the opening hook has to produce a coverage summary before the assistant's first turn — that is the latency budget the git work here is really spending, and the reason churn is read from the previous answer rather than folded twice. [Serving the Map and Its JSON API](../../viewer/local-server/) is the other, and it is the only caller that decides for itself whether a rebuild is warranted, by comparing when the evidence log was last written against the coverage file it already has.
 
-## Description
+## How it works
 
 Nothing here runs on a timer or a watch. The governing rule is simple to state: editor hooks never rebuild, and any command that needs a current view rebuilds first. So a rebuild happens when a session begins and the assistant asks for its starting context, when a graded result is recorded, when the pre-commit decision runs, when the status summary is printed, when quests are generated or completed, when someone explicitly asks for a rebuild, and when the local viewer is asked for coverage and notices that the evidence log has been written to more recently than the coverage file. The module's own header note lists a shorter set than the callers actually amount to, which is worth knowing if you go looking for them; the principle it states is nonetheless the right one. Between any two of these moments the coverage file is simply out of date in the ordinary sense of the words, and no part of the system pretends otherwise.
 
@@ -102,7 +102,7 @@ After the fold returns, the state directory is ensured to exist and the whole co
 
 A second, smaller function tallies a coverage view against a map: it walks the map's nodes, counts how many fall into each of the four states — treating a node with no record as fog — and computes the importance-weighted progress figure. Doing the tally over map nodes rather than over coverage keys is what makes the totals stable: the denominator is the size of the mapped codebase, so progress does not jump when a new component first receives evidence.
 
-## Rationale
+## Design decisions
 
 Concentrating the side effects here appears to be a direct consequence of wanting the comprehension model to be arguable. The module's own header describes itself as owning the impure edges while the actual fold stays pure, and the payoff is visible in how the scoring code is tested: with literal inputs and no repository. If git and the clock were read inside the fold, the same test would require constructing a repository with a specific history, and the reproducibility claim — that identical evidence yields an identical result — would become untestable rather than merely unverified.
 
@@ -112,6 +112,6 @@ Failing soft everywhere is a hook-path decision. These functions can be invoked 
 
 Rewriting the coverage document wholesale rather than patching it follows from its status as a derived view. Because it has no authority of its own, there is nothing in it worth preserving across a rebuild, and patching would quietly reintroduce the incremental-update problem that the replay design exists to avoid.
 
-## Conclusion
+## Where it sits
 
 This component is the seam between a deterministic comprehension model and a messy world of repositories, clocks and partially written files. It gathers honest inputs, calls the fold, writes the answer, and refuses to fail loudly when the world is not cooperating. Understanding it means understanding why staleness needs two rebuilds, why sizes are always measured but churn often is not, and why the coverage file can always be deleted. Read [Pure Materialization of Coverage](../state-engine/) for what happens between its inputs and its output, [Per-User State Layout and Repository Identity](../../platform/state-directory/) for where the files it touches live, and [Source Drift and Staleness Flagging](../../map/drift-detection/) for the part of the staleness story that is still unfinished.

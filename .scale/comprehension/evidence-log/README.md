@@ -57,11 +57,11 @@ flowchart LR
     LOG --> FOLD[pure fold into coverage]
 ```
 
-## Abstract
+## Summary
 
 The evidence log is the system's only durable record of what actually happened: every prompt that mentioned a component, every file edit mapped back to a component, every graded check, every intervention shown or skipped. Entries are appended and never modified, and they are stored in the shape they were observed in rather than as scores, so the comprehension model can be changed later and re-run over the whole history. This component defines the entry kinds and the guarantees each one makes.
 
-## Introduction
+## What it does
 
 Two forces shape this design. The first is that the capture path runs inside a developer's editing session, on hooks that fire while they work, and must add no perceptible latency — so whatever happens at capture time has to be trivially cheap. The second is that the way raw signals should be converted into comprehension scores is not settled; it is precisely the thing the prototype exists to study. Those two forces point at the same answer: capture the observation, not the conclusion.
 
@@ -69,13 +69,13 @@ So the log is append-only and raw. A file edit is stored as which files were edi
 
 A newcomer should hold onto one distinction before reading further: passive signals versus active validations. Passive signals record contact with a component. Active validations record that someone demonstrated understanding of it under grading. The system's central rule is that contact alone can never amount to demonstrated understanding, and the split between these entry kinds is where that rule becomes enforceable.
 
-## Related Work
+## Related components
 
 The entries defined here are written by the fast-append path described in [The Fast-Append Path](../../capture/evidence-append/), which validates one line and appends it — that is the whole hot path. The passive kinds in particular are produced by [Capturing Touches, Prompts, and Review Latency](../../capture/edit-and-prompt-hooks/), and the mapping from an edited file to the component identifiers stored on a touch entry is done by [File-to-Component Reverse Index](../../map/file-component-index/). The active kinds are produced by [Recording a Validation Outcome](../../interventions/validation-recording/), which is also the place the recorded commit identifier and the origin marker are stamped. The graded content of those active entries comes from [Quiz and Socratic Protocols](../../interventions/tutor-skill/), whose two check formats correspond one for one to the two active kinds defined here, and whose governing discipline — grade and report, never compute — is exactly what keeps derived numbers out of this file. The same active entries are also written by [The Shared Completion Path](../../quests/quest-completion/), which appends the graded results here first and only afterwards rebuilds the derived view. That every writer is a short-lived editor process that swallows its own failures is a property of [Hook Wiring and the Fail-Open Rule](../../capture/plugin-hooks/), and it is the direct reason this log's readers tolerate a truncated final line instead of treating it as corruption.
 
 On the reading side, [Pure Materialization of Coverage](../state-engine/) is the only consumer that interprets these entries, folding them in timestamp order into records of the shape defined by [Coverage States and the Three Dimensions](../coverage-schema/). The intervention accounting entries are read back by [The Pure Pre-Commit Decision](../../interventions/commit-gate/) as evidence that a component was recently addressed, which is how the "skip counts as handled" behaviour is realised without a separate queue.
 
-## Description
+## How it works
 
 The log is a file of independent lines, one entry per line, written by appending and never by rewriting. Nothing in the system opens it to revise an earlier line, and no entry ever holds a score the model computed — only the observation as it was seen. That is what makes the whole file replayable: the numbers a reader eventually sees are produced fresh from these lines every time, so a different rule applied to the same file yields a different answer without any line changing.
 
@@ -93,7 +93,7 @@ Both extra fields are declared optional, and so is the prompt text. The stated r
 
 The reader that consumes this log in practice is forgiving in one more way that belongs to this component's contract: a line that fails to parse is skipped rather than treated as fatal. Because the file is appended to concurrently from short-lived hook processes, a truncated final line is a realistic outcome, and losing one signal is strictly better than making the whole coverage view unreadable.
 
-## Rationale
+## Design decisions
 
 Keeping the log raw and append-only is the decision everything else follows from. The code comments describe the log as being kept raw "so the coverage model can be re-fit later without data loss", which is an unusually direct statement of intent. The alternative — updating scores at capture time — would be cheaper to read but irreversible, and it would put arithmetic and file rewriting on a path that fires during editing. Reversing this decision would not merely slow the hooks; it would destroy the ability to answer the research question, because there would be no way to compare what a different scoring model would have concluded from the same session.
 
@@ -103,6 +103,6 @@ The recorded-commit decision is the subtlest one and the comments spell out the 
 
 Recording origin without letting it affect scoring reflects the project's stated position that self-directed learning is a first-class path, not a lesser one. Weighting it differently would make the autonomy route worth less than being interrupted, which would undercut the argument the prototype is trying to make; dropping the field entirely would make the two paths indistinguishable in analysis. Recording it and ignoring it is the only option that keeps both properties.
 
-## Conclusion
+## Where it sits
 
 The evidence log is the system's ground truth, and everything a reader sees on the map is a re-derivable opinion about it. Its discipline is narrow and strict: append raw observations, never rewrite, keep every new field optional, and pin active validations to the moment they happened. Read [Pure Materialization of Coverage](../state-engine/) next to see how these lines become numbers, [Coverage States and the Three Dimensions](../coverage-schema/) for the shape they become, and [The Fast-Append Path](../../capture/evidence-append/) for the other end — the few milliseconds in which a line gets written.

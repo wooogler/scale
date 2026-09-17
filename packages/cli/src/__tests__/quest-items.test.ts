@@ -18,32 +18,32 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 function loadRepo(): LoadedScale | null {
   const loaded = loadScaleDir(REPO_ROOT);
-  return loaded.papers.length > 0 ? loaded : null;
+  return loaded.docs.length > 0 ? loaded : null;
 }
 
 describe('deterministicQuizItems', () => {
   const loaded = loadRepo();
-  // The repo's own .scale/ is the only realistic multi-paper corpus available;
+  // The repo's own .scale/ is the only realistic multi-doc corpus available;
   // skip rather than fail if it is ever removed.
   const maybe = loaded ? it : it.skip;
 
   maybe('never offers the correct answer twice, and keys it correctly', () => {
-    for (const paper of loaded!.papers) {
-      for (const item of deterministicQuizItems(paper, loaded!, 'en')) {
+    for (const doc of loaded!.docs) {
+      for (const item of deterministicQuizItems(doc, loaded!, 'en')) {
         const options = item.options;
         const correctIndex = item.correctIndex;
-        expect(options, `${paper.id}: quiz item has no options`).toBeDefined();
-        expect(correctIndex, `${paper.id}: quiz item has no correctIndex`).toBeTypeOf('number');
+        expect(options, `${doc.id}: quiz item has no options`).toBeDefined();
+        expect(correctIndex, `${doc.id}: quiz item has no correctIndex`).toBeTypeOf('number');
         if (!options || typeof correctIndex !== 'number') continue;
 
-        expect(options, `${paper.id}: expected 4 options`).toHaveLength(4);
+        expect(options, `${doc.id}: expected 4 options`).toHaveLength(4);
         expect(
           new Set(options).size,
-          `${paper.id}: duplicate option in ${JSON.stringify(options)}`,
+          `${doc.id}: duplicate option in ${JSON.stringify(options)}`,
         ).toBe(4);
         expect(
           options[correctIndex],
-          `${paper.id}: correctIndex does not point at answer`,
+          `${doc.id}: correctIndex does not point at answer`,
         ).toBe(item.answer);
       }
     }
@@ -52,8 +52,8 @@ describe('deterministicQuizItems', () => {
   maybe('varies distractors across components', () => {
     const sets = new Set<string>();
     let items = 0;
-    for (const paper of loaded!.papers) {
-      for (const item of deterministicQuizItems(paper, loaded!, 'en')) {
+    for (const doc of loaded!.docs) {
+      for (const item of deterministicQuizItems(doc, loaded!, 'en')) {
         if (!item.options) continue;
         items += 1;
         sets.add(
@@ -66,14 +66,14 @@ describe('deterministicQuizItems', () => {
       }
     }
     // The regression this pins: two distinct sets across 74 items. Requiring a
-    // majority to be distinct is loose enough to survive papers being edited.
+    // majority to be distinct is loose enough to survive docs being edited.
     expect(items).toBeGreaterThan(10);
     expect(sets.size).toBeGreaterThan(items / 2);
   });
 
   maybe('is deterministic — same corpus, same items', () => {
     const render = (l: LoadedScale) =>
-      l.papers
+      l.docs
         .flatMap((p) => deterministicQuizItems(p, l, 'en'))
         .map((i) => (i.options ?? []).join('|'));
     expect(render(loaded!)).toEqual(render(loadScaleDir(REPO_ROOT)));

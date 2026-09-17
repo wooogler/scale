@@ -20,8 +20,8 @@ import { classifyState, computeLoyalty, DEFAULT_CONSTANTS, emaUpdate } from './c
  * contact climbs toward `passiveStructureCap` but never past it.
  */
 const PASSIVE_STRUCTURE_CREDIT = 0.1;
-/** Small per-dim credit granted per paper_read, capped at `paperReadCap`. */
-const PAPER_READ_CREDIT = 0.1;
+/** Small per-dim credit granted per doc_read, capped at `docReadCap`. */
+const DOC_READ_CREDIT = 0.1;
 
 /** A fresh, never-explored coverage record. */
 export function emptyComponentCoverage(): ComponentCoverage {
@@ -67,8 +67,10 @@ export interface ApplyContext {
  *  - `touch`/`prompt` (passive) — fog→explored + small structure credit, capped
  *    at `passiveStructureCap`; passive signal alone can never push structure past
  *    the cap (active validation can).
- *  - `paper_read` (passive) — fog→explored + small bump to all three dims, each
- *    capped at `paperReadCap`.
+ *  - `doc_read` (passive) — fog→explored + small bump to all three dims, each
+ *    capped at `docReadCap`. The legacy `paper_read` rows still on disk are the
+ *    same signal under the old name and are credited identically.
+ *    ('paper_read' is the legacy literal — see schema/evidence.ts.)
  *  - `diff_review` — v1 LOGGED ONLY: latency is kept as raw evidence but is NOT
  *    modeled into dims in v1. No coverage change.
  *  - `quiz_result` (active) — EMA-update the tagged dim; +1 active validation.
@@ -106,7 +108,10 @@ export function applyEvidence(
   // visible per-session movement). Falls back to the model default.
   const alpha = config.thresholds.emaAlpha ?? DEFAULT_CONSTANTS.emaAlpha;
   const isPassive =
-    entry.type === 'touch' || entry.type === 'prompt' || entry.type === 'paper_read';
+    entry.type === 'touch' ||
+    entry.type === 'prompt' ||
+    entry.type === 'doc_read' ||
+    entry.type === 'paper_read';
 
   for (const id of componentIdsOf(entry)) {
     const prev = next.components[id] ?? emptyComponentCoverage();
@@ -123,12 +128,14 @@ export function applyEvidence(
           config.thresholds.passiveStructureCap,
         ),
       };
-    } else if (entry.type === 'paper_read') {
-      const cap = config.thresholds.paperReadCap;
+    } else if (entry.type === 'doc_read' || entry.type === 'paper_read') {
+      // Both literals, identically: `paper_read` is what the same event was
+      // called before the rename, and the log it lives in is append-only.
+      const cap = config.thresholds.docReadCap;
       dims = {
-        structure: passiveBump(dims.structure, PAPER_READ_CREDIT, cap),
-        concepts: passiveBump(dims.concepts, PAPER_READ_CREDIT, cap),
-        rationale: passiveBump(dims.rationale, PAPER_READ_CREDIT, cap),
+        structure: passiveBump(dims.structure, DOC_READ_CREDIT, cap),
+        concepts: passiveBump(dims.concepts, DOC_READ_CREDIT, cap),
+        rationale: passiveBump(dims.rationale, DOC_READ_CREDIT, cap),
       };
     } else if (entry.type === 'quiz_result') {
       dims = withDim(
@@ -396,6 +403,7 @@ function componentIdsOf(entry: EvidenceEntry): string[] {
     case 'prompt':
     case 'touch':
       return entry.componentIds;
+    case 'doc_read':
     case 'paper_read':
     case 'quiz_result':
     case 'socratic_result':

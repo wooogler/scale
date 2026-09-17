@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 import type { ComponentCoverage, Dimensions, Quest } from '@scale/core/browser';
 import { skinFor, DRIFT_SKIN, QUEST_SKIN } from './skin.js';
-import { loadPaper, createVoluntaryQuest, type PaperResponse } from './data.js';
+import { loadDoc, createVoluntaryQuest, type DocResponse } from './data.js';
 import { Markdown } from './Markdown.js';
 import { useLang, useStrings } from './i18n.js';
 
@@ -35,11 +35,11 @@ function DevStat({ label, value, color }: { label: string; value: number; color:
 export function Panel({ componentId, coverage, quests, owed = false, onStartQuest, onClose }: Props): JSX.Element {
   const S = useStrings();
   const lang = useLang();
-  // Papers are fetched lazily per selected node (GET /api/paper/:id) with a
-  // bundled-sample fallback baked into loadPaper. While the fetch is in flight
+  // Docs are fetched lazily per selected node (GET /api/doc/:id) with a
+  // bundled-sample fallback baked into loadDoc. While the fetch is in flight
   // the panel shows a loading state.
-  const [paper, setPaper] = useState<PaperResponse | null>(null);
-  const [loadingPaper, setLoadingPaper] = useState(true);
+  const [doc, setDoc] = useState<DocResponse | null>(null);
+  const [loadingDoc, setLoadingDoc] = useState(true);
   // Challenge = create-a-quest-on-demand; it hits the network, so it has its own
   // in-flight + error state (a dead button is worse than a slow one).
   const [preparing, setPreparing] = useState(false);
@@ -47,12 +47,12 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
 
   useEffect(() => {
     let cancelled = false;
-    setLoadingPaper(true);
-    setPaper(null);
-    void loadPaper(componentId).then((p) => {
+    setLoadingDoc(true);
+    setDoc(null);
+    void loadDoc(componentId).then((d) => {
       if (cancelled) return;
-      setPaper(p);
-      setLoadingPaper(false);
+      setDoc(d);
+      setLoadingDoc(false);
     });
     return () => {
       cancelled = true;
@@ -68,7 +68,7 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
     // budget. If a pending quest already sits on this component, wage it;
     // otherwise ask the server to CREATE one on demand (POST /api/quests) and
     // open the runner immediately. The server falls back to deterministic
-    // paper-grounded items when there's no API key, so this always works.
+    // doc-grounded items when there's no API key, so this always works.
     if (quests.length > 0) {
       onStartQuest(quests[0]!);
       return;
@@ -85,7 +85,7 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
     <aside className="panel">
       <div className="panel-head">
         <div>
-          <div className="panel-title">{paper?.frontmatter.title ?? componentId}</div>
+          <div className="panel-title">{doc?.frontmatter.title ?? componentId}</div>
           <div className="panel-id">{componentId}</div>
         </div>
         <button type="button" className="panel-close" onClick={onClose} aria-label={S.closePanel}>
@@ -163,13 +163,13 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
       </button>
       {questError && <p className="state-blurb quest-error">{questError}</p>}
 
-      {loadingPaper && <p className="state-blurb">{S.loadingPaper}</p>}
-      {!loadingPaper && paper && (
+      {loadingDoc && <p className="state-blurb">{S.loadingDoc}</p>}
+      {!loadingDoc && doc && (
         <>
           <section className="panel-section">
             <h4>{S.conceptsHeading}</h4>
             <ul className="concepts">
-              {paper.frontmatter.concepts.map((c) => (
+              {doc.frontmatter.concepts.map((c) => (
                 <li key={c.id}>
                   <strong>{c.id}</strong> — {c.name}
                 </li>
@@ -177,14 +177,14 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
             </ul>
           </section>
 
-          <section className="panel-section paper">
-            {/* Paper CONTENT is repo-shared state and always English (§2). */}
-            <h4>{S.paperHeading}</h4>
-            <Markdown source={paper.body} />
+          <section className="panel-section doc">
+            {/* Doc CONTENT is repo-shared state and always English (§2). */}
+            <h4>{S.docHeading}</h4>
+            <Markdown source={doc.body} />
           </section>
         </>
       )}
-      {!loadingPaper && !paper && <p className="state-blurb">{S.noPaper}</p>}
+      {!loadingDoc && !doc && <p className="state-blurb">{S.noDoc}</p>}
     </aside>
   );
 }

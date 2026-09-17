@@ -271,7 +271,7 @@ export function App(): JSX.Element {
               onClose={() => setActiveQuest(null)}
               onCompleted={(componentId) => onQuestCompleted(componentId)}
               onOpenSettings={openSettings}
-              onReadPaper={() => {
+              onReadDoc={() => {
                 setSelectedId(activeQuest.componentId);
                 setActiveQuest(null);
               }}
