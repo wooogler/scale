@@ -151,16 +151,20 @@ scale init --user <label>      # create ~/.scale/<repo-id>/ with a default confi
 ```
 
 Install the plugin so hooks + `/scale-*` commands wire up. The repo root ships
-`.claude-plugin/marketplace.json`, so:
+`.claude-plugin/marketplace.json`, so Claude Code takes the GitHub repo itself as
+a marketplace — no clone needed:
 
 ```bash
-claude plugin marketplace add /absolute/path/to/scale
+claude plugin marketplace add wooogler/scale
 claude plugin install scale@scale-marketplace
 ```
 
-(There is no `plugins` key in `.claude/settings.json`; installing writes
-`enabledPlugins` in `~/.claude/settings.json`. See `packages/plugin/README.md`
-for the release procedure — a plugin update needs a version bump.)
+then restart Claude Code. Working from a clone instead, `npm run plugin:install`
+does the same against your checkout and `npm run plugin:reload` pushes edits
+into the plugin cache without a version bump. (There is no `plugins` key in
+`.claude/settings.json`; installing writes `enabledPlugins` in
+`~/.claude/settings.json`. `packages/plugin/README.md` → Install has update,
+uninstall, and the release procedure — a released update needs a version bump.)
 
 Then work normally in Claude Code:
 

@@ -163,12 +163,19 @@ scale init --user <label>   # creates ~/.scale/<repo-id>/ with a default config.
 ```
 
 Install the SCALE plugin so Claude Code wires the hooks + `/scale-*` commands.
-The repo root ships `.claude-plugin/marketplace.json`, so:
+From this clone:
 
 ```bash
-claude plugin marketplace add /absolute/path/to/scale
-claude plugin install scale@scale-marketplace
+npm run plugin:install     # then quit and reopen Claude Code
+npm run plugin:status      # confirm what is registered and which version runs
 ```
+
+`npm run plugin:uninstall` reverses it and `npm run plugin:reload` pushes your
+edits into the plugin cache without a version bump; `scripts/plugin.mjs --help`
+lists the rest. If you are not going to change SCALE, skip the clone entirely:
+`claude plugin marketplace add wooogler/scale` then
+`claude plugin install scale@scale-marketplace` (see
+`packages/plugin/README.md` → Install, path A).
 
 There is no `plugins` key in `.claude/settings.json`; installing writes
 `enabledPlugins` in `~/.claude/settings.json`. Confirm what is actually running

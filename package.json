@@ -12,6 +12,10 @@
     "cli": "tsx packages/cli/src/index.ts",
     "dev:web": "npm run dev -w @scale/web",
     "build:plugin": "node scripts/build-plugin.mjs",
+    "plugin:install": "node scripts/plugin.mjs install",
+    "plugin:uninstall": "node scripts/plugin.mjs uninstall",
+    "plugin:reload": "node scripts/plugin.mjs reload",
+    "plugin:status": "node scripts/plugin.mjs status",
     "check:map": "node scripts/graphify-check.mjs",
     "pretest": "tsc -b",
     "distill": "node scripts/distill-graph.mjs"

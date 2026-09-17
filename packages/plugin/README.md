@@ -49,27 +49,61 @@ what the hooks call via `hooks/lib/scale.mjs`. No separate `npm install -g` step
 
 ## Install
 
-### A. From the marketplace (recommended)
+Two paths, one marketplace. Using SCALE? Take A — no clone needed. Changing
+SCALE? Take B — it works from your checkout.
 
-The repo root ships `.claude-plugin/marketplace.json`. Add the marketplace, then
-install the plugin — from a terminal:
+### A. From GitHub (using SCALE)
+
+The repo root ships `.claude-plugin/marketplace.json`, so Claude Code can take
+the repo itself as a marketplace:
 
 ```
-claude plugin marketplace add /path/to/scale
+claude plugin marketplace add wooogler/scale
 claude plugin install scale@scale-marketplace
 ```
 
-The same two steps exist as `/plugin marketplace add` and `/plugin install`
-inside a Claude Code session. `marketplace add` also accepts a Git repo URL once
-this is pushed.
+then quit and reopen Claude Code (hooks load at session start). The same two
+steps exist as `/plugin marketplace add` and `/plugin install` inside a session.
+
+- **update:** `claude plugin marketplace update scale-marketplace`, then
+  `claude plugin update scale@scale-marketplace`, then restart.
+- **uninstall:** `claude plugin uninstall scale@scale-marketplace`, then
+  `claude plugin marketplace remove scale-marketplace`.
+
+The second uninstall step is what actually forgets the repo; without it the
+marketplace stays registered. Neither touches `~/.scale` (your learning data and
+API key) — delete that yourself if you want it gone.
 
 Note there is **no `plugins` key in `.claude/settings.json`** — installing writes
 `enabledPlugins` in `~/.claude/settings.json`, which is Claude Code's business,
 not something to hand-edit.
 
-### B. Local / dev
+### B. From a local clone (working on SCALE)
 
-Point Claude Code straight at the plugin directory:
+Claude Code copies an installed plugin into a cache keyed by its version, so a
+clone installed the normal way keeps serving the version it was installed at
+while you edit the repo — `claude plugin update` is a no-op until the version
+moves. `scripts/plugin.mjs` exists for exactly that loop. From the repo root
+(no `npm install` needed — the script has no dependencies and the payload is
+committed):
+
+```
+npm run plugin:install      # register this clone as the marketplace + install
+npm run plugin:reload       # re-copy the clone into the cache, no version bump
+npm run plugin:status       # where SCALE is registered, which version actually runs
+npm run plugin:uninstall    # reverse of install; -- --purge also clears the cache and moves ~/.scale aside
+```
+
+`install -- --path` also puts `bin/` on `PATH` in `~/.zshrc`, for running
+`scale` in a terminal (sessions do not need it — Claude Code adds the plugin's
+`bin/` itself). `status` flags a stale cache, a half-removed install, and a
+stray Codex registration. `--purge` never deletes `~/.scale`; it moves it to a
+timestamped backup, `keys.json` included. Every command takes `--dry-run`, and
+`status` tells you when the marketplace is registered from GitHub instead —
+then path A's update commands apply, not `reload`.
+
+For a pure edit-and-look loop you can skip installing altogether and point a
+session straight at the plugin directory:
 
 ```
 claude --plugin-dir /path/to/scale/packages/plugin
@@ -143,6 +177,11 @@ To ship a change:
    claude plugin marketplace update
    claude plugin update scale@scale-marketplace
    ```
+
+   To try the repo's current state in a session *without* a bump — dev
+   iteration, not a release — `npm run plugin:reload` drops the cache and
+   reinstalls, or skip installing altogether with
+   `claude --plugin-dir /path/to/scale/packages/plugin`.
 
 To check what is actually running, ask the binary rather than the repo:
 
