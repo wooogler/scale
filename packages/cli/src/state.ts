@@ -6,7 +6,8 @@
  *     ├── config.json     (ScaleConfigSchema)
  *     ├── coverage.json   (UserCoverageSchema)
  *     ├── evidence.jsonl  (EvidenceEntrySchema, one per line, append-only)
- *     └── quests.json     (QuestSchema[])
+ *     ├── quests.json     (QuestSchema[])
+ *     └── translations/   (<component-id>.<lang>.json — see paths.translations)
  *
  * Hook-path callers (log/gate/context) use only the synchronous, fast
  * read/append helpers here — no schema-heavy work, no network, no LLM.
@@ -93,6 +94,17 @@ export const paths = {
   pendingEdits: (dir: string) => path.join(dir, 'pending-edits.json'),
   locks: (dir: string) => path.join(dir, 'locks.json'),
   telemetry: (dir: string) => path.join(dir, 'telemetry.jsonl'),
+  /**
+   * Per-user render-time translations of the (always-English) `.scale/` docs,
+   * one `<id>.<lang>.json` per component per language.
+   *
+   * It lives under the PER-USER state dir, not in `.scale/`, on purpose: the
+   * coverage memory is repo-shared state that one build serves to every user of
+   * the repo and stays English (see `LanguageSchema`), while `language` is a
+   * personal setting. A translation is therefore a render of shared content for
+   * one reader — derived, disposable, and safe to delete at any time.
+   */
+  translations: (dir: string) => path.join(dir, 'translations'),
 };
 
 /** Create the state dir (idempotent). */

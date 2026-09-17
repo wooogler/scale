@@ -503,6 +503,90 @@ body {
   font-weight: 600;
 }
 
+/* Rationale entries — the design-decisions dimension, rendered like concepts. */
+.rationale {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.rationale li {
+  margin-bottom: 10px;
+}
+.rationale strong {
+  font-weight: 600;
+  color: var(--text);
+}
+.rationale-why {
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.rationale-alts {
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.rationale-prov {
+  display: inline-block;
+  margin-top: 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  opacity: 0.7;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+/* Per-user translation chrome. Never blocks the doc — it annotates it. */
+.translate-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.translate-status {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.translate-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--explored);
+}
+.translate-cached {
+  color: var(--text-dim);
+  font-size: 10px;
+  opacity: 0.75;
+}
+.translate-toggle {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.translate-toggle:hover {
+  color: var(--text);
+}
+.translate-note {
+  font-size: 12px;
+}
+.translate-detail {
+  display: block;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
 /* ---------- markdown ---------- */
 .md {
   font-size: 13.5px;

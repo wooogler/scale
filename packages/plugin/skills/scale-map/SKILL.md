@@ -308,8 +308,10 @@ finishing.
 Docs are **always written in English**, regardless of the per-user
 `config.language` setting: the coverage memory is repo-shared state, while
 `language` is a per-user *interaction* preference (it changes what the tutor and
-the web UI say to the junior, not what the memory contains). A Korean-language
-session must not drift into Korean docs.
+the web UI say to the junior, not what the memory contains), and per-user
+translation now happens at render time — the viewer panel and `/scale-study` show
+a cached translation from `~/.scale/<repo-id>/translations/`, so the shared memory
+stays English. A Korean-language session must not drift into Korean docs.
 
 Also write the province READMEs (orienting the province, linking its components)
 and the root `.scale/README.md` (orienting the whole realm, linking provinces).

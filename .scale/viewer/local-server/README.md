@@ -3,6 +3,7 @@ id: local-server
 title: Serving the Map and Its JSON API
 sources:
   - packages/cli/src/serve.ts
+  - packages/cli/src/translate.ts
 concepts:
   - id: working-directory-scoped
     name: Every request is answered against the directory the server was started in

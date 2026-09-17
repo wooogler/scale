@@ -196,6 +196,18 @@ Two ways to trigger a check yourself (available in every condition, no budget):
 - `/scale-quiz [component-id]` — a manual/testing shortcut into the same tutor
   path without waiting for the gate.
 
+To read a doc on its own, with no check attached:
+
+```bash
+scale doc show <component-id>             # the English source
+scale doc show <component-id> --lang ko   # per-user translation (--refresh rebuilds)
+```
+
+A non-English `--lang` calls the intervention model once and caches the result in
+`~/.scale/<repo-id>/translations/`, keyed by a hash of the doc file, so editing the
+doc invalidates it; with no API key you get the English source plus a note. Checks
+are always grounded in the English source, never in the translation.
+
 Passing a check is recorded by the tutor via `scale record`, which updates
 coverage (per-dim EMA), can move a territory fog → explored → validated — and,
 when the check's mean score reaches `unlock.passBar` (default 0.6), **unlocks the
@@ -271,12 +283,14 @@ scale serve --port 4318   # reads .scale/ from cwd + ~/.scale/<repo-id>/ state
 ```
 
 Serves the React map app (build it first with `npm run build -w @scale/web`) plus
-a JSON API (`/api/map`, `/api/coverage`, `/api/doc/:id`, `/api/quests`,
-`/api/locks`, `/api/settings`). Provinces are tinted regions; components are nodes
-sized by importance and colored by state (fog / explored / validated / 함락·재건).
-A 🔒 badge marks a territory that still **owes a check** from a denied edit; the
-header counts them. Click a node for its rendered component doc, dev stats, and any
-quests.
+a JSON API (`/api/map`, `/api/coverage`, `/api/doc/:id`,
+`POST /api/doc/:id/translation`, `/api/quests`, `/api/locks`, `/api/settings`).
+Provinces are tinted regions; components are nodes sized by importance and colored
+by state (fog / explored / validated / 함락·재건). A 🔒 badge marks a territory that
+still **owes a check** from a denied edit; the header counts them. Click a node for
+its rendered component doc — including its `Design decisions` entries — plus dev
+stats and any quests. When your `language` is `ko` the panel shows the translation,
+with a toggle back to the original.
 The quiz runner sends your picks to the server, which grades them and returns the
 reveal (the answer key never reaches the browser); the socratic runner proxies the
 intervention model server-side (needs an API key — see below). Passing either
@@ -310,7 +324,10 @@ switches everything SCALE says to you into Korean — the web UI, quiz items,
 Socratic dialogue, and in-flow check delivery — while code identifiers, file
 paths, and established dev terms (EMA, hook, commit…) stay English. Default is
 `en` (pure English). The `.scale/` component docs always stay English regardless:
-the coverage memory is repo-shared, and `language` is a per-user preference.
+the coverage memory is repo-shared, and `language` is a per-user preference — a
+`ko` reading of a doc is a per-user translation rendered on the way to the screen
+and cached under `~/.scale/<repo-id>/translations/`, never written back to `.scale/`
+and never used to ground a check.
 
 **API keys.** Interventions run on Anthropic (default) or OpenAI; pick the provider
 in Settings. The key comes from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` if set
@@ -354,7 +371,8 @@ like an in-chat check.
 
 - CLI: `init`, `config get/set` (layered over `.scale/policy.json`), `log
   prompt|touch|review`, `gate edit`, `gate defer`, `record`, `coverage recompute`,
-  `estimate`, `map layout|index`, `quest generate|list|complete`, `serve`, `reset`.
+  `estimate`, `map layout|index`, `doc show`, `quest generate|list|complete`,
+  `serve`, `reset`.
 - Plugin: all hooks (fail-open) + `/scale-map`, `/scale-status`, `/scale-study`,
   `/scale-quiz`. (`/scale-status` reports via `scale status`.)
 - The edit gate: deterministic lock/deny with the per-user unlock ledger

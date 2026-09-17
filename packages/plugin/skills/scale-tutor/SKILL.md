@@ -278,6 +278,13 @@ even with no coding task in progress — reading the realm is legitimate.
 2. **Reading guide first:** walk them through the component doc — the hero
    visual, the key concepts, the rationale — in your own words, pointing at (not
    pasting) the `sources` so they can read the real code. Answer their questions.
+   **When the junior's `language` is `ko`, do not read the English README
+   directly** — obtain the doc with `scale doc show <component-id> --lang ko`,
+   which prints a cached, per-user Korean translation of it (and falls back to
+   the English source with a note when there is no API key or the translation
+   fails). Keep code identifiers, file paths, and concept ids in English in your
+   own prose. The comprehension check itself is unchanged: quiz and Socratic
+   grounding still comes from the CLI's English source.
 3. **Then offer a comprehension check** in the configured modality (quiz or
    socratic, same protocols above). Passing counts as validation — a *voluntary
    conquest* — record it by passing `--origin voluntary` to `scale record`.

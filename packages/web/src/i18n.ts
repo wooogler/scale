@@ -19,8 +19,12 @@ import {
  *    references: component ids, file paths, function names, env vars, model
  *    ids, and established dev terms (commit, hook, EMA, pre-commit…).
  *  - 'en' → pure English UI.
- *  - .scale/ component docs are repo-shared state and stay English either way —
- *    doc CONTENT is never translated here (Markdown.tsx is untouched).
+ *  - .scale/ component docs are repo-shared state: the doc SOURCE on disk stays
+ *    English either way. The DISPLAY is a different question — when the reader's
+ *    language is 'ko' the panel asks the server for a per-user translation of
+ *    the doc it is showing (POST /api/doc/:id/translation) and renders that. The
+ *    strings below are the viewer's own chrome around it (status, badge,
+ *    toggle), never doc content.
  *
  * Game-skin vocabulary: skin.ts owns the term DEFINITIONS (미탐사/정찰됨/정복/
  * 함락, 공성전, 천하통일 진행도…) and entries reference its labelKo/labelEn
@@ -83,8 +87,24 @@ export interface Strings {
   challengeError: string;
   loadingDoc: string;
   conceptsHeading: string;
+  /** Heading over the doc's rationale entries (a graded coverage dimension). */
+  designDecisionsHeading: string;
+  /** Label before a rationale entry's rejected alternatives. */
+  alternativesLabel: string;
   docHeading: string;
   noDoc: string;
+  /** Inline status while the per-user translation is still in flight. */
+  translating: string;
+  /** Badge on a doc rendered from the translation rather than the source. */
+  translatedBadge: string;
+  /** Subtle note beside the badge when the translation came from the cache. */
+  cachedBadge: string;
+  /** Toggle: currently showing the translation → go back to the English source. */
+  showOriginal: string;
+  /** Toggle: currently showing the English source → go back to the translation. */
+  showTranslation: string;
+  /** One-line note when the server could not translate; the detail is appended. */
+  translationUnavailable: string;
 
   /* ---- quest runner ---- */
   closeQuest: string; // aria-label
@@ -226,8 +246,16 @@ export const STRINGS: Record<Language, Strings> = {
     challengeError: 'Could not prepare a challenge for this territory.',
     loadingDoc: 'Loading doc…',
     conceptsHeading: 'Concepts',
+    designDecisionsHeading: 'Design decisions',
+    alternativesLabel: 'Alternatives',
     docHeading: 'Doc',
     noDoc: 'No doc found for this component.',
+    translating: 'Translating…',
+    translatedBadge: 'Translated',
+    cachedBadge: 'cached',
+    showOriginal: 'Show original',
+    showTranslation: 'Show translation',
+    translationUnavailable: 'Translation unavailable — showing the English source.',
 
     closeQuest: 'Close quest',
     grades: 'grades',
@@ -258,7 +286,7 @@ export const STRINGS: Record<Language, Strings> = {
       loadingSettings: 'Loading settings…',
       language: 'Language',
       languageNote:
-        'Applies to everything SCALE says to you. Component docs stay English (repo-shared state).',
+        'Applies to everything SCALE says to you. Component docs stay English in the repo (shared state); when your language is not English the panel shows a per-user translation of the doc it renders.',
       apiKeysHeading: 'API keys',
       keysNotePre: 'Used for the Socratic tutor and LLM-written quests. Stored in',
       keysNotePost:
@@ -371,8 +399,16 @@ export const STRINGS: Record<Language, Strings> = {
     challengeError: '이 영지의 퀘스트를 준비하지 못했습니다.',
     loadingDoc: '문서를 불러오는 중…',
     conceptsHeading: '개념',
+    designDecisionsHeading: '설계 결정',
+    alternativesLabel: '대안',
     docHeading: '문서',
     noDoc: '이 컴포넌트의 문서를 찾을 수 없습니다.',
+    translating: '번역 중…',
+    translatedBadge: '번역됨',
+    cachedBadge: '캐시',
+    showOriginal: '원문 보기',
+    showTranslation: '번역 보기',
+    translationUnavailable: '번역을 불러올 수 없어 영어 원문을 표시합니다.',
 
     closeQuest: '퀘스트 닫기',
     grades: '평가',
@@ -402,7 +438,7 @@ export const STRINGS: Record<Language, Strings> = {
       loadingSettings: '설정을 불러오는 중…',
       language: '언어',
       languageNote:
-        'SCALE이 당신에게 말하는 모든 문구에 적용됩니다. 컴포넌트 문서는 영어로 유지됩니다 (저장소 공유 상태).',
+        'SCALE이 당신에게 말하는 모든 문구에 적용됩니다. 컴포넌트 문서는 저장소에서 영어 원문으로 유지되며(공유 상태), 언어가 영어가 아닐 때 패널에서 사용자별 번역을 보여 줍니다.',
       apiKeysHeading: 'API 키',
       keysNotePre: 'Socratic 문답과 LLM 작성 퀴즈에 사용됩니다. 이 컴퓨터의',
       keysNotePost:

@@ -1,7 +1,13 @@
 import { useEffect, useState, type JSX } from 'react';
 import type { ComponentCoverage, Dimensions, Quest } from '@scale/core/browser';
 import { skinFor, DRIFT_SKIN, QUEST_SKIN } from './skin.js';
-import { loadDoc, createVoluntaryQuest, type DocResponse } from './data.js';
+import {
+  loadDoc,
+  loadDocTranslation,
+  createVoluntaryQuest,
+  type DocResponse,
+  type DocTranslationResponse,
+} from './data.js';
 import { Markdown } from './Markdown.js';
 import { useLang, useStrings } from './i18n.js';
 
@@ -40,24 +46,60 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
   // the panel shows a loading state.
   const [doc, setDoc] = useState<DocResponse | null>(null);
   const [loadingDoc, setLoadingDoc] = useState(true);
+  // The TRANSLATION rides alongside, never in front. A doc's source is English
+  // and shared through the repo; the display language is one user's setting, so
+  // reading must never wait on an LLM that may take minutes on a cache miss.
+  // The English source renders as soon as it lands and the translated fields
+  // swap in afterwards — which also means a failed or missing translation costs
+  // the reader nothing but a one-line note.
+  const [translation, setTranslation] = useState<DocTranslationResponse | null>(null);
+  const [translating, setTranslating] = useState(false);
+  // Whose choice this is: once a translation is on screen the reader may pin the
+  // English source instead. Session-scoped on purpose — it follows them across
+  // components while the tab lives, and does not outlive it.
+  const [showOriginal, setShowOriginal] = useState(false);
   // Challenge = create-a-quest-on-demand; it hits the network, so it has its own
   // in-flight + error state (a dead button is worse than a slow one).
   const [preparing, setPreparing] = useState(false);
   const [questError, setQuestError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Two independent in-flight requests share ONE cancellation flag: selecting
+    // another component (or switching language) must not let a slow translation
+    // of the PREVIOUS component land on the new one.
     let cancelled = false;
     setLoadingDoc(true);
     setDoc(null);
+    setTranslation(null);
+    setTranslating(lang !== 'en');
     void loadDoc(componentId).then((d) => {
       if (cancelled) return;
       setDoc(d);
       setLoadingDoc(false);
+      // Nothing to translate — don't leave a status hanging over an empty panel.
+      if (!d) setTranslating(false);
     });
+    if (lang !== 'en') {
+      void loadDocTranslation(componentId, lang).then((t) => {
+        if (cancelled) return;
+        setTranslation(t);
+        setTranslating(false);
+      });
+    }
     return () => {
       cancelled = true;
     };
-  }, [componentId]);
+  }, [componentId, lang]);
+
+  // A server answer of `translated: false` is NOT a failure to hide: it carries
+  // the reason (no API key, the model refused…) and the English source to show
+  // meanwhile. A null `translation` is the other case — no server, no note.
+  const translated = translation?.translated === true ? translation : null;
+  const translationError =
+    translation && !translation.translated ? (translation.error ?? null) : null;
+  const showingTranslation = translated !== null && !showOriginal;
+  const fm = showingTranslation ? translated.frontmatter : doc?.frontmatter;
+  const body = showingTranslation ? translated.body : doc?.body;
 
   const state = coverage?.state ?? 'fog';
   const skin = skinFor(state, coverage?.driftCause ?? null);
@@ -85,7 +127,7 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
     <aside className="panel">
       <div className="panel-head">
         <div>
-          <div className="panel-title">{doc?.frontmatter.title ?? componentId}</div>
+          <div className="panel-title">{fm?.title ?? componentId}</div>
           <div className="panel-id">{componentId}</div>
         </div>
         <button type="button" className="panel-close" onClick={onClose} aria-label={S.closePanel}>
@@ -166,10 +208,42 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
       {loadingDoc && <p className="state-blurb">{S.loadingDoc}</p>}
       {!loadingDoc && doc && (
         <>
+          {/* Translation chrome sits ABOVE the doc sections because the swap is
+              not only the body: title, concept names and rationale prose all
+              come from whichever frontmatter is on screen. */}
+          {(translating || translated || translationError) && (
+            <div className="translate-bar">
+              {translating && <span className="translate-status">{S.translating}</span>}
+              {showingTranslation && (
+                <span className="translate-badge">
+                  {S.translatedBadge}
+                  {translated.cached && (
+                    <span className="translate-cached">{S.cachedBadge}</span>
+                  )}
+                </span>
+              )}
+              {translated && (
+                <button
+                  type="button"
+                  className="translate-toggle"
+                  onClick={() => setShowOriginal((v) => !v)}
+                >
+                  {showOriginal ? S.showTranslation : S.showOriginal}
+                </button>
+              )}
+            </div>
+          )}
+          {translationError && (
+            <p className="state-blurb translate-note">
+              {S.translationUnavailable}{' '}
+              <span className="translate-detail">{translationError.message}</span>
+            </p>
+          )}
+
           <section className="panel-section">
             <h4>{S.conceptsHeading}</h4>
             <ul className="concepts">
-              {doc.frontmatter.concepts.map((c) => (
+              {(fm?.concepts ?? []).map((c) => (
                 <li key={c.id}>
                   <strong>{c.id}</strong> — {c.name}
                 </li>
@@ -177,10 +251,34 @@ export function Panel({ componentId, coverage, quests, owed = false, onStartQues
             </ul>
           </section>
 
+          {/* Rationale is a GRADED dimension (§5.1) — the panel used to grade it
+              while never showing it, so the only way to meet a rationale item
+              was to have read the file on disk. */}
+          {(fm?.rationale.length ?? 0) > 0 && (
+            <section className="panel-section">
+              <h4>{S.designDecisionsHeading}</h4>
+              <ul className="rationale">
+                {(fm?.rationale ?? []).map((r, i) => (
+                  <li key={`r${i}`}>
+                    <strong>{r.decision}</strong>
+                    {r.why && <div className="rationale-why">{r.why}</div>}
+                    {r.alternatives && (
+                      <div className="rationale-alts">
+                        {S.alternativesLabel}: {r.alternatives}
+                      </div>
+                    )}
+                    <span className="rationale-prov">{r.provenance}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <section className="panel-section doc">
-            {/* Doc CONTENT is repo-shared state and always English (§2). */}
+            {/* The doc SOURCE is English and shared through the repo; the
+                DISPLAY is translated per user at render time. */}
             <h4>{S.docHeading}</h4>
-            <Markdown source={doc.body} />
+            <Markdown source={body ?? ''} />
           </section>
         </>
       )}

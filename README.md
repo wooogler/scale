@@ -220,8 +220,9 @@ there costs a sentence; correcting it after forty docs exist costs the build.
 `.scale/policy.json` are committed to the target repo — the map is a shared artifact and
 belongs in review, where a wrong claim in a doc can be caught the same way a wrong comment
 is. `.scale/index.json` is gitignored and rebuilt on demand with `scale map index`, because
-it is derived. Your coverage, evidence log, locks, and quests never leave
-`~/.scale/<repo-id>/`: two people working the same repo share the map but not the score.
+it is derived. Your coverage, evidence log, locks, quests, and cached `translations/` never
+leave `~/.scale/<repo-id>/`: two people working the same repo share the map but not the
+score, and not each other's translations.
 
 **Expect to start at zero, on code you wrote.** Coverage is materialized from evidence
 SCALE observed, and it observed none of the work that predates the map — so the first
@@ -268,6 +269,7 @@ A map that has drifted from the code teaches the wrong thing, which is worse tha
 | `scale init [--user <l>] [--force]` | Create `~/.scale/<repo-id>/` with a default `config.json`. | ⚡ |
 | `scale status [--json]` | Coverage at a glance: unification progress, per-province states, stale territory, pending quests. | ⚡ |
 | `scale context` | Print the SessionStart coverage summary injected to the agent. | ⚡ |
+| `scale doc show <id> [--lang en\|ko] [--json] [--refresh]` | Print one component doc. `--lang ko` prints a per-user translation, cached under `~/.scale/<repo-id>/translations/`; `--refresh` rebuilds it. | ⚡/🧠 |
 | `scale estimate [--json]` | Target component count + band for this repo, and the build cost per model. | ⚡ |
 | `scale config get [key]` / `set <key> <val>` | Read/write `config.json` (condition, models, budgets, thresholds). | ⚡ |
 | `scale log prompt \| touch \| review` | Append a raw passive signal to `evidence.jsonl` (hook fast-append). | ⚡ |
@@ -397,9 +399,20 @@ is ignored whole (fail open) and `scale status` says so.
 written in English — they are repo-shared state, and `language` is a per-user interaction
 preference.
 
+**Reading a doc in your language.** With `language: ko`, the viewer panel and `scale doc
+show <id> --lang ko` render a per-user translation — `POST /api/doc/:id/translation`
+with `{"lang":"ko"}` over HTTP, a POST because it is the one route that spends API
+money and a GET would be reachable as a sub-resource with no `Origin` to refuse — produced by the intervention model on first read and cached at
+`~/.scale/<repo-id>/translations/<id>.<lang>.json`, keyed by a sha256 of the doc file so a
+rewritten doc invalidates it. It preserves code identifiers, file paths, concept ids, and
+fenced code, falls back to the English source with a note when there is no key or the call
+fails, and never grounds anything: quizzes and Socratic checks read the English source, so
+what you are assessed on never depends on a translation.
+
 ### API keys
 
-Interventions (Socratic dialogue, LLM-written quests) need a key for the selected provider:
+Interventions (Socratic dialogue, LLM-written quests, doc translation) need a key for the
+selected provider:
 
 1. **Environment** — `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Always wins.
 2. **Settings modal** — ⚙ in `scale serve`. Stored in `~/.scale/keys.json` at mode `0600`,
@@ -407,8 +420,8 @@ Interventions (Socratic dialogue, LLM-written quests) need a key for the selecte
 
 The key is never returned by the API and never logged — the UI only ever shows a masked
 tail (`sk-…9f2A`) and where it came from. With no key, quest generation falls back to
-deterministic doc-grounded items and the Socratic runner says exactly what's missing and
-links to Settings.
+deterministic doc-grounded items, translation falls back to the English source with a note,
+and the Socratic runner says exactly what's missing and links to Settings.
 
 ---
 
@@ -449,7 +462,8 @@ denies, skips, redirects, out-of-band edits, unlocks, re-locks, session tallies)
   reporting command just never caught up.
 - **API-dependent paths** — LLM quest generation and the web Socratic proxy need an API key
   (Anthropic or OpenAI); both fall back to deterministic behavior offline (quest generation
-  synthesizes items from the doc; the Socratic proxy is unavailable without a key).
+  synthesizes items from the doc; the Socratic proxy is unavailable without a key; doc
+  translation falls back to the English source).
 
 ---
 

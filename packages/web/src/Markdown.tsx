@@ -91,8 +91,10 @@ function inline(text: string, keyPrefix: string): JSX.Element[] {
 }
 
 export function Markdown({ source }: { source: string }): JSX.Element {
-  // Doc CONTENT is never translated (repo-shared, always English) — but the
-  // placeholder chrome below is the VIEWER speaking, so it follows the language.
+  // Doc content arrives already in whatever language the panel decided to show
+  // (English source, or the per-user translation) — this renderer just draws the
+  // string it is handed. The placeholder chrome below is the VIEWER speaking, so
+  // it always follows the interaction language.
   const S = useStrings();
   const blocks = parse(source);
   return (

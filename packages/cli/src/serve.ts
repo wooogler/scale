@@ -22,6 +22,7 @@ import {
   docById,
   resolveInterventionModel,
   LlmProviderSchema,
+  LanguageSchema,
   migrateLegacyConfig,
   resolveConfig,
   type ResolvedConfig,
@@ -65,6 +66,7 @@ import {
   gradeQuizPicks,
 } from './quest.js';
 import { chatText, MissingKeyError } from './llm.js';
+import { translateDoc } from './translate.js';
 import { keyStatus, resolveKey, setKey } from './keys.js';
 
 /** ≤3-exchange socratic dialogue cap (PLAN §6, web quest runner). */
@@ -306,6 +308,7 @@ function serveStatic(res: http.ServerResponse, urlPath: string): void {
       '<pre>npm run build -w @scale/web</pre>' +
       '<p>then restart <code>scale serve</code>. The JSON API is already live at ' +
       '<code>/api/map</code>, <code>/api/coverage</code>, <code>/api/doc/:id</code>, ' +
+      '<code>POST /api/doc/:id/translation</code> (🧠 LLM), ' +
       '<code>/api/quests</code>.</p></body>';
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(html);
@@ -433,6 +436,12 @@ async function handle(
       await handleKeySet(req, res);
       return;
     }
+    // 🧠 LLM. See handleDocTranslation for why this one is a POST.
+    const translationMatch = /^\/api\/doc\/([^/]+)\/translation\/?$/.exec(pathname);
+    if (translationMatch) {
+      await handleDocTranslation(req, res, cwd, dir, decodeURIComponent(translationMatch[1]!));
+      return;
+    }
     sendJson(res, 404, { error: 'unknown endpoint', path: pathname });
     return;
   }
@@ -552,6 +561,99 @@ async function handle(
 
   // --- static web app (+ SPA fallback) ---
   serveStatic(res, pathname);
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/doc/:id/translation   {"lang":"ko","refresh":true}   (🧠 LLM)
+// ---------------------------------------------------------------------------
+
+/**
+ * Render one component doc in the reader's language.
+ *
+ * The response is `{ id, lang, ...TranslationResult }` — and the failure branch
+ * of that result carries the ENGLISH doc, so the panel always has something to
+ * draw. A 200 saying `translated: false` with an `error` is the normal, useful
+ * answer when there is no API key; 404 and 400 are reserved for a request that
+ * names something that does not exist.
+ *
+ * `lang` defaults to the reader's effective `config.language`, which makes a
+ * bodiless POST mean "render this for me" and matches `scale doc show`.
+ *
+ * WHY THIS IS A POST, AND WHY IT INSISTS ON A JSON CONTENT-TYPE.
+ *
+ * This is the only route on this server that spends API money. Every other
+ * expensive path is already a POST; this one was a GET because it reads a doc,
+ * and that reading made it reachable as a SUB-RESOURCE — an `<img>`, a
+ * `<script>`, a `<link>` on any page the reader happens to have open — and a
+ * sub-resource request carries no `Origin` header at all. The Origin allowlist
+ * above treats an absent `Origin` as a non-browser client (curl, the CLI, a
+ * test), so a tokenless loopback server would have billed the reader for every
+ * such hit.
+ *
+ * `POST` + a required `content-type: application/json` is what closes that: no
+ * HTML element and no `form` can issue a cross-origin request with that
+ * content-type without a CORS preflight, and the preflight is answered against
+ * the same allowlist. That is what makes the existing Origin check a sufficient
+ * CSRF gate on loopback — the method and the content-type are load-bearing, not
+ * decoration, so a request without them is refused (415) before any work.
+ */
+async function handleDocTranslation(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  cwd: string,
+  dir: string,
+  id: string,
+): Promise<void> {
+  const contentType = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+  if (contentType !== 'application/json') {
+    sendJson(res, 415, {
+      error: 'content-type must be application/json',
+      contentType: req.headers['content-type'] ?? null,
+    });
+    return;
+  }
+
+  const raw = (await readBody(req)).trim();
+  let body: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(raw === '' ? '{}' : raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new SyntaxError('x');
+    body = parsed as Record<string, unknown>;
+  } catch {
+    // Unlike the other POSTs, which tolerate a junk body and fall back to their
+    // own defaults, a body this route cannot read is refused outright: the
+    // default it would fall back to is "spend money".
+    sendJson(res, 400, { error: 'body must be a JSON object' });
+    return;
+  }
+
+  const config = loadEffectiveConfig(cwd, dir).config;
+  const wanted = body.lang;
+  const parsedLang =
+    wanted === undefined || wanted === null
+      ? { success: true as const, data: config.language }
+      : LanguageSchema.safeParse(wanted);
+  if (!parsedLang.success) {
+    sendJson(res, 400, {
+      error: 'unsupported lang',
+      lang: typeof wanted === 'string' ? wanted : null,
+      supported: LanguageSchema.options,
+    });
+    return;
+  }
+  const lang = parsedLang.data;
+
+  const doc = docById(loadScaleDir(cwd), id);
+  if (!doc) {
+    sendJson(res, 404, { error: 'unknown component', id });
+    return;
+  }
+
+  const refresh = body.refresh === true;
+  // translateDoc never throws — every failure is already a `translated: false`
+  // carrying the English source and a named reason.
+  const result = await translateDoc({ doc, lang, config, dir, refresh });
+  sendJson(res, 200, { id, lang, ...result });
 }
 
 // ---------------------------------------------------------------------------

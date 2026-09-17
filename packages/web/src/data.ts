@@ -37,6 +37,32 @@ export interface DocResponse {
 }
 
 /**
+ * Shape returned by POST /api/doc/:id/translation.
+ *
+ * The server ALWAYS answers with a renderable doc: on success the fields it
+ * could translate (title, concept names, rationale prose, body) come back in
+ * the requested language; on any failure — and for `lang=en`, which is not a
+ * translation at all — `translated` is false and `frontmatter`/`body` are the
+ * ENGLISH source, with an optional `error` explaining why. Ids, `sources` and
+ * `provenance` are preserved verbatim either way: they are code references.
+ */
+export interface DocTranslationResponse {
+  id: string;
+  lang: string;
+  translated: boolean;
+  /** Present on a successful translation: served from the on-disk cache. */
+  cached?: boolean;
+  /** Present on a successful translation: the model that wrote it. */
+  model?: string;
+  error?: {
+    code: 'missing-key' | 'llm-failed' | 'invalid-output' | 'unsupported-lang';
+    message: string;
+  };
+  frontmatter: DocFrontmatter;
+  body: string;
+}
+
+/**
  * Bearer token for the API, when `scale serve` was started off loopback.
  *
  * It arrives once, in the URL the server printed (`?token=…`), is moved into
@@ -225,6 +251,44 @@ export async function loadDoc(id: string): Promise<DocResponse | null> {
       const s = (await import('./sample/docs.js')).sampleDocs[id];
       return s ? { frontmatter: s.frontmatter, body: s.body } : null;
     });
+  }
+}
+
+/**
+ * POST /api/doc/:id/translation `{ lang, refresh }` — the per-user translation
+ * of a doc.
+ *
+ * A POST for a read, deliberately: it is the one call in this client that can
+ * spend API money, and a GET would be reachable as a sub-resource from any page
+ * the reader has open — which sends no `Origin` for the server to refuse. The
+ * JSON content-type is part of the same gate, so it is sent through
+ * {@link postJson} like every other write.
+ *
+ * Deliberately separate from {@link loadDoc}, and never on its critical path:
+ * the doc SOURCE is English and shared through the repo, while the DISPLAY
+ * language is a personal setting, so the panel renders the English source the
+ * moment it arrives and swaps in a translation only if and when one lands. A
+ * cache miss runs an LLM and can take minutes; blocking the read on that would
+ * trade a legible doc for a spinner.
+ *
+ * No sample fallback and no throw: with no server (or a request that failed on
+ * the wire) there is simply no translation, and the caller keeps showing the
+ * English source. A server that ANSWERS with `translated: false` is different —
+ * that carries an `error` the panel is meant to show.
+ */
+export async function loadDocTranslation(
+  id: string,
+  lang: string,
+  opts: { refresh?: boolean } = {},
+): Promise<DocTranslationResponse | null> {
+  try {
+    return await postJson<DocTranslationResponse>(
+      `/api/doc/${encodeURIComponent(id)}/translation`,
+      { lang, ...(opts.refresh ? { refresh: true } : {}) },
+    );
+  } catch (err) {
+    note(`doc translation ${id} (${lang})`, err);
+    return null;
   }
 }
 

@@ -120,7 +120,7 @@ rationale:
 ---
 ```
 
-Body sections (cluedoc's six + one): hero visual (mermaid) → `Summary` → `What it does` → `Related components` (cross-doc links = the graph) → `How it works` → **`Design decisions`** (new; prose form of the frontmatter entries) → `Where it sits`. *These replaced the academic headings (Abstract / Introduction / Related Work / Description / Rationale / Conclusion) on 2026-09-17; the loader still accepts the old ones as aliases — see [Vocabulary](#vocabulary-2026-09-17).* cluedoc's prose rules kept: no code symbols/paths/snippets in the body; anchoring lives in `sources` only.
+Body sections (cluedoc's six + one): hero visual (mermaid) → `Summary` → `What it does` → `Related components` (cross-doc links = the graph) → `How it works` → **`Design decisions`** (new; prose form of the frontmatter entries) → `Where it sits`. *These replaced the academic headings (Abstract / Introduction / Related Work / Description / Rationale / Conclusion) on 2026-09-17; the loader still accepts the old ones as aliases — see [Vocabulary and translation](#vocabulary-and-translation-2026-09-17).* cluedoc's prose rules kept: no code symbols/paths/snippets in the body; anchoring lives in `sources` only.
 
 ### 4.2 `map.json` — frozen spatial layout
 
@@ -277,7 +277,7 @@ Study infra (condition assignment, analytics, consent), senior rationale intervi
 
 ---
 
-## Vocabulary (2026-09-17)
+## Vocabulary and translation (2026-09-17)
 
 The content model is unchanged; the **vocabulary** is not. A component doc has always been an engineering artifact — six fixed sections, file anchors, quizzable `concepts`, ADR-shaped `rationale` entries (decision / why / alternatives / provenance) — and calling it a "paper" with an "Abstract" and a "Related Work" section invited the writer to hedge, survey and generalize where the reader needs a claim about this code; arc42, Backstage TechDocs and Diátaxis all name a section after the question it answers, which is what the six headings now do.
 
@@ -292,9 +292,12 @@ The content model is unchanged; the **vocabulary** is not. A component doc has a
 
 **Why this cost a rename and the game skin did not.** §1 holds the strategy-game metaphor to a UI skin: `territory` and `conquest` never reach a schema, so the skin can be re-themed without touching code. The academic metaphor was never held to that line, and it had leaked all the way down — `schema/paper.ts`, `paper-loader.ts`, `paperGrounding`, the `paper_read` evidence kind, `thresholds.paperReadCap`, `GET /api/paper/:id`. Those are now `doc` throughout: the same discipline, applied late. Component **ids** are deliberately exempt — `paper-format` and `paper-loader` are coverage keys, and §4.1's "NEVER renamed" binds them like any other id.
 
+**Translation is per-user and render-time.** The memory stays English and shared, because it is repo state reviewed like code. A `language` other than `en` gets `POST /api/doc/:id/translation` `{"lang":"ko"}` and `scale doc show <id> --lang ko`: the intervention model translates the doc once — preserving code identifiers, file paths, concept ids and fenced code — and the result is cached at `~/.scale/<repo-id>/translations/<id>.<lang>.json`, keyed by a sha256 of the doc file so a rewritten doc invalidates its translation instead of serving a stale one. It is a **POST** although it reads: this is the only route on the server that spends API money, and a GET is reachable as a sub-resource (an `<img>`, a `<script>` on any page the reader has open), which carries no `Origin` header for §7.2's allowlist to refuse. POST plus a required `application/json` content-type is what makes that allowlist a sufficient CSRF gate on loopback — anything else is 415. Concurrent readers of the same doc share one in-flight call, keyed by doc path, language and source sha, so the panel and a terminal asking together cost one translation, not two. No API key, or a failed call, falls back to the English source with a note. **It never grounds anything:** quizzes and Socratic checks read the English source, so a translation defect can cost a reader comprehension but can never move a score.
+
 **Deliberately not done.**
 
 - `doc_read` is defined (and legacy `paper_read` rows still count), but **nothing emits it** — the viewer still does not log a doc open, so `thresholds.docReadCap` remains unexercised. This was true before the rename and is unchanged by it.
+- **No committed translations.** A `ko` doc under `.scale/` would be a second source of truth to keep in sync, and a wrong claim in it would pass review unread.
 - **No id renames, no state migration.** The rename touches text and code only; nothing under `~/.scale/` is rewritten.
 
 **Migration.** Legacy headings load as aliases and `/scale-map` never writes them again; legacy `paper_read` evidence still counts toward coverage; a config carrying `thresholds.paperReadCap` is migrated to `docReadCap` silently on read. An existing `.scale/` build and an existing state dir both keep working untouched.

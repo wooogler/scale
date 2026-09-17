@@ -46,12 +46,24 @@ export interface ChatRequest {
   system: string;
   messages: ChatTurn[];
   maxTokens?: number;
+  /**
+   * Wall-clock ceiling for this one request, in ms. The OpenAI path applies it
+   * through `AbortSignal.timeout`; the Anthropic path passes it as the SDK's
+   * per-request `timeout` option. Absent, each branch keeps its own default —
+   * {@link OPENAI_TIMEOUT_MS} for OpenAI, the SDK's for Anthropic.
+   *
+   * It is per-request because the jobs are not the same size: a quiz item is a
+   * few hundred tokens and must fail fast on the detached quest path, while
+   * translating a whole component doc is thousands of tokens and a 60 s ceiling
+   * would abort the work that was going to succeed.
+   */
+  timeoutMs?: number;
 }
 
 /**
- * Wall-clock ceiling for the OpenAI request. Callers on the detached quest path
- * treat any throw as "fall back to deterministic items", so a bounded failure is
- * always better than an unbounded wait.
+ * Default wall-clock ceiling for the OpenAI request. Callers on the detached
+ * quest path treat any throw as "fall back to deterministic items", so a bounded
+ * failure is always better than an unbounded wait.
  */
 const OPENAI_TIMEOUT_MS = 60_000;
 
@@ -60,6 +72,7 @@ export async function chatText(req: ChatRequest): Promise<string> {
   const apiKey = resolveKey(req.provider);
   if (!apiKey) throw new MissingKeyError(req.provider);
   const maxTokens = req.maxTokens ?? 1024;
+  const timeoutMs = req.timeoutMs ?? OPENAI_TIMEOUT_MS;
 
   if (req.provider === 'openai') {
     // The Anthropic branch below inherits the SDK's timeout and retries; this
@@ -70,7 +83,7 @@ export async function chatText(req: ChatRequest): Promise<string> {
     let res: Response;
     try {
       res = await fetch('https://api.openai.com/v1/chat/completions', {
-        signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -89,7 +102,7 @@ export async function chatText(req: ChatRequest): Promise<string> {
       // AbortSignal.timeout rejects with a TimeoutError DOMException; anything
       // else here is a transport failure. Either way, name it plainly.
       const why = (err as Error)?.name === 'TimeoutError'
-        ? `no response in ${OPENAI_TIMEOUT_MS / 1000}s`
+        ? `no response in ${timeoutMs / 1000}s`
         : ((err as Error)?.message ?? 'network error');
       throw new Error(`openai request failed: ${why}`);
     }
@@ -116,12 +129,21 @@ export async function chatText(req: ChatRequest): Promise<string> {
   }
 
   const client = new Anthropic({ apiKey });
-  const msg = await client.messages.create({
+  const params = {
     model: req.model,
     max_tokens: maxTokens,
     system: req.system,
     messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
-  });
+  };
+  // The per-request `timeout` option is passed ONLY when the caller set one.
+  // The SDK's own default is a sensible ceiling for a quiz item; a doc
+  // translation is thousands of tokens and asks for its own. Passing the
+  // option unconditionally would mean handing the SDK a number this module
+  // invented, rather than inheriting the default it was built with.
+  const msg =
+    req.timeoutMs !== undefined
+      ? await client.messages.create(params, { timeout: req.timeoutMs })
+      : await client.messages.create(params);
   return msg.content
     .map((b) => (b.type === 'text' ? b.text : ''))
     .join('')

@@ -62,6 +62,7 @@ import {
   completeSocraticQuest,
 } from './quest.js';
 import { loadDependsOnEdges, DEPS_MIN_COUNT } from './deps.js';
+import { translateDoc } from './translate.js';
 import {
   loadFileComponentIndex,
   recomputeCoverageFromDisk,
@@ -1969,6 +1970,73 @@ quest
     console.log(
       `  comprehension ${mean.toFixed(2)} / ${validateDim.toFixed(2)} (${verdict})`,
     );
+  });
+
+// ---------------------------------------------------------------------------
+// doc show  (REAL) — read a component doc, optionally translated (🧠 LLM)
+// ---------------------------------------------------------------------------
+const doc = program.command('doc').description('Read the component docs in `.scale/`');
+
+doc
+  .command('show')
+  .description(
+    'Print a component doc. With --lang ko it is translated at RENDER TIME and ' +
+      'cached per user — the committed doc itself always stays English (🧠 LLM ' +
+      'on a cache miss; no key just means you get the English source).',
+  )
+  .argument('<id>', 'component id (the frontmatter `id`, not the folder name)')
+  .option(
+    '--lang <lang>',
+    "render language: 'en' or 'ko'. Defaults to your effective config.language",
+  )
+  .option('--json', 'emit the whole TranslationResult as JSON', false)
+  .option('--refresh', 'ignore any cached translation and translate again', false)
+  .action(async (id: string, opts: { lang?: string; json?: boolean; refresh?: boolean }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    const config = loadEffectiveConfig(cwd, dir).config;
+
+    const lang = opts.lang ?? config.language;
+    if (lang !== 'en' && lang !== 'ko') {
+      console.error(`scale: unsupported --lang "${lang}" (expected 'en' or 'ko').`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const found = docById(loadScaleDir(cwd), id);
+    if (!found) {
+      console.error(`scale: no component doc with id "${id}" in ${path.join(cwd, '.scale')}.`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const result = await translateDoc({
+      doc: found,
+      lang,
+      config,
+      dir,
+      refresh: !!opts.refresh,
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify({ id: found.id, lang, ...result }, null, 2));
+      return;
+    }
+
+    console.log(result.frontmatter.title);
+    // One line that says, always, which text the reader is looking at. A
+    // silent fallback to English is the failure mode worth spending a line on:
+    // the reader asked for Korean, and a doc that merely "looks untranslated"
+    // is indistinguishable from one whose translation quietly failed.
+    console.log(
+      result.translated
+        ? `(translated · ${result.cached ? 'cached' : 'fresh'} · ${result.model})`
+        : result.error
+          ? `(English source — ${result.error.message})`
+          : '(English source)',
+    );
+    console.log('');
+    console.log(result.body);
   });
 
 // ---------------------------------------------------------------------------
