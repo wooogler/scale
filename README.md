@@ -186,6 +186,72 @@ Then work normally in Claude Code:
 
 ---
 
+## Applying it to a codebase you already work in
+
+The two roles are a division of labor, not two people — on a repo you already work in, you
+are usually both, and what changes is the order you do things in. Everything below runs
+with the target repo as the **current working directory**: SCALE reads that repo's
+`.scale/` and keeps your personal state under `~/.scale/<repo-id>/`, so a second repo needs
+no global setup, only its own map.
+
+**Size the repo before you build it.** `scale estimate` is a pure fs scan — no LLM, no
+cost — and it answers the question that has to be settled first: how many components this
+codebase should be cut into, and what the one-time build costs on each model. The scan
+already skips `node_modules`, `dist`, `build`, `vendor`, tests, and anything carrying an
+`@generated` or `DO NOT EDIT` marker. If the count still looks wrong for the repo you know,
+the usual cause is a checked-in bundle without that marker — exclude it before you build,
+because the partition is arithmetic from source lines and source files, and `scale map
+check` will hold the finished build to the same band.
+
+**The build is one session, and the Survey gate is where your knowledge enters.** Pick
+Opus 5 or Fable 5 with `/model`, then run `/scale-map` in the target repo. The skill
+surveys the source into provinces and components and stops for approval before it writes a
+single paper. That pause is the point: a model reading an unfamiliar repo groups by
+directory when the real seams are often elsewhere, and you are the one who knows which
+module is load-bearing and which three files are really one idea. Correcting the partition
+there costs a sentence; correcting it after forty papers exist costs the build.
+
+**What lands where.** The papers, `map.json`, `deps.json`, and any `.scale/policy.json` are
+committed to the target repo — the map is a shared artifact and belongs in review, where a
+wrong claim in a paper can be caught the same way a wrong comment is. `.scale/index.json`
+is gitignored and rebuilt on demand with `scale map index`, because it is derived. Your
+coverage, evidence log, locks, and quests never leave `~/.scale/<repo-id>/`: two people
+working the same repo share the map but not the score.
+
+**Expect to start at zero, on code you wrote.** Coverage is materialized from evidence
+SCALE observed, and it observed none of the work that predates the map — so the first
+`scale status` on a repo you know well still reports every territory locked. That is
+honest rather than harsh, since the claim being tested is that you can explain the
+component now, not that you once touched it. It does mean the first week is front-loaded,
+and two knobs make it bearable: start on `gate.enforcement advisory` so the gate reports
+instead of blocks, and put vendored, generated, and migration paths in `exempt.paths` so
+the session budget is spent on code you actually own. New files never gate — only exact
+paper anchors do (see [Settings](#settings)).
+
+**A repo with history behaves differently from an empty one.** Drift is measured per
+validated component since the sha *you* validated it at, split by author, so an active repo
+will re-lock territory on you — that is the mechanism working, not noise. Two things are
+worth checking on the first day. `scale status` reports whether your git identity matches
+your recent commits; if it does not, add the address to `identity.emails` or to the repo's
+`.mailmap`, or your own churn will read as a collaborator's and re-lock you under the much
+stricter foreign bar. And `drift.foreignRatio` is tuned for how fast the repo actually
+moves — on a busy shared subsystem the default `0.25` fires often.
+
+**Rolling it out to the team.** Commit `.scale/policy.json` with the defaults you want
+people to start on; each member still runs `scale init --user <label>`, gets their own lock
+ledger, and may override any policy key in their own config (see
+[Team policy](#team-policy)). The map is shared, the pressure is personal — which is also
+why a team lead can turn `gate.enabled` off for themselves without touching anyone else.
+
+**Keeping the map honest as the code moves.** Papers are anchored to source files at a
+build sha, so renames and deletions age them. `scale map check` reports the partition
+against the sizing band, anchored paths that no longer exist, and files claimed by more
+than one component; re-run `scale map index` whenever anchors change, and re-run
+`/scale-map` scoped to a single province when a subsystem has genuinely been restructured.
+A map that has drifted from the code teaches the wrong thing, which is worse than no map.
+
+---
+
 ## CLI commands
 
 `⚡ hot-path` = deterministic git + file I/O, no network (safe on the commit path).
