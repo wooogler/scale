@@ -129,9 +129,10 @@ scale map index       # file→component reverse index → .scale/index.json
 
 Until `.scale/` exists, the hooks fail open (no-ops) and `scale status` says
 there is nothing to show. **Per-user state** — coverage, evidence, quests,
-config, condition — lives outside the repo under `~/.scale/<repo-id>/` (run
-`scale init` once per repo to create it). Nothing is written into the target repo
-except the `.scale/` memory the senior builds.
+config, condition — lives outside the repo under `~/.scale/<repo-id>/`, created on
+first use; `scale init` is optional and only pins your user label (it is what
+`scale config get/set` need). Nothing is written into the target repo except the
+`.scale/` memory the senior builds.
 
 ## Regenerating the bundle
 
@@ -200,6 +201,16 @@ Each event in `hooks/hooks.json` runs a thin `.mjs` script that:
 1. reads the Claude Code hook JSON from **stdin**,
 2. shells out to the **`scale` CLI** (via `hooks/lib/scale.mjs`), and
 3. returns fast (< 200 ms target; hard timeout backstop) with **no inline LLM**.
+
+**The gate only sees `Edit` / `Write` / `MultiEdit`.** Those are the `PreToolUse`
+matchers, so an edit the agent makes through **Bash** — `sed -i`, a heredoc, a
+redirect, a throwaway script — never reaches `pre-edit.mjs` and is never gated.
+Claude Code's **auto mode** makes that the normal path (it tells the agent to
+prefer Bash over the edit tools), so keep it off if you want the gate to apply.
+Accepted rather than fixed: deciding which shell commands write files is a parse
+problem, and a false positive would block a read command — the opposite of
+fail-open. The gate is a learning intervention, not a security boundary. See
+PLAN-GATE §11.5 and PLAN §10.
 
 **Fail-open by design.** If the `scale` CLI is missing, slow, or errors, every
 hook degrades to a no-op and never blocks the user (PLAN §1 Principle 2). The CLI

@@ -21,7 +21,7 @@ Research prototype targeting UIST. Study logging / condition assignment infra is
 2. **Minimal interruption.** The junior's Claude Code flow is sacred. In-flow interventions fire only at natural boundaries, under a strict deterministic budget, and are always deferrable. All passive signal collection is async and adds no perceptible latency.
 3. **Files, not databases.** The coverage memory is markdown in the target repo (git-versioned). Per-user state is JSON/JSONL under `~/.scale/`. No DB, no hosted server; `scale serve` is a local process.
 4. **Grounded and stale-aware.** Every component anchors to source files at a git SHA. Code drift is detected and surfaces as staleness ("rebellion") requiring re-validation.
-5. **Stock Claude Code.** Junior and senior both use unmodified Claude Code; SCALE ships as one plugin (hooks + skills) plus a CLI. Ecological validity for the study, one-step install for participants.
+5. **Stock Claude Code.** Junior and senior both use unmodified Claude Code; SCALE ships as one plugin (hooks + skills) plus a CLI. Ecological validity for the study, one-step install for participants. *Stock means default tool settings too*: the edit gate hooks `PreToolUse(Edit|Write|MultiEdit)`, so any mode that routes file edits through Bash instead — **auto mode** does exactly this — leaves the gate inert. See §10 for the protocol requirement this imposes.
 
 ## 2. Terminology
 
@@ -270,6 +270,7 @@ Shortlist (validate top candidates with a 30-min survey dry-run in Phase 1):
 - **file→component gaps** (new files in no `sources`) → fallback to nearest directory match + flag for `scale-map` sync.
 - **Web Socratic needs an API key** → `scale serve` proxies with local `ANTHROPIC_API_KEY`; capped exchanges bound cost.
 - **Layout drift breaking spatial memory** → incremental placement only; never re-run global layout after freeze.
+- **Bash-mediated edits bypass the gate** (the IV silently fails to apply) → the `PreToolUse` matcher is `Edit|Write|MultiEdit`; an edit written by `sed -i`, a heredoc, a redirect or a script never reaches `pre-edit.mjs`. Claude Code's **auto mode** instructs the agent to prefer exactly those Bash forms, so a participant with it enabled produces a gate-condition session with no gate in it. **Study protocol requirement: auto mode OFF for every participant session, verified at setup.** Widening the matcher to `Bash` was considered and rejected — deciding which shell commands write files is a parse problem, and a false positive blocks a read command, which violates §1.2 (fail-open, never block the flow). Post-hoc check: `~/.scale/<repo-id>/session.json` records `counters.edits`, so a session with `edits: 0` and a non-empty diff is a bypassed session and should be excluded or re-run.
 
 ## 11. Deferred (explicitly out of scope now)
 

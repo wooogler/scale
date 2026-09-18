@@ -246,6 +246,17 @@ SessionStart/record가 계속 갱신한다.
 - **10분 유예**: `recentlyAddressed`가 상태 검사보다 먼저라, 마지막 체크 후 10분
   안에 도착한 반란은 그 창 동안 강제되지 않는다.
 - **로컬 squash-merge**: 동료 작업이 self로 읽힌다 (위 표). 안전 방향.
+- **Bash 경유 편집은 게이트를 통과한다** (2026-09-17 실측). `PreToolUse` 매처가
+  `Edit|Write|MultiEdit`이므로 `sed -i`, heredoc, 리다이렉트, 임시 스크립트로 쓴
+  변경은 `pre-edit.mjs`에 도달하지 않는다. §3.3에서 구 Bash matcher(커밋 게이트)를
+  지울 때 "편집은 Edit/Write로만 들어온다"는 전제가 들어갔는데, Claude Code의
+  **auto mode**가 그 전제를 깬다 — 파일 편집을 Bash로 하라고 에이전트에 지시하기
+  때문이다. 실제 Rylai 세션에서 파일 하나가 통째로 수정됐는데 `session.json`의
+  `counters.edits`가 0이었다. **수용하고 문서화한다**: 매처에 `Bash`를 넣는 안은
+  기각했다. 어떤 셸 명령이 파일을 쓰는지 판정하는 것은 파싱 문제이고, 오탐이 읽기
+  명령을 막으면 §1의 fail-open 원칙을 정면으로 위반한다. 게이트는 학습 개입이지
+  보안 경계가 아니다. 스터디 프로토콜에서 auto mode OFF를 요구하고(PLAN §10),
+  `counters.edits`가 0인데 diff가 있는 세션은 사후에 배제한다.
 
 ## 12. 용어 결정 (2026-09-01, 사용자)
 

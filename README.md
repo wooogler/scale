@@ -520,6 +520,18 @@ viewer, `/api/locks`) → server-side quiz grading → LAN bearer token for a ph
 viewer + JSON API → settings provenance + reset → local study telemetry (overrides,
 denies, skips, redirects, out-of-band edits, unlocks, re-locks, session tallies).
 
+**Known limitation — the gate only sees `Edit` / `Write` / `MultiEdit`.** Those are the
+matchers on the `PreToolUse` hook, so a change the agent makes through **Bash** instead
+(`sed -i`, a heredoc, a redirect, a throwaway Python script) reaches the file without ever
+consulting the lock. Claude Code's **auto mode** makes this the normal path: it instructs
+the agent to prefer Bash for file edits, and a whole session then runs with the gate
+silently inert. Keep auto mode **off** for SCALE to work as designed — and note this is a
+coverage gap, not a security boundary: the gate is a learning intervention, and someone
+who wants past it can always edit the file by hand.
+
+You can tell after the fact: `~/.scale/<repo-id>/session.json` counts every gate decision,
+so a session whose `counters.edits` is 0 while the working tree changed went around it.
+
 **Not yet** (see PLAN-GATE §4 for the staged plan)
 
 - **Telemetry collection** — the local log exists and is shippable by design; how it
