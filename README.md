@@ -77,26 +77,95 @@ Monorepo, TypeScript throughout (npm workspaces), so CLI, hooks, and web share o
 
 ## Install
 
-Requires Node 18+.
+Requires Node 18+ and Claude Code.
+
+### The plugin — using SCALE
+
+The repo root ships `.claude-plugin/marketplace.json`, so Claude Code takes this GitHub repo
+itself as a marketplace. No clone, no `npm install`:
 
 ```bash
-git clone <this repo> && cd scale
+claude plugin marketplace add wooogler/scale
+claude plugin install scale@scale-marketplace
+```
+
+Then **quit and reopen Claude Code** — hooks are read at session start. That is the whole
+install: the hooks, both skills, the `/scale-*` commands, the map viewer, and a
+self-contained `scale` CLI all ship inside the plugin.
+
+To update: `claude plugin marketplace update scale-marketplace`, then
+`claude plugin update scale@scale-marketplace`, then restart.
+
+**Running `scale` in your own terminal.** Claude Code puts the plugin's `bin/` on `PATH`
+inside its own sessions, so the hooks and `/scale-*` commands always find the CLI — but a
+plain Terminal window does not have it, and `scale` there is `command not found`. That is
+expected and breaks nothing. If you want the command in a terminal too, add the installed
+plugin's `bin/` to your `PATH`:
+
+```bash
+ls ~/.claude/plugins/cache/scale-marketplace/scale/    # the installed version, e.g. 0.4.0
+# then add .../scale/<version>/bin to PATH in your shell rc
+```
+
+Note the path carries the version, so it moves every time the plugin updates. Installing
+from a clone (below) avoids that — the clone's path is stable.
+
+### From a clone — working on SCALE
+
+```bash
+git clone https://github.com/wooogler/scale.git && cd scale
+npm run plugin:install        # register this clone as the marketplace + install
+```
+
+`scripts/plugin.mjs` (also `plugin:status`, `plugin:reload`, `plugin:uninstall`) drives the
+whole install surface from your checkout; `npm run plugin:install -- --path` also puts the
+clone's `bin/` on `PATH` in `~/.zshrc` for terminal use. `packages/plugin/README.md` →
+Install has the details, including why `reload` exists (Claude Code caches a plugin by
+version, so `plugin update` is a no-op until the version moves).
+
+To run the CLI from source instead of the bundled one — needed only when changing the CLI
+itself:
+
+```bash
 npm install
 npm run build                 # tsc -b — builds @scale/core + @scale/cli
 npm run build -w @scale/web   # builds the map viewer (needed for `scale serve`)
-```
-
-Invoking the CLI (`scale` is not installed globally by default — any of these work):
-
-```bash
-node packages/cli/dist/index.js <args>   # after npm run build (used below)
-npm run cli -- <args>                     # from source via tsx, no build needed
-npm link packages/cli                     # then plain `scale <args>` on PATH
+npm run cli -- <args>         # from source via tsx, no build needed
 ```
 
 Every command runs against the **current working directory**: the target repo's `.scale/`
 coverage memory plus per-user state under `~/.scale/<repo-id>/` (repo-id from the git
 remote, else the folder name).
+
+---
+
+## Uninstall
+
+Two steps — the second is what makes Claude Code forget the repo. Without it the marketplace
+stays registered and SCALE is one click from reinstallation:
+
+```bash
+claude plugin uninstall scale@scale-marketplace
+claude plugin marketplace remove scale-marketplace
+```
+
+Then restart Claude Code: a running session keeps the hooks it loaded at start. Installed
+from a clone, `npm run plugin:uninstall` does both and also removes the `~/.zshrc` block it
+added.
+
+**Nothing above deletes your data**, by design:
+
+| where | what it is | to remove |
+|---|---|---|
+| `<repo>/.scale/` | the coverage memory — component docs + `map.json`, git-versioned | delete it like any other tracked content |
+| `~/.scale/<repo-id>/` | your coverage, evidence, quests, config | `rm -rf ~/.scale/<repo-id>` |
+| `~/.scale/keys.json` | your API key (mode 0600) | delete only if you mean to; revoke it upstream too |
+
+`~/.scale/keys.json` sits in the directory you would most naturally wipe, so **do not use
+`rm -rf ~/.scale/*`** — that glob takes the key with it. To drop the per-repo state and keep
+the key: `find ~/.scale -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +`. From a clone,
+`npm run plugin:uninstall -- --purge` clears the plugin caches and moves `~/.scale` to a
+timestamped backup rather than deleting it.
 
 ---
 
@@ -144,27 +213,23 @@ scale map layout               # freeze .scale/map.json (spatial coords + import
 scale map index                # build .scale/index.json (file → component reverse index)
 ```
 
-### Junior — init, then learn while coding
+### Junior — learn while coding
+
+With the plugin installed ([Install](#install)) there is **nothing to set up per repo**.
+`~/.scale/<repo-id>/` (coverage, evidence, session) is created on first use, and every
+setting resolves at read time from schema defaults plus the repo's committed
+`.scale/policy.json` — so the gate runs with `quiz` / `sync` / `soft` out of the box and
+your user label falls back to `$USER`.
+
+Run `init` only when you want to pin that label or change a setting — `scale config
+get/set` are the one pair of commands that require it:
 
 ```bash
-scale init --user <label>      # create ~/.scale/<repo-id>/ with a default config.json
+scale init --user <label>      # writes ~/.scale/<repo-id>/config.json (sparse: just the label)
 ```
 
-Install the plugin so hooks + `/scale-*` commands wire up. The repo root ships
-`.claude-plugin/marketplace.json`, so Claude Code takes the GitHub repo itself as
-a marketplace — no clone needed:
-
-```bash
-claude plugin marketplace add wooogler/scale
-claude plugin install scale@scale-marketplace
-```
-
-then restart Claude Code. Working from a clone instead, `npm run plugin:install`
-does the same against your checkout and `npm run plugin:reload` pushes edits
-into the plugin cache without a version bump. (There is no `plugins` key in
-`.claude/settings.json`; installing writes `enabledPlugins` in
-`~/.claude/settings.json`. `packages/plugin/README.md` → Install has update,
-uninstall, and the release procedure — a released update needs a version bump.)
+It stays sparse on purpose: only explicit choices are stored, so a later team-policy
+change still reaches you instead of being shadowed by materialized defaults.
 
 Then work normally in Claude Code:
 

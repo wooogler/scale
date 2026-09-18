@@ -28,13 +28,15 @@ npm run build              # tsc -b — builds @scale/core + @scale/cli
 npm run build -w @scale/web  # builds the map web app (needed for `scale serve`)
 ```
 
-**Invoking the `scale` CLI.** The `scale` binary is defined by `@scale/cli` but is
-not installed globally by default. Any of these work:
+**Invoking the `scale` CLI.** Installing the plugin (step 4) already ships a
+self-contained `scale`, and Claude Code puts it on `PATH` inside its own sessions
+— so inside Claude Code, bare `scale <args>` just works. It is NOT on `PATH` in a
+plain terminal; there, any of these do:
 
 ```bash
-node packages/cli/dist/index.js <args>   # after `npm run build` (used throughout)
-npm run cli -- <args>                     # runs from source via tsx (no build needed)
-npm link packages/cli                     # then plain `scale <args>` on PATH
+npm run plugin:install -- --path          # adds this clone's bin/ to PATH in ~/.zshrc
+node packages/cli/dist/index.js <args>    # after `npm run build`
+npm run cli -- <args>                     # from source via tsx (no build needed)
 ```
 
 Below, `scale` means any of the above. Every command runs against the **current
@@ -154,12 +156,19 @@ every recompute.
 
 ---
 
-## 4. Junior flow — init + plugin
+## 4. Junior flow — plugin (and optionally init)
 
-In the target repo:
+Per-user state at `~/.scale/<repo-id>/` is created on first use — building the map
+or the first hook run is enough, and `coverage.json` / `session.json` /
+`evidence.jsonl` appear on their own. Config is resolved at read time from schema
+defaults plus the repo's `.scale/policy.json`, so the gate works with no
+`config.json` at all and the user label falls back to `$USER`.
+
+Run `init` only to pin that label or to change a setting (`scale config get/set`
+refuse to run without it):
 
 ```bash
-scale init --user <label>   # creates ~/.scale/<repo-id>/ with a default config.json
+scale init --user <label>   # writes ~/.scale/<repo-id>/config.json — sparse, just the label
 ```
 
 Install the SCALE plugin so Claude Code wires the hooks + `/scale-*` commands.
