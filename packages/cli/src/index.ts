@@ -17,7 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import readline from 'node:readline';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 
 import { Command } from 'commander';
 import {
@@ -38,16 +38,21 @@ import {
   buildFileComponentIndex,
   loadScaleDir,
   docById,
+  slugify,
   componentSourcesIndex,
   componentsForFile,
   computeLayout,
   emptyComponentCoverage,
   meanDims,
   gateEditDecision,
+  checkBrief,
+  quizSpecLine,
   causeOfDrift,
   pathMatchesAny,
   migrateLegacyConfig,
   resolveConfig,
+  isLead,
+  policyLeads,
   estimateBuild,
   resolveInterventionModel,
   MODEL_RATES,
@@ -60,13 +65,26 @@ import {
   generateQuests,
   completeQuizQuest,
   completeSocraticQuest,
+  DEFAULT_TOP_K,
 } from './quest.js';
+import {
+  buildReviewQueue,
+  formatReviewItem,
+  formatReviewDiff,
+  gitTerritoryDiff,
+  readEvidenceRecords,
+  reviewAlreadyOpened,
+  territoryFiles,
+  touchedSinceLastCheck,
+  DEFAULT_DIFF_MAX_BYTES,
+} from './review.js';
 import { loadDependsOnEdges, DEPS_MIN_COUNT } from './deps.js';
 import { translateDoc } from './translate.js';
 import {
   loadFileComponentIndex,
   recomputeCoverageFromDisk,
   myIdentities,
+  currentIdentityEmails,
   coverageCounts,
   type RecomputeResult,
 } from './coverage.js';
@@ -109,7 +127,18 @@ import {
   outOfBandEdits,
   summarizeTelemetry,
 } from './telemetry.js';
-import { unsetPath } from '@scale/core';
+import { unsetPath, explainConfig, LlmProviderSchema } from '@scale/core';
+import {
+  ensureServer,
+  stopServer,
+  resolveViewer,
+  viewerUrl,
+  agentViewerBase,
+  publicViewerUrl,
+  DEFAULT_PORT,
+} from './serve-state.js';
+import { buildSetupStatus } from './setup.js';
+import { keyStatus, setKeyFromInput } from './keys.js';
 import {
   readHookPayload,
   promptTextOf,
@@ -300,10 +329,17 @@ function fmt(n: number): string {
  * Build the ≤3-line SessionStart coverage summary (injected into the agent's
  * context). Line 1: unification progress. Line 2: the weakest unconquered
  * territory. Line 3: territory that needs re-validation (stale). Kept terse.
- * When the junior's interaction language is 'ko', one extra line tells the agent
- * to deliver comprehension checks in Korean; 'en' adds nothing.
+ * On quiz modality one extra line states the check's shape (items/focus/
+ * grounding) so the tutor never has to shell out for it. When the junior's
+ * interaction language is 'ko', one more line tells the agent to deliver
+ * comprehension checks in Korean; 'en' adds nothing.
  */
-function contextSummary(res: RecomputeResult, config: ScaleConfig, dir: string): string {
+function contextSummary(
+  res: RecomputeResult,
+  config: ScaleConfig,
+  dir: string,
+  viewer: { url: string; running: boolean },
+): string {
   const language: Language = config.language;
   const { coverage, map } = res;
   const counts = coverageCounts(coverage, map);
@@ -375,11 +411,50 @@ function contextSummary(res: RecomputeResult, config: ScaleConfig, dir: string):
       `Unlocked for editing: ${unlockedCount}/${map.nodes.length}. ` +
         `${owed.length} territory still owes a check from an earlier denied edit: ` +
         `${owed.slice(0, 5).join(', ')}${owed.length > 5 ? ` +${owed.length - 5} more` : ''}. ` +
-        `The junior can pass it with /scale-study <id> here, or in the map viewer (scale serve).`,
+        `The junior can pass it with /scale-study <id> here, or in the map viewer ` +
+          `at ${viewer.url} (/scale-open <id> opens that component's panel).`,
     );
   } else if (config.gate.enabled) {
     lines.push(`Unlocked for editing: ${unlockedCount}/${map.nodes.length}.`);
   }
+
+  // The post-session CHAT review, as one line the agent can act on. `owed`
+  // above names the async denies; this counts the whole queue — owed checks
+  // PLUS territory touched since it was last checked — because that is what
+  // `/scale-review` will actually walk. Reuses the coverage this command just
+  // recomputed and reads evidence exactly once, so the SessionStart latency
+  // budget (§7.1) pays for one extra file read and no git.
+  const queued = buildReviewQueue({
+    coverage,
+    map,
+    config,
+    pending: locks.pendingUnlocks,
+    touched: touchedSinceLastCheck(readEvidenceRecords(dir)),
+    limit: DEFAULT_TOP_K,
+  });
+  if (queued.length > 0) {
+    lines.push(
+      language === 'ko'
+        ? `review: 컴포넌트 ${queued.length}개가 검토를 기다리고 있습니다 — /scale-review`
+        : `review: ${queued.length} component(s) waiting — /scale-review`,
+    );
+  }
+
+  // The check's SHAPE, in the same words the deny reason uses. A junior who
+  // raised `quiz.items` expects the NEXT check to be longer, and the tutor
+  // only learns that from a line it is already reading (core's quizSpecLine).
+  if (config.gate.modality === 'quiz') {
+    lines.push(quizSpecLine(config.quiz));
+  }
+
+  // The viewer URL, so the agent can quote something clickable instead of
+  // telling the junior to "run scale serve" — which is the terminal trip this
+  // whole surface exists to remove.
+  lines.push(
+    `Map viewer: ${viewer.url}` +
+      (viewer.running ? '' : ' (not running yet)') +
+      ` — /scale-open opens it, /scale-open <id> opens one component.`,
+  );
 
   if (language === 'ko') {
     lines.push(
@@ -422,6 +497,9 @@ program
         `(${eff.config.gate.enforcement})  user: ${eff.config.user}` +
         (eff.policyApplied ? '  [team policy applied]' : ''),
     );
+    if (eff.config.gate.modality === 'quiz') {
+      console.log(`  ${quizSpecLine(eff.config.quiz)}`);
+    }
   });
 
 // ---------------------------------------------------------------------------
@@ -496,7 +574,17 @@ program
     );
 
     // Per-user interaction language (config is optional pre-`init` → 'en').
-    console.log(contextSummary(res, contextConfig, dir));
+    // The viewer probe is bounded (300 ms) because this is the SessionStart
+    // hook path; a viewer that does not answer still yields its default URL.
+    const view = await resolveViewer(cwd, {}, 300);
+    console.log(
+      // `publicViewerUrl`: this text is read by Claude and lands in the
+      // transcript, so it must not carry the API bearer token.
+      contextSummary(res, contextConfig, dir, {
+        url: publicViewerUrl(view.url),
+        running: view.running,
+      }),
+    );
   });
 
 // ---------------------------------------------------------------------------
@@ -606,7 +694,12 @@ function resolveIdentityStatus(
   return { emails, recentCommits: authors.length, mineOfRecent: mine };
 }
 
-function buildStatus(cwd: string, res: RecomputeResult, dir: string) {
+function buildStatus(
+  cwd: string,
+  res: RecomputeResult,
+  dir: string,
+  viewer: { url: string; running: boolean },
+) {
   const { coverage, map } = res;
   const counts = coverageCounts(coverage, map);
   const eff = loadEffectiveConfig(cwd, dir);
@@ -668,6 +761,7 @@ function buildStatus(cwd: string, res: RecomputeResult, dir: string) {
     provinces,
     stale,
     pendingQuests: pending.length,
+    viewer,
   };
 }
 
@@ -709,6 +803,13 @@ function renderStatus(s: StatusView): string {
   if (s.rebellions.length > 0) {
     lines.push(`  re-locked by rebellion: ${s.rebellions.join(', ')}`);
   }
+  // The map viewer is the other half of this CLI, and a URL is the only form of
+  // it a junior can act on without a terminal — so it is stated here, with
+  // whether it is actually up and what to type when it is not.
+  lines.push(
+    `  Map viewer: ${s.viewer.url}` +
+      (s.viewer.running ? ' (running)' : ' (not running — /scale-open starts it)'),
+  );
   lines.push('');
 
   if (s.counts.total === 0) {
@@ -753,7 +854,7 @@ program
       'territory, and pending quests. Read-only, no LLM (git+file reads only).',
   )
   .option('--json', 'emit machine-readable JSON instead of the summary', false)
-  .action((opts: { json?: boolean }) => {
+  .action(async (opts: { json?: boolean }) => {
     const cwd = process.cwd();
     const dir = stateDir(cwd);
     let res: RecomputeResult;
@@ -766,7 +867,12 @@ program
       process.exitCode = 1;
       return;
     }
-    const status = buildStatus(cwd, res, dir);
+    const view = await resolveViewer(cwd, {}, 300);
+    // Token-free: `scale status` (and its --json) is quoted back into chat.
+    const status = buildStatus(cwd, res, dir, {
+      url: publicViewerUrl(view.url),
+      running: view.running,
+    });
     if (opts.json) {
       console.log(JSON.stringify(status, null, 2));
       return;
@@ -1066,6 +1172,17 @@ gate
     syncLocksWithDrift(dir, coverage.components);
     const locks = readLocksSafe(dir);
 
+    // Where to send the junior, as a clickable link. Deliberately the RECORDED
+    // viewer without a health probe: this runs on the PreToolUse path in front
+    // of every edit, and a link that is occasionally stale costs nothing, while
+    // even a 200 ms probe per keystroke-sized edit would be felt. `/scale-open`
+    // (in the deny text) starts the server if it is not up.
+    // …and token-free: the deny reason is written into the transcript for
+    // Claude and the junior to read (`agentViewerBase`).
+    const viewerBase = agentViewerBase(cwd);
+    const viewerUrlFor = (component: string): string =>
+      viewerUrl(viewerBase, { component });
+
     // Budget accounting is a read-decide-write; take the session lock for the
     // whole decision (same rationale as the old commit gate: losing the race
     // means another gate is deciding right now, so allow).
@@ -1103,6 +1220,7 @@ gate
         recentlyAddressed,
         now,
         importance,
+        viewerUrlFor,
       });
 
       const counters = { ...session.counters, edits: session.counters.edits + 1 };
@@ -1409,6 +1527,256 @@ gate
     console.log(
       `scale: skipped '${componentId}' (by ${opts.by}) — unlocked for THIS session only; ` +
         'retry the edit. It locks again next session.',
+    );
+  });
+
+// ---------------------------------------------------------------------------
+// review  (REAL) — the CHAT post-session check path (PLAN-GATE §4 S3)
+//
+// The commands `/scale-review` drives. They carry NO policy of their own: the
+// queue is `pickComponents()` (the same picker the web quest path uses), the
+// brief is core's `checkBrief` (the same generator the in-flow deny uses), and
+// recording/unlocking/skipping stay with `scale record` and `scale gate defer`.
+// The only thing that differs between this path and the in-flow gate is WHEN
+// the check happens — which is the variable the study manipulates.
+// ---------------------------------------------------------------------------
+const review = program
+  .command('review')
+  .description(
+    'Post-session comprehension review in chat: the checks this user owes ' +
+      '(async denies) and the territory they touched since it was last checked. ' +
+      'Driven by /scale-review.',
+  );
+
+/**
+ * componentId → its doc's title and declared sources. Titles make the queue
+ * readable; sources narrow a touch row's file list to the territory it is
+ * actually about (see `territoryFiles`).
+ */
+function docFacts(cwd: string): { titles: Record<string, string>; sources: Record<string, string[]> } {
+  const titles: Record<string, string> = {};
+  const sources: Record<string, string[]> = {};
+  try {
+    for (const d of loadScaleDir(cwd).docs) {
+      titles[d.frontmatter.id] = d.frontmatter.title;
+      sources[d.frontmatter.id] = d.frontmatter.sources;
+    }
+  } catch {
+    /* no .scale/ — ids are their own labels and nothing narrows */
+  }
+  return { titles, sources };
+}
+
+/**
+ * Everything the review commands need about ONE component: why it is up for
+ * review, the window the reason dates from, and the files to ground it in.
+ *
+ * Shared by `start` and `diff` so the brief the tutor reads and the diff it
+ * reads are talking about the same window. Returns null when the component is
+ * not in the map (an id that names nothing cannot be reviewed).
+ */
+function resolveReviewTarget(
+  cwd: string,
+  dir: string,
+  componentId: string,
+): {
+  reason: 'owed' | 'touched';
+  /** ISO window anchor; '' when nothing dates it (see `gitTerritoryDiff`). */
+  since: string;
+  files: string[];
+  config: ScaleConfig;
+} | null {
+  const config = loadEffectiveConfig(cwd, dir).config;
+  const map = readMapJsonSafe(cwd);
+  if (!map || !map.nodes.some((n) => n.id === componentId)) return null;
+
+  const pending = readLocksSafe(dir).pendingUnlocks[componentId];
+  const window = touchedSinceLastCheck(readEvidenceRecords(dir)).get(componentId);
+  // An owed check outranks a touch: it is the one the gate actually denied.
+  const reason: 'owed' | 'touched' = pending ? 'owed' : 'touched';
+  // The window anchor is the EARLIEST relevant touch — the junior's own work is
+  // what the check is grounded in. A denied edit leaves no touch row at all, so
+  // an owed component with no touches falls back to the deny's timestamp.
+  const since = window?.since ?? pending?.at ?? '';
+  // Files, narrowed to THIS territory (a touch row credits every component the
+  // edit spanned, so an unnarrowed list grounds the check in someone else's
+  // code). With none recorded — an owed deny writes no touch row at all — the
+  // component's own sources are the territory: better an honest "here is the
+  // code this covers" than nothing to read.
+  const sources =
+    componentSourcesIndex(loadScaleDir(cwd)).find((s) => s.id === componentId)?.sources ?? [];
+  const narrowed = territoryFiles(window?.files ?? [], sources);
+  const files = narrowed.length > 0 ? narrowed : sources;
+  return { reason, since, files, config };
+}
+
+review
+  .command('queue')
+  .description(
+    'The ordered list of components to review now: owed checks first (async ' +
+      'denies), then territory touched since its last check, ranked by ' +
+      'importance × comprehension gap. Same picker as post-session quests.',
+  )
+  .option('--json', 'machine-readable (the shape /scale-review reads)', false)
+  .option('--limit <n>', `how many items at most (default ${DEFAULT_TOP_K})`)
+  .action((opts: { json?: boolean; limit?: string }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    const config = loadEffectiveConfig(cwd, dir).config;
+    const parsedLimit = opts.limit === undefined ? NaN : Number(opts.limit);
+    const limit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.trunc(parsedLimit) : DEFAULT_TOP_K;
+
+    let res: RecomputeResult;
+    try {
+      res = recomputeCoverageFromDisk(cwd);
+    } catch (err) {
+      if (opts.json) {
+        console.log(JSON.stringify({ error: (err as Error).message, items: [] }, null, 2));
+      } else {
+        console.error(`scale: cannot read coverage (${(err as Error).message}).`);
+      }
+      process.exitCode = 1;
+      return;
+    }
+
+    const facts = docFacts(cwd);
+    const items = buildReviewQueue({
+      coverage: res.coverage,
+      map: res.map,
+      config,
+      pending: readLocksSafe(dir).pendingUnlocks,
+      touched: touchedSinceLastCheck(readEvidenceRecords(dir)),
+      titles: facts.titles,
+      sources: facts.sources,
+      limit,
+    });
+
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            assessment: config.gate.assessment,
+            modality: config.gate.modality,
+            enforcement: config.gate.enforcement,
+            language: config.language,
+            // The check's SHAPE travels with the queue for the same reason it
+            // rides on the deny: the tutor must not need a second CLI call to
+            // learn how many items to write.
+            quiz: config.gate.modality === 'quiz' ? quizSpecLine(config.quiz) : null,
+            viewer: agentViewerBase(cwd),
+            items,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    if (items.length === 0) {
+      console.log('scale: nothing to review.');
+      return;
+    }
+    console.log(
+      `scale: ${items.length} component(s) to review ` +
+        `(${config.gate.assessment}/${config.gate.modality}) — ` +
+        'run `scale review start <id>` for each.',
+    );
+    for (const item of items) console.log(`  ${formatReviewItem(item)}`);
+  });
+
+review
+  .command('start')
+  .description(
+    'Open the review check for one component: print the SAME brief the edit ' +
+      'gate would have printed in-flow (core checkBrief) and record the ' +
+      'intervention as requested. The check itself is the scale-tutor skill.',
+  )
+  .argument('<componentId>', 'component to review')
+  .option('--json', 'machine-readable', false)
+  .action(async (componentId: string, opts: { json?: boolean }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    const target = resolveReviewTarget(cwd, dir, componentId);
+    if (!target) {
+      console.error(`scale: '${componentId}' is not a component in this repo's map.`);
+      process.exitCode = 1;
+      return;
+    }
+    const { config, reason, since, files } = target;
+    const viewer = agentViewerBase(cwd);
+    const brief = checkBrief(
+      componentId,
+      config,
+      { kind: 'review', reason, since: since || nowIso(), files },
+      viewerUrl(viewer, { component: componentId }),
+    );
+
+    // The SAME accounting row the gate writes when it denies — `requested` is
+    // all either path can honestly claim (it asks for a check; the tutor is
+    // what delivers it). `trigger: 'review'` is the only difference, and it is
+    // what lets the analysis separate the two arms.
+    const entries = readEvidenceRecords(dir);
+    const startedAt = readSessionSafe(dir)?.startedAt ?? '';
+    if (!reviewAlreadyOpened(entries, componentId, startedAt)) {
+      try {
+        await appendEvidence(dir, {
+          type: 'intervention',
+          ts: nowIso(),
+          user: currentUser(dir),
+          componentId,
+          // Reports the assessment this user is ASSIGNED to, exactly as
+          // `scale record` does — never re-derived from where the check ran.
+          timing: config.gate.assessment === 'async' ? 'postsession' : 'inflow',
+          modality: config.gate.modality,
+          outcome: 'requested',
+          trigger: 'review',
+        });
+      } catch {
+        /* accounting only — the junior still gets their check */
+      }
+    }
+
+    if (opts.json) {
+      console.log(
+        JSON.stringify({ componentId, brief, reason, since, files, viewer }, null, 2),
+      );
+      return;
+    }
+    console.log(brief);
+  });
+
+review
+  .command('diff')
+  .description(
+    'The code this user changed in one territory since its review window ' +
+      'opened — commits plus the working tree, for grounding the check. ' +
+      'Capped; degrades to a note when git is unavailable.',
+  )
+  .argument('<componentId>', 'component whose territory to diff')
+  .option('--max-bytes <n>', `byte cap on the output (default ${DEFAULT_DIFF_MAX_BYTES})`)
+  .action((componentId: string, opts: { maxBytes?: string }) => {
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    const target = resolveReviewTarget(cwd, dir, componentId);
+    if (!target) {
+      console.error(`scale: '${componentId}' is not a component in this repo's map.`);
+      process.exitCode = 1;
+      return;
+    }
+    const parsed = opts.maxBytes === undefined ? NaN : Number(opts.maxBytes);
+    const maxBytes =
+      Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : DEFAULT_DIFF_MAX_BYTES;
+    const { since, files } = target;
+    console.log(
+      formatReviewDiff({
+        componentId,
+        since: since || '(no window recorded)',
+        files,
+        diff: gitTerritoryDiff(cwd, files, since, maxBytes),
+        maxBytes,
+      }),
     );
   });
 
@@ -2302,10 +2670,65 @@ map
 // ---------------------------------------------------------------------------
 // serve  (REAL) — local web map app
 // ---------------------------------------------------------------------------
+/** Open a URL in the platform browser, detached; never throws, never waits. */
+function openInBrowser(url: string): void {
+  const [cmd, args] =
+    process.platform === 'darwin'
+      ? ['open', [url]]
+      : process.platform === 'win32'
+        ? ['cmd', ['/c', 'start', '', url]]
+        : ['xdg-open', [url]];
+  try {
+    const child = spawn(cmd, args as string[], { detached: true, stdio: 'ignore' });
+    child.on('error', () => {
+      /* no opener on this box — the URL is printed either way */
+    });
+    child.unref();
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * The deep-link target from `--component` / `--section` / `--settings`.
+ *
+ * `--section` is normalized through core's {@link slugify} rather than being
+ * validated against the doc: callers type the heading as they read it
+ * (`--section "Design decisions"`), and the viewer already treats a section it
+ * cannot find as "no section" and shows the doc from the top. Rejecting the
+ * spelling here would turn a link that works into an error at the one moment
+ * someone is trying to hand a reader a pointer. A section without a component
+ * is dropped for the same reason `viewerUrl` ignores it — there is nowhere to
+ * anchor it.
+ */
+function targetFromOpts(opts: {
+  component?: string;
+  section?: string;
+  settings?: string | boolean;
+}): {
+  component?: string;
+  section?: string;
+  settings?: string;
+} {
+  if (opts.component) {
+    const section = opts.section ? slugify(opts.section) : '';
+    return { component: opts.component, ...(section ? { section } : {}) };
+  }
+  if (opts.settings !== undefined) {
+    return { settings: typeof opts.settings === 'string' ? opts.settings : '' };
+  }
+  return {};
+}
+
 program
   .command('serve')
-  .description('Serve the local web map app (pure Node; reads .scale/ from cwd)')
-  .option('-p, --port <number>', 'port', '4318')
+  .description(
+    'The local web map app. Bare `scale serve` runs it in the foreground; ' +
+      '`ensure` starts a detached one if none is up, `stop` stops it, `url` ' +
+      'prints where it is, `open` opens it in a browser.',
+  )
+  .argument('[action]', 'ensure | stop | url | open (omit to run in the foreground)')
+  .option('-p, --port <number>', 'port', String(DEFAULT_PORT))
   .option(
     '--host <addr>',
     'bind address; defaults to loopback. Off loopback the API requires a bearer ' +
@@ -2318,14 +2741,357 @@ program
       'Generated for you when --host is not loopback and none is given; the ' +
       'printed URL carries it, so open THAT on the phone',
   )
-  .action((opts: { port: string; host: string; token?: string }) => {
-    const port = Number(opts.port);
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-      console.error(`scale: invalid port "${opts.port}".`);
+  .option(
+    '--idle-minutes <n>',
+    'exit cleanly after N minutes with no HTTP request. Off by default in the ' +
+      'foreground; `ensure` passes 240, because nobody is watching that one',
+  )
+  .option('--component <id>', 'deep-link to a component panel (url, open)')
+  .option(
+    '--section <slug>',
+    "deep-link to one section of that component's doc — `concepts`, " +
+      '`decisions`, or a heading slug such as `design-decisions` (needs --component)',
+  )
+  .option('--settings [tab]', 'deep-link to Settings: general|gate|checks|team (url, open)')
+  .option('--json', 'machine-readable output (ensure, url)', false)
+  .action(
+    async (
+      action: string | undefined,
+      opts: {
+        port: string;
+        host: string;
+        token?: string;
+        idleMinutes?: string;
+        component?: string;
+        section?: string;
+        settings?: string | boolean;
+        json?: boolean;
+      },
+    ) => {
+      const cwd = process.cwd();
+      const port = Number(opts.port);
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        console.error(`scale: invalid port "${opts.port}".`);
+        process.exitCode = 1;
+        return;
+      }
+      let idleMinutes: number | undefined;
+      if (opts.idleMinutes !== undefined) {
+        const n = Number(opts.idleMinutes);
+        if (!Number.isFinite(n) || n <= 0) {
+          console.error(`scale: invalid --idle-minutes "${opts.idleMinutes}".`);
+          process.exitCode = 1;
+          return;
+        }
+        idleMinutes = n;
+      }
+
+      switch (action ?? 'run') {
+        case 'run':
+          startServer({
+            port,
+            host: opts.host,
+            cwd,
+            token: opts.token,
+            idleMinutes,
+            // The foreground server IS the viewer for this repo: record it, and
+            // take the state file with it on Ctrl-C.
+            trackState: true,
+          });
+          return;
+
+        case 'ensure': {
+          try {
+            const res = await ensureServer({
+              cwd,
+              port,
+              host: opts.host,
+              token: opts.token,
+              // A viewer started on the user's behalf must not outlive their
+              // interest in it by days. Four hours is a working day's session.
+              idleMinutes: idleMinutes ?? 240,
+            });
+            if (opts.json) console.log(JSON.stringify(res));
+            else console.log(res.url);
+          } catch (err) {
+            // One line, exit 1 — every caller of this is a hook or a skill that
+            // must carry on regardless.
+            console.error(`scale: ${(err as Error).message}`);
+            process.exitCode = 1;
+          }
+          return;
+        }
+
+        case 'stop': {
+          const res = await stopServer(cwd);
+          if (opts.json) console.log(JSON.stringify(res));
+          else if (res.stopped) console.log(`scale: stopped the map viewer (pid ${res.pid}).`);
+          else console.log('scale: no map viewer of ours was running.');
+          return;
+        }
+
+        case 'url': {
+          const view = await resolveViewer(cwd, targetFromOpts(opts), 300);
+          if (opts.json) console.log(JSON.stringify(view));
+          else console.log(view.url);
+          return;
+        }
+
+        case 'open': {
+          try {
+            const res = await ensureServer({
+              cwd,
+              port,
+              host: opts.host,
+              token: opts.token,
+              idleMinutes: idleMinutes ?? 240,
+            });
+            // The tokened URL on purpose: this one goes to the user's terminal
+            // and browser, and off loopback it is useless without the token.
+            const url = viewerUrl(res.url, targetFromOpts(opts));
+            openInBrowser(url);
+            console.log(url);
+          } catch (err) {
+            console.error(`scale: ${(err as Error).message}`);
+            process.exitCode = 1;
+          }
+          return;
+        }
+
+        default:
+          console.error(
+            `scale: unknown \`serve\` action "${action}" — use ensure, stop, url or open.`,
+          );
+          process.exitCode = 1;
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// keys status|set  (REAL) — the API keys the intervention model needs
+//
+// The key ONLY ever arrives on stdin. Not as an argument, not through an
+// option: argv is readable by every process on the box via `ps`, it lands in
+// shell history, and a hook transcript would keep a copy forever.
+// ---------------------------------------------------------------------------
+
+/** How long `keys set --stdin` waits for the key before giving up. */
+const STDIN_BUDGET_MS = 30_000;
+
+/**
+ * Read stdin to the end, bounded.
+ *
+ * The bound is the point: with no pipe attached (a hook that forgot to write
+ * one, a skill that spawned us wrongly) an unbounded read is a `scale` process
+ * that waits for a key that is never coming, holding a terminal — or a hook —
+ * forever. Thirty seconds is longer than any paste and shorter than anyone's
+ * patience.
+ *
+ * On a TTY we still read, because "paste it here" is a perfectly good way to
+ * enter a key that must never be an argument; we just say so, on stderr, so
+ * the hint cannot end up in whatever is capturing stdout.
+ */
+function readStdin(timeoutMs: number = STDIN_BUDGET_MS): Promise<string> {
+  if (process.stdin.isTTY) {
+    console.error('scale: paste the key and press Ctrl-D (Ctrl-C to abort).');
+  }
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const onData = (c: Buffer): number => chunks.push(Buffer.from(c));
+    const done = (fn: () => void): void => {
+      clearTimeout(timer);
+      process.stdin.off('data', onData);
+      process.stdin.off('end', onEnd);
+      process.stdin.off('error', onError);
+      process.stdin.pause();
+      fn();
+    };
+    const onEnd = (): void => done(() => resolve(Buffer.concat(chunks).toString('utf8')));
+    const onError = (err: Error): void => done(() => reject(err));
+    const timer = setTimeout(
+      () =>
+        done(() =>
+          reject(new Error(`nothing arrived on stdin within ${Math.round(timeoutMs / 1000)}s`)),
+        ),
+      timeoutMs,
+    );
+    process.stdin.on('data', onData);
+    process.stdin.on('end', onEnd);
+    process.stdin.on('error', onError);
+  });
+}
+
+program
+  .command('keys')
+  .description(
+    'API keys for the intervention model. `status` says whether each provider ' +
+      'has one; `set <provider> --stdin` stores one read from stdin.',
+  )
+  .argument('[action]', 'status | set', 'status')
+  .argument('[provider]', 'anthropic | openai (for `set`)')
+  .option('--stdin', 'read the key from stdin (required for `set`)', false)
+  .option('--json', 'machine-readable output', false)
+  .action(
+    async (
+      action: string,
+      provider: string | undefined,
+      opts: { stdin?: boolean; json?: boolean },
+    ) => {
+      if (action === 'status') {
+        const status = keyStatus();
+        // The contract is `{ present }` per provider — deliberately narrower
+        // than the web API's status, which also carries a masked tail. A CLI
+        // answer gets pasted into chat logs; a boolean cannot leak.
+        const out = {
+          anthropic: { present: status.anthropic.configured },
+          openai: { present: status.openai.configured },
+        };
+        if (opts.json) console.log(JSON.stringify(out));
+        else {
+          for (const p of ['anthropic', 'openai'] as const) {
+            const src = status[p].source;
+            console.log(
+              `${p.padEnd(10)} ${out[p].present ? `configured (${src === 'env' ? 'environment' : 'stored'})` : 'not set'}`,
+            );
+          }
+        }
+        return;
+      }
+
+      if (action !== 'set') {
+        console.error('scale: usage — scale keys status [--json] | scale keys set <provider> --stdin');
+        process.exitCode = 1;
+        return;
+      }
+
+      const parsed = LlmProviderSchema.safeParse(provider);
+      if (!parsed.success) {
+        console.error('scale: usage — scale keys set <anthropic|openai> --stdin');
+        process.exitCode = 1;
+        return;
+      }
+      if (!opts.stdin) {
+        console.error(
+          'scale: --stdin is required. The key is read from stdin only — never from ' +
+            'an argument, which `ps` and your shell history would keep.',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      let raw: string;
+      try {
+        raw = await readStdin();
+      } catch (err) {
+        console.error(
+          `scale: ${(err as Error).message}. Pipe the key in, e.g. ` +
+            '`pbpaste | scale keys set anthropic --stdin`.',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      if (!raw.trim()) {
+        console.error(
+          'scale: nothing on stdin. Pipe the key in, e.g. `pbpaste | scale keys set anthropic --stdin`.',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        setKeyFromInput(parsed.data, raw);
+      } catch (err) {
+        console.error(`scale: could not store the key — ${(err as Error).message}`);
+        process.exitCode = 1;
+        return;
+      }
+      // Never the key, never a masked tail, never a length.
+      console.log(`scale: stored the ${parsed.data} key.`);
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// setup status  (REAL) — one answer to "is SCALE usable here, for me, now?"
+// ---------------------------------------------------------------------------
+program
+  .command('setup')
+  .description('Report what SCALE still needs in this repo (config, memory, key, viewer)')
+  .argument('[action]', 'only `status` is supported', 'status')
+  .option('--json', 'machine-readable output', false)
+  .action(async (action: string, opts: { json?: boolean }) => {
+    if (action !== 'status') {
+      console.error('scale: usage — scale setup status [--json]');
       process.exitCode = 1;
       return;
     }
-    startServer({ port, host: opts.host, cwd: process.cwd(), token: opts.token });
+    const s = await buildSetupStatus(process.cwd());
+    if (opts.json) {
+      console.log(JSON.stringify(s));
+      return;
+    }
+    console.log(`SCALE setup — ${s.repoId}`);
+    console.log(`  state      ${s.stateDir}`);
+    console.log(`  config     ${s.initialized ? `yes (user: ${s.user ?? '—'})` : 'not initialized'}`);
+    console.log(
+      `  memory     ${s.memory.present ? `${s.memory.components} component(s)` : 'none — run /scale-map'}`,
+    );
+    console.log(`  provider   ${s.provider}${s.keyPresent ? ' (key present)' : ' — NO API KEY'}`);
+    console.log(`  gate       ${s.gate.assessment}/${s.gate.modality} (${s.gate.enforcement})`);
+    console.log(`  language   ${s.language}`);
+    console.log(`  viewer     ${s.viewer.url}${s.viewer.running ? '' : '  (not running)'}`);
+  });
+
+// ---------------------------------------------------------------------------
+// policy show  (REAL) — the committed team policy, and whether you may edit it
+// ---------------------------------------------------------------------------
+program
+  .command('policy')
+  .description('Show the committed team policy (.scale/policy.json) and your role in it')
+  .argument('[action]', 'only `show` is supported', 'show')
+  .action((action: string) => {
+    if (action !== 'show') {
+      console.error('scale: usage — scale policy show');
+      console.error('  (edit the policy in the Settings modal Team tab, or in an editor)');
+      process.exitCode = 1;
+      return;
+    }
+    const cwd = process.cwd();
+    const dir = stateDir(cwd);
+    const file = path.join(cwd, '.scale', 'policy.json');
+    const policy = readPolicyRaw(cwd);
+    const eff = loadEffectiveConfig(cwd, dir);
+    const identity = currentIdentityEmails(cwd, eff.config);
+    const leads = policyLeads(policy.raw);
+    const lead = isLead(policy.raw, identity);
+
+    console.log(`policy file: ${file}`);
+    if (!policy.present) {
+      console.log('  (none committed — every setting falls back to the schema defaults)');
+    } else if (policy.parseError) {
+      console.log('  ⚠ present but NOT valid JSON — it is being ignored entirely');
+    } else {
+      console.log(JSON.stringify(policy.raw, null, 2));
+      if (eff.policyError) console.log(`  ⚠ ignored: ${eff.policyError}`);
+    }
+
+    console.log(
+      `\nleads: ${leads.length > 0 ? leads.join(', ') : '(nobody listed — anyone may edit)'}`,
+    );
+    console.log(
+      `your git identity: ${identity.length > 0 ? identity.join(', ') : '(none resolved)'}`,
+    );
+    console.log(`you are: ${lead ? 'a TEAM LEAD' : 'a member'}`);
+    if (lead && leads.length === 0) {
+      console.log(
+        '  Nobody is a lead yet, so anyone can edit the policy. Add yourself to ' +
+          '`leads` to close it.',
+      );
+    }
+    // Said out loud every time, because a list of names in a JSON file reads
+    // like an access control and is not one.
+    console.log(
+      '\nNote: `leads` gates the Settings UI, not the file. Anyone who can write ' +
+        'the repo can edit .scale/policy.json directly — use git review / ' +
+        'CODEOWNERS on that path for the real control.',
+    );
   });
 
 // ---------------------------------------------------------------------------
@@ -2366,12 +3132,69 @@ function setPath(
   return out;
 }
 
+/** Render one config leaf as `value (source: …)`, or every leaf when key is absent. */
+function explainKey(cwd: string, dir: string, key: string | undefined, json: boolean): void {
+  const policy = readPolicyRaw(cwd);
+  const sources = explainConfig(
+    readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' },
+    policy.parseError ? undefined : policy.raw,
+  );
+  const render = (k: string): string => {
+    const leaf = sources[k]!;
+    const label =
+      leaf.source === 'user'
+        ? 'user override'
+        : leaf.source === 'policy'
+          ? 'team policy'
+          : 'default';
+    const extra =
+      leaf.source === 'user' && leaf.policyValue !== undefined
+        ? `; team default: ${JSON.stringify(leaf.policyValue)}`
+        : leaf.source === 'user' && leaf.defaultValue !== undefined
+          ? `; default: ${JSON.stringify(leaf.defaultValue)}`
+          : '';
+    return `${k} = ${JSON.stringify(leaf.value)}  (source: ${label}${extra})`;
+  };
+
+  if (!key) {
+    if (json) console.log(JSON.stringify(sources));
+    else for (const k of Object.keys(sources).sort()) console.log(render(k));
+    return;
+  }
+  const leaf = sources[key];
+  if (!leaf) {
+    console.error(`scale: no such config key "${key}".`);
+    process.exitCode = 1;
+    return;
+  }
+  if (json) {
+    console.log(
+      JSON.stringify({
+        key,
+        value: leaf.value,
+        source: leaf.source,
+        ...(leaf.policyValue !== undefined ? { policyValue: leaf.policyValue } : {}),
+        ...(leaf.defaultValue !== undefined ? { defaultValue: leaf.defaultValue } : {}),
+      }),
+    );
+  } else {
+    console.log(render(key));
+  }
+}
+
 config
   .command('get')
   .description('Print the EFFECTIVE config, or a single dotted key (e.g. gate.assessment)')
   .argument('[key]', 'dotted key path')
   .option('--raw', 'print your sparse user overrides file instead of the effective view', false)
-  .action((key: string | undefined, opts: { raw?: boolean }) => {
+  .option(
+    '--explain',
+    'also say WHERE the value comes from: your override, the team policy, or ' +
+      'the schema default (and what the team default would be)',
+    false,
+  )
+  .option('--json', 'machine-readable output (with --explain)', false)
+  .action((key: string | undefined, opts: { raw?: boolean; explain?: boolean; json?: boolean }) => {
     const cwd = process.cwd();
     const dir = stateDir(cwd);
     if (!configExists(dir)) {
@@ -2379,6 +3202,17 @@ config
       process.exitCode = 1;
       return;
     }
+
+    // --explain answers a different question from --raw: not "what did I write"
+    // but "why is the effective value what it is". The provenance comes from
+    // core's explainConfig — the SAME function the web Settings page renders its
+    // chips from, so chat and the browser can never disagree about whose value
+    // is in force.
+    if (opts.explain) {
+      explainKey(cwd, dir, key, opts.json === true);
+      return;
+    }
+
     const view: unknown = opts.raw
       ? (readUserConfigRaw(dir) ?? {})
       : loadEffectiveConfig(cwd, dir).config;

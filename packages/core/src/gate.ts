@@ -24,7 +24,7 @@
  *   - budget exhaustion fails OPEN (allow) — over-interrupting is the failure
  *     this gate exists to prevent; S3 will queue the missed check instead.
  */
-import type { Language, ScaleConfig } from './schema/config.js';
+import type { Language, QuizConfig, ScaleConfig } from './schema/config.js';
 import type { UserCoverage } from './schema/coverage.js';
 import { meanDims } from './coverage-model.js';
 
@@ -73,6 +73,14 @@ export interface GateEditInput {
   recentlyAddressed: string[];
   /** Decision time (ISO), for the cooldown comparison. */
   now: string;
+  /**
+   * componentId → a clickable deep link into the running map viewer's panel
+   * for that component. Injected rather than built here because only the CLI
+   * knows where the viewer is (and whether its URL carries a `?token=`); core
+   * stays pure and browser-safe. Absent → the deny reason simply omits the
+   * access line, which is a cosmetic loss, never a behavioral one.
+   */
+  viewerUrlFor?: (component: string) => string;
   /**
    * Optional componentId → importance (from map.json) for candidate ranking.
    * When absent/empty the gate falls back to lowest-mean-then-state ranking.
@@ -150,7 +158,71 @@ function topCandidate(cands: Candidate[], importance?: Record<string, number>): 
 }
 
 /**
- * Build the agent-facing deny instruction (PLAN-GATE §3.2-6).
+ * The quiz SHAPE, as one line the agent can read without another CLI call.
+ *
+ * The tutor skill needs the item count and the theme at the exact moment the
+ * deny lands, and the deny is the only thing it is guaranteed to have read —
+ * making it run `scale config get quiz.items` first would put a subprocess
+ * between the junior and their interruption for three scalars. So the same
+ * line is emitted in both places the agent looks: the deny reason and the
+ * SessionStart context block.
+ *
+ * Shape is fixed and parse-friendly: `quiz: 2 item(s), focus auto, grounding
+ * balanced`.
+ */
+export function quizSpecLine(quiz: QuizConfig): string {
+  return `quiz: ${quiz.items} item(s), focus ${quiz.focus}, grounding ${quiz.grounding}`;
+}
+
+/**
+ * WHY a comprehension check is being asked for — the ONE axis on which the
+ * in-flow gate deny and the post-session chat review differ.
+ *
+ *  - `gate`   — an edit was just denied (optionally because the territory
+ *               DRIFTED under the junior).
+ *  - `review` — the junior is working through `/scale-review` after the fact:
+ *               either they OWE this check (an async deny recorded it in
+ *               `locks.pendingUnlocks`) or they TOUCHED the territory since it
+ *               was last checked/skipped and its comprehension is still low.
+ */
+export type CheckCause =
+  | { kind: 'gate'; drift?: DriftNote }
+  | {
+      kind: 'review';
+      reason: 'owed' | 'touched';
+      /** ISO timestamp the reason dates from (the deny, or the first touch). */
+      since: string;
+      /** Repo-relative files touched in that window (may be empty). */
+      files: string[];
+    };
+
+/** The date half of an ISO timestamp; the raw string when it is not one. */
+function isoDay(iso: string): string {
+  return /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10) : iso;
+}
+
+/**
+ * Build the agent-facing instruction for ONE comprehension check — the single
+ * generator behind BOTH the in-flow gate deny and the post-session review
+ * (PLAN-GATE §3.2-6).
+ *
+ * WHY ONE FUNCTION: the study manipulates exactly one variable — WHEN the check
+ * happens. If the post-session path grew its own copy of this text the two arms
+ * would start drifting on wording, emphasis, and eventually on what the tutor
+ * actually does, and the timing contrast would be confounded by a prose
+ * difference nobody tracked. So the parts are written once here and the cause
+ * selects only:
+ *   - the HEAD (why this moment exists), and
+ *   - what to do AFTER the junior completes the check ("retry the edit" is
+ *     meaningless when no edit is pending — the reviewer moves to the next
+ *     queue item instead).
+ * Everything else — the check instruction itself, the quiz spec line, the skip
+ * paragraph, the Korean delivery sentence, the access line — is byte-identical
+ * across the two paths by construction, not by convention.
+ *
+ * A `review` brief always carries the CHECK body, never the async TEACH body:
+ * the review IS the check the async deny promised for "later", so teaching-only
+ * there would mean the owed check never happens at all.
  *
  * This text is read by the AGENT, not by the junior — which is exactly why it
  * has to be emphatic about handing the moment over. An earlier commit-gate
@@ -160,6 +232,9 @@ function topCandidate(cands: Candidate[], importance?: Record<string, number>): 
  * moment and may only skip when told to — and an unasked skip must be labeled
  * `--by agent` so it stays out of the study's user-choice data.
  *
+ * A quiz-modality deny also carries {@link quizSpecLine}, so the tutor knows
+ * how many items to write and on what theme without a second CLI call.
+ *
  * Three axes shape the text:
  *  - assessment `sync`  — run the check now, in chat; passing unlocks durably.
  *  - assessment `async` — do NOT quiz now: TEACH, then point the junior at the
@@ -168,23 +243,28 @@ function topCandidate(cands: Candidate[], importance?: Record<string, number>): 
  *  - enforcement `hard` — the skip paragraph is replaced: team policy disables
  *    skipping (the member's own enforcement override is the sanctioned valve).
  *
+ * `viewerUrl`, when the caller knows it, adds a final line with a clickable
+ * deep link into the component's panel — see the `access` line below.
+ *
  * The instruction itself always stays English (it addresses the AGENT); when
  * the junior's `language` is 'ko' one extra sentence tells the agent to DELIVER
  * everything junior-facing in Korean (code identifiers stay English).
  */
-export function gateDenyReason(
+export function checkBrief(
   component: string,
   config: ScaleConfig,
-  drift?: DriftNote,
+  cause: CheckCause = { kind: 'gate' },
+  viewerUrl?: string,
 ): string {
   const { modality, assessment, enforcement } = config.gate;
   const language: Language = config.language;
+  const drift = cause.kind === 'gate' ? cause.drift : undefined;
 
   // A drift is NOT "you never understood this". The junior demonstrated it;
   // the code moved underneath them. Saying otherwise would be both false and
   // demoralizing, and it would corrupt what the study is measuring — so the
   // deny names the cause and, when someone else caused it, names them.
-  const head = drift
+  const gateHead = drift
     ? drift.cause === 'self'
       ? `SCALE edit gate — the '${component}' territory is locked again. The junior ` +
         `DID demonstrate this component before; since then it has been rewritten ` +
@@ -199,22 +279,54 @@ export function gateDenyReason(
       `(comprehension not yet demonstrated), and this edit reaches into it. ` +
       `This moment is for the JUNIOR, not for you to resolve.`;
 
+  // The review head names the DEBT instead of the blocked edit. The closing
+  // "this moment is for the JUNIOR" sentence is deliberately the same one the
+  // gate uses: the agent's temptation to answer the check itself does not
+  // weaken just because the check arrives after the fact.
+  const reviewHead =
+    cause.kind === 'review'
+      ? cause.reason === 'owed'
+        ? `SCALE review — the '${component}' territory is LOCKED and this user ` +
+          `still owes its check (denied under async assessment on ` +
+          `${isoDay(cause.since)}). ` +
+          `This moment is for the JUNIOR, not for you to resolve.`
+        : `SCALE review — the '${component}' territory is LOCKED and this user ` +
+          `touched '${component}' (${cause.files.length} file(s)) since ` +
+          `${isoDay(cause.since)} and its comprehension is still below the bar. ` +
+          `This moment is for the JUNIOR, not for you to resolve.`
+      : '';
+
+  const head = cause.kind === 'review' ? reviewHead : gateHead;
+
+  // What to do once the check is done. The ONLY difference between the two
+  // paths' bodies: there is no pending edit to retry in a post-session review.
+  const afterCheck =
+    cause.kind === 'review'
+      ? 'move on to the next item in the review queue'
+      : 'retry the edit';
+
+  const checkBody =
+    `Run the ${modality} comprehension check on '${component}' using the ` +
+    `scale-tutor skill and put it in front of them now` +
+    (drift
+      ? `, focused on WHAT CHANGED since they last validated it rather than ` +
+        `re-asking what they already answered`
+      : '') +
+    `. After they complete it (scale record), ${afterCheck} — a passing ` +
+    `check unlocks this territory durably.`;
+
+  // A review is the deferred check ARRIVING, so it never takes the async
+  // teach-only branch — that branch is what created the debt in the first place.
   const body =
-    assessment === 'sync'
-      ? `Run the ${modality} comprehension check on '${component}' using the ` +
-        `scale-tutor skill and put it in front of them now` +
-        (drift
-          ? `, focused on WHAT CHANGED since they last validated it rather than ` +
-            `re-asking what they already answered`
-          : '') +
-        `. After they complete it (scale record), retry the edit — a passing ` +
-        `check unlocks this territory durably.`
+    cause.kind === 'review' || assessment === 'sync'
+      ? checkBody
       : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH ` +
         `instead — explain what '${component}' does and why, grounded in its ` +
         `component doc under .scale/ and in what this edit is trying to change. Then ` +
         `tell the junior the territory stays locked until they pass its check ` +
-        `later (in the SCALE map viewer, or with /scale-study ${component} in a ` +
-        `coming session). The edit itself stays blocked for now.`;
+        `later (with /scale-review in a coming session — the same check, in chat — ` +
+        `or in the SCALE map viewer, or with /scale-study ${component}). The edit ` +
+        `itself stays blocked for now.`;
 
   const skip =
     enforcement === 'hard'
@@ -222,7 +334,7 @@ export function gateDenyReason(
         `for a way around the lock; work elsewhere or unlock it properly.`
       : `Do NOT skip on their behalf. If — and only if — the junior says to ` +
         `skip, run \`scale gate defer ${component}\` (this unlocks it for THIS ` +
-        `SESSION only), then retry the edit. If you skip without asking (e.g. ` +
+        `SESSION only), then ${afterCheck}. If you skip without asking (e.g. ` +
         `no junior is in the loop), you MUST run \`scale gate defer ` +
         `${component} --by agent\` and say so in your reply.`;
 
@@ -233,7 +345,38 @@ export function gateDenyReason(
         `technical terms in English.`
       : '';
 
-  return `${head}\n${body}\n${skip}${ko}`;
+  // The quiz shape rides along on every quiz-modality deny — including an
+  // `async` one, where the check is run later by the tutor from the SAME skill
+  // and the shape is no less binding for happening in the map viewer.
+  const spec = modality === 'quiz' ? `\n${quizSpecLine(config.quiz)}` : '';
+
+  // WHERE the junior can act on this, as something clickable. A deny that only
+  // names "the map viewer" makes the junior go find a terminal, which is the
+  // exact friction the gate cannot afford to add at the moment it interrupts —
+  // so the last line is a URL plus the two chat commands that reach the same
+  // place. Only present when the caller knows where the viewer is.
+  const access = viewerUrl
+    ? `\nMap viewer: ${viewerUrl}  ·  or /scale-open ${component}  ·  or /scale-study ${component}`
+    : '';
+
+  return `${head}\n${body}${spec}\n${skip}${ko}${access}`;
+}
+
+/**
+ * The in-flow edit-gate deny instruction — {@link checkBrief} with
+ * `cause: 'gate'`.
+ *
+ * Kept as its own name because the gate is its only caller and a deny reads
+ * better at the call site than a cause object; the text is produced by the
+ * shared generator, so the two paths cannot drift apart (see `checkBrief`).
+ */
+export function gateDenyReason(
+  component: string,
+  config: ScaleConfig,
+  drift?: DriftNote,
+  viewerUrl?: string,
+): string {
+  return checkBrief(component, config, { kind: 'gate', ...(drift ? { drift } : {}) }, viewerUrl);
 }
 
 /**
@@ -293,7 +436,7 @@ export function gateEditDecision(input: GateEditInput): GateDecision {
     return {
       action: 'deny',
       component: pending,
-      reason: gateDenyReason(pending, config, input.drifted?.[pending]),
+      reason: gateDenyReason(pending, config, input.drifted?.[pending], input.viewerUrlFor?.(pending)),
     };
   }
 
@@ -315,7 +458,7 @@ export function gateEditDecision(input: GateEditInput): GateDecision {
   return {
     action: 'deny',
     component: target.id,
-    reason: gateDenyReason(target.id, config, input.drifted?.[target.id]),
+    reason: gateDenyReason(target.id, config, input.drifted?.[target.id], input.viewerUrlFor?.(target.id)),
     spendBudget: true,
   };
 }

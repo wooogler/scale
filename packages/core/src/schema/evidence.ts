@@ -150,10 +150,17 @@ export const InterventionEvidenceSchema = z.object({
    */
   outcome: z.enum(['requested', 'shown', 'deferred', 'completed', 'attempted', 'advisory']),
   /**
-   * What fired it: `edit` (the PreToolUse edit gate) or `commit` (the removed
-   * pre-commit gate — historical rows only). Absent on older logs.
+   * What fired it: `edit` (the PreToolUse edit gate), `review` (the
+   * post-session `/scale-review` queue opening an owed/touched check in chat),
+   * or `commit` (the removed pre-commit gate — historical rows only). Absent on
+   * older logs.
+   *
+   * `review` is the timing contrast's other arm: the SAME check, opened after
+   * the session instead of in front of the edit. Keeping it a distinct trigger
+   * (rather than reusing `edit`) is what lets the analysis separate the two
+   * without having to infer timing from wall-clock gaps.
    */
-  trigger: z.enum(['edit', 'commit']).optional(),
+  trigger: z.enum(['edit', 'review', 'commit']).optional(),
   /** Who ended it. Absent on `requested`/`shown` and on pre-`by` logs. */
   by: z.enum(['user', 'agent']).optional(),
 });
