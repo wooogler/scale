@@ -244,6 +244,7 @@ describe('withoutRelatedComponents — the section must never reach a prompt', (
     province: 'p',
     parentId: null,
     path: 'p/c/README.md',
+    dir: 'p/c',
     frontmatter: {
       id: 'c',
       title: 'C',
@@ -297,6 +298,7 @@ describe('drift block — grounding a recovery check in what changed', () => {
     province: 'p',
     parentId: null,
     path: 'p/c/README.md',
+    dir: 'p/c',
     frontmatter: {
       id: 'c',
       title: 'C',

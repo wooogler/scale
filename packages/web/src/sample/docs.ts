@@ -10,12 +10,21 @@ import type { DocFrontmatter } from '@scale/core/browser';
  * a TODO for a later phase).
  */
 export interface SampleDoc {
+  /**
+   * The doc's folder relative to `.scale/`, exactly as the live
+   * `GET /api/doc/:id` reports it. The fixtures carry it because the panel
+   * resolves a doc's relative links against it — without it, standalone
+   * `vite dev` would render "Related components" as dead text and the link
+   * behaviour would only ever be exercised against a real server.
+   */
+  dir: string;
   frontmatter: DocFrontmatter;
   body: string;
 }
 
 export const sampleDocs: Record<string, SampleDoc> = {
   'session-management': {
+    dir: 'auth/session-management',
     frontmatter: {
       id: 'session-management',
       title: 'Session Management',
@@ -53,6 +62,14 @@ with its identity, its privileges, and an expiry. The browser receives only
 the identifier. On each request the middleware looks the identifier up, and on
 a hit it refreshes the session and attaches the identity.
 
+## Related components
+
+- [Credential Store](../credential-store/) — what a session is created from.
+- [OAuth Providers](../oauth-providers/) — the other way one is created.
+- [Team Access](../../sharing/team-access/) — reads the privileges a session carries.
+- [The RFC](https://example.com/rfc) — an external reference, for contrast.
+- [A component we do not have](../ghost/) — renders as plain text.
+
 ## Design decisions
 
 Sessions are kept server-side and the cookie carries only an opaque identifier
@@ -60,6 +77,7 @@ because revocation has to be immediate: shared-document access control depends
 on being able to cut off a session at once.`,
   },
   'credential-store': {
+    dir: 'auth/credential-store',
     frontmatter: {
       id: 'credential-store',
       title: 'Credential Store',
@@ -90,6 +108,7 @@ At sign-in the presented password is hashed the same way and compared in
 constant time, so timing never leaks how much of a guess was correct.`,
   },
   'oauth-providers': {
+    dir: 'auth/oauth-providers',
     frontmatter: {
       id: 'oauth-providers',
       title: 'OAuth Providers',
@@ -118,6 +137,7 @@ The provider vouches for the person; the returned external identity is matched
 to a local account, creating one on first use and linking it thereafter.`,
   },
   'document-model': {
+    dir: 'documents/document-model',
     frontmatter: {
       id: 'document-model',
       title: 'Document Model',
@@ -148,6 +168,7 @@ once all parties have signed. Each transition is appended to an audit trail
 that is never rewritten.`,
   },
   'signing-pipeline': {
+    dir: 'documents/signing-pipeline',
     frontmatter: {
       id: 'signing-pipeline',
       title: 'Signing Pipeline',
@@ -177,6 +198,7 @@ Recipients are notified in order. Each places a signature bound to a specific
 field, and only when the last recipient signs does the document complete.`,
   },
   'templates': {
+    dir: 'documents/templates',
     frontmatter: {
       id: 'templates',
       title: 'Templates',
@@ -205,6 +227,7 @@ A template names roles rather than people. When instantiated, concrete
 recipients are bound to those roles and a fresh document is produced.`,
   },
   'document-sharing': {
+    dir: 'sharing/document-sharing',
     frontmatter: {
       id: 'document-sharing',
       title: 'Document Sharing',
@@ -233,6 +256,7 @@ A share link carries an opaque token that maps to a scoped grant. Every request
 re-checks the grant server-side, so revoking a link takes effect immediately.`,
   },
   'team-access': {
+    dir: 'sharing/team-access',
     frontmatter: {
       id: 'team-access',
       title: 'Team Access',
@@ -261,6 +285,7 @@ Each member holds a role, and roles map to what they may do. A document owned
 by a team inherits the team's permissions.`,
   },
   'webhooks': {
+    dir: 'sharing/webhooks',
     frontmatter: {
       id: 'webhooks',
       title: 'Webhooks',
@@ -289,3 +314,16 @@ When a domain event fires, it is queued and delivered to each subscribed URL.
 Failed deliveries are retried with backoff so a temporary outage is tolerated.`,
   },
 };
+
+/**
+ * The bundled stand-in for `GET /api/docs`, derived from the fixtures above so
+ * the two can never disagree. Province comes from the folder, which is how the
+ * real loader derives it too.
+ */
+export const sampleDocIndex: { id: string; title: string; province: string; dir: string }[] =
+  Object.values(sampleDocs).map((d) => ({
+    id: d.frontmatter.id,
+    title: d.frontmatter.title,
+    province: d.dir.split('/')[0] ?? '',
+    dir: d.dir,
+  }));

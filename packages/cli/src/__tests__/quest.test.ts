@@ -16,6 +16,7 @@ function doc(id: string, title: string): LoadedDoc {
   return {
     id,
     path: `/tmp/.scale/prov/${id}`,
+    dir: `prov/${id}`,
     province: 'prov',
     parentId: null,
     body: '',

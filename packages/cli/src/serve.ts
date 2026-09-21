@@ -25,6 +25,13 @@ import {
   LanguageSchema,
   migrateLegacyConfig,
   resolveConfig,
+  deepMerge,
+  isLead,
+  policyLeads,
+  PolicyFileSchema,
+  POLICY_SECTIONS,
+  QuizConfigSchema,
+  type LoadedScale,
   type ResolvedConfig,
   UserCoverageSchema,
   emptyComponentCoverage,
@@ -35,6 +42,7 @@ import {
   type DimName,
   type LlmProvider,
   type LoadedDoc,
+  type DocIndexEntry,
   docGrounding,
   neighbourIndex,
   componentSourcesIndex,
@@ -57,10 +65,11 @@ import {
   appendEvidence,
 } from './state.js';
 import { recordConfigDelta } from './telemetry.js';
-import { recomputeCoverageFromDisk } from './coverage.js';
+import { recomputeCoverageFromDisk, currentIdentityEmails } from './coverage.js';
 import { driftContext } from './drift-context.js';
 import {
   completeQuizQuest,
+  deterministicQuizItems,
   generateVoluntaryQuest,
   questForClient,
   gradeQuizPicks,
@@ -68,6 +77,22 @@ import {
 import { chatText, MissingKeyError } from './llm.js';
 import { translateDoc } from './translate.js';
 import { keyStatus, resolveKey, setKey } from './keys.js';
+import {
+  readServeState,
+  removeServeState,
+  writeServeState,
+  viewerOrigin,
+  type HealthInfo,
+} from './serve-state.js';
+
+/**
+ * Plugin release this binary was bundled from — see the same declaration in
+ * index.ts. Reported by `/api/health` so `serve ensure` can tell a viewer from
+ * an older bundle apart from this one.
+ */
+declare const __SCALE_VERSION__: string | undefined;
+const SERVE_VERSION =
+  typeof __SCALE_VERSION__ === 'string' ? __SCALE_VERSION__ : '0.0.0-dev';
 
 /** ≤3-exchange socratic dialogue cap (PLAN §6, web quest runner). */
 const SOCRATIC_MAX_EXCHANGES = 3;
@@ -307,7 +332,8 @@ function serveStatic(res: http.ServerResponse, urlPath: string): void {
       '<h1>SCALE map</h1><p>The web app has not been built yet. Run:</p>' +
       '<pre>npm run build -w @scale/web</pre>' +
       '<p>then restart <code>scale serve</code>. The JSON API is already live at ' +
-      '<code>/api/map</code>, <code>/api/coverage</code>, <code>/api/doc/:id</code>, ' +
+      '<code>/api/map</code>, <code>/api/coverage</code>, <code>/api/docs</code>, ' +
+      '<code>/api/doc/:id</code>, ' +
       '<code>POST /api/doc/:id/translation</code> (🧠 LLM), ' +
       '<code>/api/quests</code>.</p></body>';
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -367,11 +393,24 @@ async function handle(
   res: http.ServerResponse,
   cwd: string,
   token: string | null,
+  health: HealthInfo,
 ): Promise<void> {
   const dir = stateDir(cwd);
   const url = req.url ?? '/';
   const pathname = url.split('?')[0] ?? '/';
   const isApi = pathname === '/api' || pathname.startsWith('/api/');
+
+  // Liveness, answered before the token and origin gates and before any file
+  // read. It is how `scale serve ensure` tells "our viewer for THIS repo" from
+  // "someone else on 4318", so it has to answer a bare `fetch` from a CLI that
+  // has no token and no origin — and it must keep answering when the rest of
+  // the server would 401. Nothing here is a secret: a repo-id, a pid, the
+  // bundle version, and a start time, all of which the caller already has
+  // standing to know because it can reach the port at all.
+  if (pathname === '/api/health') {
+    sendJson(res, 200, health);
+    return;
+  }
 
   // Token first. The static SPA bundle is public code and is served to anyone
   // who can reach the port; the API — which reads coverage, writes config, and
@@ -430,6 +469,14 @@ async function handle(
     }
     if (pathname === '/api/settings' || pathname === '/api/settings/') {
       await handleSettingsPatch(req, res, cwd, dir);
+      return;
+    }
+    if (pathname === '/api/policy/unset') {
+      await handlePolicyUnset(req, res, cwd, dir);
+      return;
+    }
+    if (pathname === '/api/policy' || pathname === '/api/policy/') {
+      await handlePolicyPatch(req, res, cwd, dir);
       return;
     }
     if (pathname === '/api/keys' || pathname === '/api/keys/') {
@@ -526,6 +573,10 @@ async function handle(
   // edits become personal overrides.
   if (pathname === '/api/settings' || pathname === '/api/settings/') {
     const eff = loadEffectiveConfig(cwd, dir);
+    // `identity`/`isLead` ride along so the modal can render the Team tab's
+    // read-only-vs-editable state on the load it already does, instead of a
+    // second round-trip before it can draw anything.
+    const identity = identityOf(cwd, dir);
     sendJson(res, 200, {
       config: eff.config,
       policy: {
@@ -537,7 +588,39 @@ async function handle(
       keys: keyStatus(),
       repoId: resolveRepoId(cwd),
       stateDir: dir,
+      identity,
+      isLead: isLead(readPolicyRaw(cwd).raw, identity),
     });
+    return;
+  }
+
+  if (pathname === '/api/policy' || pathname === '/api/policy/') {
+    sendJson(res, 200, policyPayload(cwd, dir));
+    return;
+  }
+
+  if (pathname === '/api/preview/quiz' || pathname === '/api/preview/quiz/') {
+    handleQuizPreview(res, new URL(url, 'http://x').searchParams, cwd, dir);
+    return;
+  }
+
+  // The doc INDEX — every component doc's id, title, province and folder.
+  //
+  // Small enough to load once and keep (one line per component), and the only
+  // thing that lets the viewer act as a doc reader: a "Related components" link
+  // is a relative FOLDER path, so turning one into a route needs folder → id,
+  // and the Docs browser needs titles for components the reader has not
+  // selected yet. /api/map deliberately carries neither — it is a layout, and
+  // was never going to grow a title field for this.
+  if (pathname === '/api/docs' || pathname === '/api/docs/') {
+    const index: DocIndexEntry[] = loadScaleDir(cwd).docs.map((d) => ({
+      id: d.id,
+      title: d.frontmatter.title,
+      province: d.province,
+      dir: d.dir,
+    }));
+    index.sort((a, b) => a.province.localeCompare(b.province) || a.title.localeCompare(b.title));
+    sendJson(res, 200, index);
     return;
   }
 
@@ -550,7 +633,9 @@ async function handle(
       sendJson(res, 404, { error: 'unknown component', id });
       return;
     }
-    sendJson(res, 200, { frontmatter: doc.frontmatter, body: doc.body });
+    // `dir` rides along so the panel can resolve this doc's own relative links
+    // from a single request, without first finding itself in /api/docs.
+    sendJson(res, 200, { frontmatter: doc.frontmatter, body: doc.body, dir: doc.dir });
     return;
   }
 
@@ -765,7 +850,16 @@ async function handleSettingsPatch(
   const next: Record<string, unknown> = { ...currentRaw };
   if (typeof patch.user === 'string' && patch.user.trim()) next.user = patch.user.trim();
   if (typeof patch.language === 'string') next.language = patch.language;
-  for (const section of ['gate', 'unlock', 'exempt', 'drift', 'budgets', 'thresholds', 'models'] as const) {
+  for (const section of [
+    'gate',
+    'quiz',
+    'unlock',
+    'exempt',
+    'drift',
+    'budgets',
+    'thresholds',
+    'models',
+  ] as const) {
     if (patch[section] !== undefined) {
       next[section] = mergeSection(next[section], patch[section]);
     }
@@ -842,6 +936,324 @@ async function handleSettingsUnset(
     keys: keyStatus(),
     sources: settingsSources(cwd, dir),
   });
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/preview/quiz  (settings modal — Checks tab)
+//
+// A REAL check built from this repo's own docs, so the junior can see what
+// `quiz.items` / `quiz.focus` actually produce before they live with it.
+//
+// It runs the DETERMINISTIC generator (quest.ts), never the model: a preview
+// that spends API credit every time a slider moves is a preview nobody leaves
+// on, and it would need a key the settings screen exists partly to configure.
+// The trade is honest and stated in the UI — the real check is model-written
+// and diff-grounded; this shows the shape, the dimension mix and the grounding
+// material, which is what the settings decide.
+//
+// Read-only by construction: no write, no LLM, no evidence row.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pick the component to preview: the richest doc, by `concepts + rationale`
+ * entries, since a thin doc shows the padding path rather than what a normal
+ * check looks like. Ties break on id so the preview is stable across reloads.
+ */
+function richestDoc(loaded: LoadedScale): LoadedDoc | null {
+  let best: LoadedDoc | null = null;
+  let bestScore = -1;
+  for (const doc of loaded.docs) {
+    const score = doc.frontmatter.concepts.length + doc.frontmatter.rationale.length;
+    if (score > bestScore || (score === bestScore && best && doc.id < best.id)) {
+      best = doc;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function handleQuizPreview(
+  res: http.ServerResponse,
+  params: URLSearchParams,
+  cwd: string,
+  dir: string,
+): void {
+  // The shape comes from the QUERY, not from disk: the point is to preview a
+  // setting the user has not committed to yet. It is validated by the same
+  // schema the config uses, so an out-of-range value fails here exactly as it
+  // would on save.
+  const requested: Record<string, unknown> = {};
+  const items = params.get('items');
+  if (items !== null) requested.items = Number(items);
+  const focus = params.get('focus');
+  if (focus !== null) requested.focus = focus;
+  const grounding = params.get('grounding');
+  if (grounding !== null) requested.grounding = grounding;
+
+  const quiz = QuizConfigSchema.safeParse(requested);
+  if (!quiz.success) {
+    const issue = quiz.error.issues[0];
+    sendJson(res, 400, {
+      error: 'invalid quiz shape',
+      detail: issue ? `${issue.path.join('.') || '(root)'}: ${issue.message}` : 'invalid',
+    });
+    return;
+  }
+
+  const loaded = loadScaleDir(cwd);
+  if (loaded.docs.length === 0) {
+    sendJson(res, 404, { error: 'no coverage memory', hint: 'run /scale-map in this repo' });
+    return;
+  }
+  const wanted = params.get('component');
+  const doc = wanted ? docById(loaded, wanted) : richestDoc(loaded);
+  if (!doc) {
+    sendJson(res, 404, { error: 'unknown component', id: wanted });
+    return;
+  }
+
+  const config = readConfigOrDefault(cwd, dir);
+  const map = readMapJson(cwd);
+  const neighbours = map ? neighbourIndex(map).get(doc.id) : undefined;
+  const generated = deterministicQuizItems(doc, loaded, config.language, neighbours, quiz.data);
+
+  sendJson(res, 200, {
+    componentId: doc.id,
+    title: doc.frontmatter.title,
+    // `correctIndex` and `answer` are deliberately stripped. This is the same
+    // rule the quest runner follows (questForClient): the answer key never
+    // reaches the browser, and a preview is not a reason to make an exception —
+    // these are real items the junior may be asked later.
+    items: generated.map((i) => ({ stem: i.prompt, options: i.options ?? [], dim: i.dim })),
+    /** Every component the picker may offer, cheapest possible payload. */
+    components: loaded.docs
+      .map((d) => ({ id: d.id, title: d.frontmatter.title }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1)),
+    /**
+     * The deterministic generator builds from the doc's frontmatter and has no
+     * access to a session diff, so `grounding` changes nothing here. Said out
+     * loud rather than silently showing identical items for three settings.
+     */
+    groundingPreviewable: false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// GET/POST /api/policy  (settings modal — Team tab)
+//
+// The TEAM file, `.scale/policy.json`, as opposed to every other settings
+// endpoint above, which writes the caller's personal `~/.scale/<repo-id>/
+// config.json`. Two things follow from that and shape all three handlers:
+//
+//  1. It is committed source. Writing it dirties the working tree and changes
+//     nothing for anyone else until someone commits and pushes, so the response
+//     reports `dirty` and the UI says so rather than implying the team is
+//     already living under the new defaults.
+//  2. The `leads` check is a UX gate, not a security boundary. The 403 stops a
+//     member from retuning the team's defaults from a settings screen while
+//     thinking they are changing their own; it stops nothing at all from an
+//     editor. Real control over this path is git review / CODEOWNERS.
+// ---------------------------------------------------------------------------
+
+/** Absolute path of the committed team policy for the repo at `cwd`. */
+function policyPath(cwd: string): string {
+  return path.join(cwd, '.scale', 'policy.json');
+}
+
+/**
+ * Is the policy file modified or untracked in git? Best-effort: anything that
+ * is not a clean answer (no git, no repo, git missing) reads FALSE, because an
+ * "uncommitted" badge that is wrong is worse than a missing one.
+ */
+function policyIsDirty(cwd: string): boolean {
+  try {
+    const out = execFileSync('git', ['status', '--porcelain', '--', '.scale/policy.json'], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    });
+    return out.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Who the caller is in git's eyes, via the one resolver drift attribution uses. */
+function identityOf(cwd: string, dir: string): string[] {
+  try {
+    return currentIdentityEmails(cwd, loadEffectiveConfig(cwd, dir).config);
+  } catch {
+    return [];
+  }
+}
+
+/** The GET /api/policy body, reused as the reply to both writes. */
+function policyPayload(cwd: string, dir: string, extra: Record<string, unknown> = {}): object {
+  const policy = readPolicyRaw(cwd);
+  const identity = identityOf(cwd, dir);
+  const eff = loadEffectiveConfig(cwd, dir);
+  return {
+    path: policyPath(cwd),
+    exists: policy.present,
+    parseError: policy.parseError,
+    // The RAW file, not a parsed one: a parse would materialize every schema
+    // default into the sections and the UI could no longer tell "the team set
+    // soft" from "nobody set anything".
+    raw: policy.parseError ? null : (policy.raw ?? null),
+    leads: policyLeads(policy.raw),
+    identity,
+    isLead: isLead(policy.raw, identity),
+    dirty: policyIsDirty(cwd),
+    error: eff.policyError,
+    ...extra,
+  };
+}
+
+/**
+ * Validate a candidate policy object two ways before it may be written: as a
+ * policy FILE (leads + section values), and by checking that the caller's own
+ * effective config still resolves under it. The second is what catches a
+ * default that is individually legal but cannot combine with a real user file.
+ *
+ * Returns null when good, or the message to send as a 400.
+ */
+function validatePolicy(next: unknown, dir: string): string | null {
+  const parsed = PolicyFileSchema.safeParse(next);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return issue ? `${issue.path.join('.') || '(root)'}: ${issue.message}` : 'invalid policy';
+  }
+  try {
+    const user = readUserConfigRaw(dir) ?? { user: process.env.USER ?? 'user' };
+    const resolved = resolveConfig(migrateLegacyConfig(user), next);
+    // resolveConfig FAILS OPEN — an unusable policy is reported, not thrown, so
+    // the write path has to read the flag or it would happily persist a file
+    // that silently does nothing.
+    if (resolved.policyError) return resolved.policyError;
+  } catch (err) {
+    return (err as Error).message;
+  }
+  return null;
+}
+
+/** Write the policy file, creating `.scale/` if the repo has none yet. */
+function writePolicyFile(cwd: string, next: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(policyPath(cwd)), { recursive: true });
+  fs.writeFileSync(policyPath(cwd), JSON.stringify(next, null, 2) + '\n');
+}
+
+/** The current policy as a mutable sparse object; `{}` when absent or broken. */
+function currentPolicyObject(cwd: string): Record<string, unknown> {
+  const policy = readPolicyRaw(cwd);
+  if (policy.parseError || !policy.raw || typeof policy.raw !== 'object' || Array.isArray(policy.raw)) {
+    return {};
+  }
+  return structuredClone(policy.raw) as Record<string, unknown>;
+}
+
+/**
+ * POST /api/policy — deep-merge a sparse patch into the team policy.
+ *
+ * `leads` REPLACES rather than merges (it is a list, and a member being removed
+ * has to be expressible); the config sections deep-merge leaf by leaf, exactly
+ * as a personal settings patch does, so setting `gate.enforcement` leaves the
+ * team's `gate.assessment` alone.
+ */
+async function handlePolicyPatch(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  cwd: string,
+  dir: string,
+): Promise<void> {
+  const before = readPolicyRaw(cwd);
+  const identity = identityOf(cwd, dir);
+  if (!isLead(before.raw, identity)) {
+    sendJson(res, 403, { error: 'not a lead', leads: policyLeads(before.raw), identity });
+    return;
+  }
+
+  const patch = parseBody(await readBody(req));
+  const next = currentPolicyObject(cwd);
+
+  if (patch.leads !== undefined) {
+    if (!Array.isArray(patch.leads)) {
+      sendJson(res, 400, { error: 'leads must be an array of email addresses' });
+      return;
+    }
+    const cleaned: string[] = [];
+    for (const raw of patch.leads) {
+      const email = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+      if (email && !cleaned.includes(email)) cleaned.push(email);
+    }
+    next.leads = cleaned;
+  }
+
+  for (const section of POLICY_SECTIONS) {
+    if (patch[section] === undefined) continue;
+    next[section] = deepMerge(next[section], patch[section]) as Record<string, unknown>;
+  }
+
+  const invalid = validatePolicy(next, dir);
+  if (invalid) {
+    sendJson(res, 400, { error: 'invalid policy', detail: invalid });
+    return;
+  }
+  writePolicyFile(cwd, next);
+
+  // Emptying `leads` hands the policy back to everyone (the bootstrap rule).
+  // It is allowed — a departing lead must not be able to strand the team — but
+  // it is never what someone means by accident, so the UI is told to say so.
+  const warning =
+    Array.isArray(next.leads) && next.leads.length === 0 && policyLeads(before.raw).length > 0
+      ? 'no leads are listed any more — anyone can now edit the team policy'
+      : undefined;
+  sendJson(res, 200, policyPayload(cwd, dir, warning ? { warning } : {}));
+}
+
+/**
+ * POST /api/policy/unset `{ path }` — drop ONE dotted leaf from the team policy
+ * so the SCHEMA default shows through again for everyone. Same `unsetPath` the
+ * personal settings use, so an emptied section prunes itself and the file stays
+ * sparse.
+ */
+async function handlePolicyUnset(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  cwd: string,
+  dir: string,
+): Promise<void> {
+  const before = readPolicyRaw(cwd);
+  const identity = identityOf(cwd, dir);
+  if (!isLead(before.raw, identity)) {
+    sendJson(res, 403, { error: 'not a lead', leads: policyLeads(before.raw), identity });
+    return;
+  }
+
+  const body = parseBody(await readBody(req));
+  const dotted = typeof body.path === 'string' ? body.path.trim() : '';
+  if (!/^[a-zA-Z][\w.]*$/.test(dotted)) {
+    sendJson(res, 400, { error: 'path must be a dotted policy key' });
+    return;
+  }
+  const section = dotted.split('.')[0]!;
+  if (section !== 'leads' && !(POLICY_SECTIONS as readonly string[]).includes(section)) {
+    sendJson(res, 400, { error: `"${section}" is not a policy section` });
+    return;
+  }
+
+  const next = unsetPath(currentPolicyObject(cwd), dotted);
+  const invalid = validatePolicy(next, dir);
+  if (invalid) {
+    sendJson(res, 400, { error: 'invalid policy', detail: invalid });
+    return;
+  }
+  writePolicyFile(cwd, next);
+
+  const warning =
+    policyLeads(next).length === 0 && policyLeads(before.raw).length > 0
+      ? 'no leads are listed any more — anyone can now edit the team policy'
+      : undefined;
+  sendJson(res, 200, policyPayload(cwd, dir, warning ? { warning } : {}));
 }
 
 /**
@@ -1217,11 +1629,39 @@ export interface ServeOptions {
    * authentication — see `startServer`.
    */
   token?: string;
+  /**
+   * Exit cleanly after this many minutes with no HTTP request. Undefined (the
+   * foreground default) means "stay up until told otherwise" — someone who
+   * typed `scale serve` and is watching its log must not have it vanish.
+   * `serve ensure` passes a value, because the server it starts is one nobody
+   * is watching and nobody would think to stop.
+   */
+  idleMinutes?: number;
+  /**
+   * Maintain `~/.scale/<repo-id>/serve.json` and exit cleanly on SIGTERM/SIGINT.
+   * Opt-in: an embedded server (tests, a future library use) should not claim
+   * to be THE viewer for the repo, nor install process-wide signal handlers.
+   */
+  trackState?: boolean;
 }
 
 export function startServer(opts: ServeOptions): http.Server {
   const cwd = opts.cwd ?? process.cwd();
   const repoId = resolveRepoId(cwd);
+  const startedAt = new Date().toISOString();
+  const health: HealthInfo = {
+    ok: true,
+    repoId,
+    pid: process.pid,
+    version: SERVE_VERSION,
+    startedAt,
+  };
+  /**
+   * Last sign of life. The idle timer reads it, and every request — static
+   * asset, API call, even a health probe — counts: a browser polling the map is
+   * a user, and so is a hook that just checked we are alive.
+   */
+  let lastRequestAt = Date.now();
   // Loopback by default: this server writes config, records evidence, and (via
   // POST /api/keys) accepts API keys, all with no authentication. It is a
   // single-user local tool, so it must not be reachable off-box. `--host` is an
@@ -1233,7 +1673,8 @@ export function startServer(opts: ServeOptions): http.Server {
   const token: string | null =
     opts.token?.trim() || (loopback ? null : crypto.randomBytes(18).toString('base64url'));
   const server = http.createServer((req, res) => {
-    handle(req, res, cwd, token).catch((err) => {
+    lastRequestAt = Date.now();
+    handle(req, res, cwd, token, health).catch((err) => {
       sendJson(res, 500, { error: (err as Error).message });
     });
   });
@@ -1256,8 +1697,74 @@ export function startServer(opts: ServeOptions): http.Server {
     }
     process.exitCode = 1;
   });
+  // --- clean exit: the state file must never outlive the process ---
+  /**
+   * Drop serve.json only while it still points at US. Two servers for one repo
+   * is unusual but possible (someone starts a second one on another port), and
+   * a dying older process must not take the live one's entry with it.
+   */
+  const clearOwnState = (): void => {
+    if (!opts.trackState) return;
+    const current = readServeState(cwd);
+    if (!current || current.pid === process.pid) removeServeState(cwd);
+  };
+  let closing = false;
+  const shutdown = (why: 'signal' | 'idle'): void => {
+    if (closing) return;
+    closing = true;
+    clearOwnState();
+    if (why === 'idle') {
+      console.log(
+        `scale: no requests for ${opts.idleMinutes} minute(s) — the map viewer is exiting.`,
+      );
+    }
+    server.close(() => process.exit(0));
+    // A browser holding a keep-alive socket would otherwise keep `close()`
+    // waiting forever, which is exactly the case the idle timer exists for.
+    const hard = setTimeout(() => process.exit(0), 1500);
+    hard.unref();
+  };
+
+  if (opts.trackState) {
+    process.once('SIGTERM', () => shutdown('signal'));
+    process.once('SIGINT', () => shutdown('signal'));
+    // A crash or an uncaught exit still clears the file, so `serve ensure`
+    // never adopts a ghost.
+    process.once('exit', clearOwnState);
+  }
+
+  const idleMinutes = opts.idleMinutes;
+  if (idleMinutes !== undefined && idleMinutes > 0) {
+    const idleMs = idleMinutes * 60_000;
+    const tick = setInterval(
+      () => {
+        if (Date.now() - lastRequestAt >= idleMs) shutdown('idle');
+      },
+      Math.max(1_000, Math.min(idleMs, 30_000)),
+    );
+    // Unref'd: the timer measures the life of the server, it must not extend it.
+    tick.unref();
+  }
+
   server.listen(opts.port, host, () => {
     const scalePresent = fs.existsSync(path.join(cwd, '.scale'));
+    if (opts.trackState) {
+      // The bound port, not the requested one — port 0 is a real request.
+      const bound = server.address();
+      const actualPort = bound && typeof bound === 'object' ? bound.port : opts.port;
+      writeServeState(
+        {
+          pid: process.pid,
+          port: actualPort,
+          host,
+          url: viewerOrigin(host, actualPort) + (token ? `/?token=${token}` : ''),
+          startedAt,
+          idleMinutes: idleMinutes && idleMinutes > 0 ? idleMinutes : null,
+          version: SERVE_VERSION,
+        },
+        cwd,
+      );
+    }
     const q = token ? `/?token=${token}` : '';
     if (loopback) {
       console.log(`scale: serving http://localhost:${opts.port}${q}`);

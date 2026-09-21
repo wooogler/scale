@@ -30,6 +30,16 @@ export interface LoadedDoc {
   id: string;
   /** Absolute path to the doc's folder. */
   path: string;
+  /**
+   * The same folder RELATIVE to `.scale/`, `/`-separated (`viewer/app-shell`).
+   *
+   * Carried alongside `path` rather than derived by every caller, because the
+   * relative form is what the docs are written in: a "Related components" link
+   * is `[Panel](../component-panel/)`, and resolving it needs the folder the
+   * link is written FROM in the same coordinate system. Absolute paths also
+   * differ per checkout, so only this form can be sent to a browser.
+   */
+  dir: string;
   /** Province slug (first path segment under `.scale/`). */
   province: string;
   /** Frontmatter id of the doc in the immediate parent folder, or null. */
@@ -191,6 +201,7 @@ export function loadScaleDir(repoRoot: string): LoadedScale {
           rootDoc = {
             id: fm.id,
             path: r.absDir,
+            dir: '',
             province: '',
             parentId: null,
             frontmatter: fm,
@@ -223,15 +234,17 @@ export function loadScaleDir(repoRoot: string): LoadedScale {
       continue;
     }
     const province = r.segments[0] ?? '';
+    const rel = relOfDir(r.absDir);
     docs.push({
       id: fm.id,
       path: r.absDir,
+      dir: rel,
       province,
       parentId: null, // resolved in second pass
       frontmatter: fm,
       body: r.body,
     });
-    folderPathToId.set(relOfDir(r.absDir), fm.id);
+    folderPathToId.set(rel, fm.id);
   }
 
   const nodeIds = new Set(docs.map((d) => d.id));

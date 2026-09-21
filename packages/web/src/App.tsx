@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useMemo, useState, type JSX } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { unificationProgress } from '@scale/core/browser';
 import { MapView } from './MapView.js';
 import { Panel } from './Panel.js';
+import { DocsIndex } from './DocsIndex.js';
 import { QuestRunner } from './QuestRunner.js';
 import { Settings } from './Settings.js';
 import { SKIN } from './skin.js';
 import { LangContext, STRINGS } from './i18n.js';
+import { applyRoute, currentRoute, type Route, type SettingsTab } from './route.js';
 import {
   loadMap,
   loadCoverage,
   loadQuests,
   loadLocks,
   loadSettings,
+  loadDocIndex,
   bootstrapToken,
   apiAuthFailed,
   sampleDataActive,
@@ -19,6 +22,7 @@ import {
 } from './data.js';
 import type {
   CoverageState,
+  DocIndexEntry,
   Language,
   LlmProvider,
   MapJson,
@@ -40,8 +44,25 @@ export function App(): JSX.Element {
   // as a banner because a fabricated map is otherwise indistinguishable from the
   // user's own repo — which made every screenshot of it untrustworthy.
   const [usingSample, setUsingSample] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The route the tab was opened on (`#/c/<id>` or `#/settings[/<tab>]`, see
+  // route.ts). Read once, synchronously, so a deep link is honoured on the
+  // first paint instead of flashing the bare map first.
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    const r = currentRoute();
+    return r?.kind === 'component' ? r.id : null;
+  });
+  // The section of that component's doc the link asked for (`#/c/<id>/<section>`),
+  // or null. Kept beside `selectedId` rather than inside the Panel because it is
+  // part of the ROUTE: it has to survive into the address bar and back out of it.
+  const [selectedSection, setSelectedSection] = useState<string | null>(() => {
+    const r = currentRoute();
+    return r?.kind === 'component' ? (r.section ?? null) : null;
+  });
   const [map, setMap] = useState<MapJson | null>(null);
+  // Every component doc's id/title/province/folder — one request, loaded once.
+  // Resolves the relative links inside a doc and feeds the Docs browser.
+  const [docIndex, setDocIndex] = useState<DocIndexEntry[]>([]);
+  const [docsOpen, setDocsOpen] = useState(false);
   const [coverage, setCoverage] = useState<UserCoverage | null>(null);
   const [quests, setQuests] = useState<Quest[]>([]);
   // The lock picture over coverage — see /api/locks. Empty until the server answers.
@@ -53,8 +74,17 @@ export function App(): JSX.Element {
   const [highlightState, setHighlightState] = useState<CoverageState | null>(null);
   // Settings modal; the value is the provider whose key field should take focus
   // (set when a Socratic dialogue was blocked by a missing key), else null.
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(() => currentRoute()?.kind === 'settings');
   const [settingsFocus, setSettingsFocus] = useState<LlmProvider | null>(null);
+  // Two different things. `settingsTab` mirrors the tab the modal is ACTUALLY
+  // on (it reports up, because the tab it opens on can come from localStorage)
+  // and exists only to write the hash. `settingsRouteTab` is the tab a deep
+  // link asked for, and is null whenever Settings was opened by the gear.
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [settingsRouteTab, setSettingsRouteTab] = useState<SettingsTab | null>(() => {
+    const r = currentRoute();
+    return r?.kind === 'settings' ? r.tab : null;
+  });
   // Interaction language (config.json `language`, per-user). Loaded with the
   // other settings on mount; a pick in the Settings modal applies here
   // optimistically so the whole tree re-renders before the server round-trip.
@@ -72,7 +102,97 @@ export function App(): JSX.Element {
 
   const openSettings = useCallback((provider?: LlmProvider) => {
     setSettingsFocus(provider ?? null);
+    setSettingsRouteTab(null); // opened from the app, not from a link
     setSettingsOpen(true);
+  }, []);
+
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    setSettingsRouteTab(null);
+  }, []);
+
+  /**
+   * Whether the NEXT route write is a history push rather than a replace.
+   *
+   * A ref, not state: it is an attribute of the gesture that just happened, not
+   * of the app's state, and it must be readable by the route effect in the same
+   * commit that the selection changes. See route.ts for why the two gestures
+   * differ — clicking a castle is browsing a map, following a link from one doc
+   * to another is navigating between documents, and only the second is
+   * something the back button should undo.
+   */
+  const pushNextRoute = useRef(false);
+
+  /** Select a component the way the MAP does: no section, no history entry. */
+  const selectFromMap = useCallback((id: string | null) => {
+    setSelectedSection(null);
+    setSelectedId(id);
+  }, []);
+
+  /**
+   * Select a component the way a DOCUMENT does — an in-doc link or the Docs
+   * browser. Pushes history, closes the browser, and starts at the top of the
+   * new doc (a link points at a component, not at a section of one).
+   */
+  const selectFromDoc = useCallback((id: string) => {
+    pushNextRoute.current = true;
+    setSelectedSection(null);
+    setSelectedId(id);
+    setDocsOpen(false);
+    setSettingsOpen(false);
+  }, []);
+
+  /**
+   * Address bar ← app. Settings is the foreground surface, so it wins the hash
+   * while it is open and closing it falls back to the selected component.
+   * replaceState (see route.ts) means this never fires `hashchange`, so it
+   * cannot loop with the listener below.
+   */
+  useEffect(() => {
+    const route: Route | null = settingsOpen
+      ? { kind: 'settings', tab: settingsTab }
+      : selectedId
+        ? { kind: 'component', id: selectedId, ...(selectedSection ? { section: selectedSection } : {}) }
+        : null;
+    applyRoute(route, { push: pushNextRoute.current });
+    pushNextRoute.current = false;
+  }, [settingsOpen, settingsTab, selectedId, selectedSection]);
+
+  /**
+   * Address bar → app: a hash pasted into an already-open tab, and the back and
+   * forward buttons.
+   *
+   * BOTH events, deliberately. `hashchange` covers a pasted or edited hash;
+   * `popstate` covers traversal of the entries pushState created for in-doc
+   * link follows, which browsers do not consistently report as a hash change.
+   * The handler reads the address bar rather than any event payload, so being
+   * called twice for one navigation is free.
+   */
+  useEffect(() => {
+    const onRouteChange = (): void => {
+      const r = currentRoute();
+      if (r?.kind === 'settings') {
+        setSettingsFocus(null);
+        setSettingsRouteTab(r.tab);
+        setSettingsOpen(true);
+      } else if (r?.kind === 'component') {
+        setSettingsOpen(false);
+        setSettingsRouteTab(null);
+        setSelectedId(r.id); // validated against the map below
+        setSelectedSection(r.section ?? null);
+      } else {
+        setSettingsOpen(false);
+        setSettingsRouteTab(null);
+        setSelectedId(null);
+        setSelectedSection(null);
+      }
+    };
+    window.addEventListener('hashchange', onRouteChange);
+    window.addEventListener('popstate', onRouteChange);
+    return () => {
+      window.removeEventListener('hashchange', onRouteChange);
+      window.removeEventListener('popstate', onRouteChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -94,6 +214,12 @@ export function App(): JSX.Element {
         // so instead of rendering nothing (or, in dev, someone else's repo).
         if (!cancelled) setAuthExpired(apiAuthFailed());
       });
+    // The doc index is its own request because it never throws and never blocks
+    // the map: without it, in-doc links render as plain text and the Docs
+    // browser is empty — degraded, not broken.
+    void loadDocIndex().then((d) => {
+      if (!cancelled) setDocIndex(d);
+    });
     // Language rides along with the other settings. loadSettings has no sample
     // fallback (unlike map/coverage), so swallow the failure — offline vite dev
     // simply stays on the 'en' default.
@@ -106,6 +232,20 @@ export function App(): JSX.Element {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * A deep link can name a component this repo does not have — the map was
+   * re-mapped, or the link came from someone else's checkout. Drop it silently
+   * once the map is in: a stale bookmark should land on the plain map, not on
+   * an error. (Until then the Panel is held back; see the render below.)
+   */
+  useEffect(() => {
+    if (!map || !selectedId) return;
+    if (!map.nodes.some((n) => n.id === selectedId)) {
+      setSelectedId(null);
+      setSelectedSection(null);
+    }
+  }, [map, selectedId]);
 
   // Pending quests indexed by component (map badges + panel list read this).
   const pendingByComponent = useMemo(() => {
@@ -121,6 +261,7 @@ export function App(): JSX.Element {
 
   const startQuest = useCallback((quest: Quest) => {
     setSelectedId(quest.componentId);
+    setSelectedSection(null);
     // A quest created on demand by the Challenge button isn't in `quests` yet;
     // fold it in so the map badge and the panel's quest list see it too.
     setQuests((prev) => (prev.some((q) => q.id === quest.id) ? prev : [...prev, quest]));
@@ -227,15 +368,27 @@ export function App(): JSX.Element {
             )}
           </div>
 
-          <button
-            type="button"
-            className="settings-btn"
-            title={S.settingsButtonTitle}
-            aria-label={S.openSettings}
-            onClick={() => openSettings()}
-          >
-            ⚙
-          </button>
+          {/* The map is a picture, not a table of contents: the Docs button is
+              how a reader reaches a component doc they cannot point at. */}
+          <div className="header-actions">
+            <button
+              type="button"
+              className="docs-btn"
+              title={S.docsIndexTitle}
+              onClick={() => setDocsOpen(true)}
+            >
+              📖 {S.docsIndex}
+            </button>
+            <button
+              type="button"
+              className="settings-btn"
+              title={S.settingsButtonTitle}
+              aria-label={S.openSettings}
+              onClick={() => openSettings()}
+            >
+              ⚙
+            </button>
+          </div>
         </header>
 
         <main className="content">
@@ -246,7 +399,7 @@ export function App(): JSX.Element {
               map={map}
               coverage={coverage}
               selectedId={selectedId}
-              onSelect={setSelectedId}
+              onSelect={selectFromMap}
               pendingByComponent={pendingByComponent}
               owedUnlocks={owedUnlocks}
               justUpdatedId={justUpdatedId}
@@ -254,14 +407,20 @@ export function App(): JSX.Element {
               highlightState={highlightState}
             />
           )}
-          {selectedId && (
+          {/* `map &&`: a hash-borne id is only known to be real once the map is
+              in, and a Panel for a component that does not exist would fetch a
+              doc that 404s. */}
+          {selectedId && map && (
             <Panel
               componentId={selectedId}
+              section={selectedSection ?? undefined}
               coverage={selectedCoverage}
               quests={pendingByComponent.get(selectedId) ?? []}
+              docs={docIndex}
               owed={owedUnlocks.has(selectedId)}
               onStartQuest={startQuest}
-              onClose={() => setSelectedId(null)}
+              onNavigate={selectFromDoc}
+              onClose={() => selectFromMap(null)}
             />
           )}
           {activeQuest && (
@@ -277,11 +436,22 @@ export function App(): JSX.Element {
               }}
             />
           )}
+          {docsOpen && (
+            <DocsIndex
+              docs={docIndex}
+              map={map}
+              selectedId={selectedId}
+              onSelect={selectFromDoc}
+              onClose={() => setDocsOpen(false)}
+            />
+          )}
           {settingsOpen && (
             <Settings
               focusProvider={settingsFocus}
+              initialTab={settingsRouteTab}
+              onTabChange={setSettingsTab}
               onLanguageChange={setLang}
-              onClose={() => setSettingsOpen(false)}
+              onClose={closeSettings}
             />
           )}
         </main>

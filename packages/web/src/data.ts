@@ -2,6 +2,7 @@ import type {
   MapJson,
   UserCoverage,
   DocFrontmatter,
+  DocIndexEntry,
   Quest,
   ComponentCoverage,
   DimName,
@@ -34,6 +35,15 @@ import type {
 export interface DocResponse {
   frontmatter: DocFrontmatter;
   body: string;
+  /**
+   * The doc's folder relative to `.scale/` (`viewer/component-panel`).
+   *
+   * Sent with the doc rather than looked up in the index because it is what the
+   * doc's OWN relative links are written against: the panel needs it to turn
+   * `[Panel](../component-panel/)` into a route, and asking for it separately
+   * would make every doc render wait on a second request.
+   */
+  dir?: string;
 }
 
 /**
@@ -80,6 +90,9 @@ export function bootstrapToken(): void {
     if (fromUrl) {
       sessionStorage.setItem(TOKEN_KEY, fromUrl);
       url.searchParams.delete('token');
+      // `url` carries the fragment through untouched, which matters: the token
+      // URL may also be a deep link (`?token=…#/c/<id>`, see route.ts) and
+      // stripping the secret must not strip the destination with it.
       window.history.replaceState(null, '', url.toString());
     }
   } catch {
@@ -249,8 +262,37 @@ export async function loadDoc(id: string): Promise<DocResponse | null> {
   } catch (err) {
     return useSample(`doc ${id}`, err, async () => {
       const s = (await import('./sample/docs.js')).sampleDocs[id];
-      return s ? { frontmatter: s.frontmatter, body: s.body } : null;
+      return s ? { frontmatter: s.frontmatter, body: s.body, dir: s.dir } : null;
     });
+  }
+}
+
+/**
+ * GET /api/docs -> every component doc's `{ id, title, province, dir }`.
+ *
+ * One request for the whole repo, loaded once by the shell: it is a line per
+ * component, and both things that need it — resolving a doc's relative links
+ * to routes, and the Docs browser — need ALL of it, not the row for the doc
+ * currently open.
+ *
+ * No throw. An index that failed to load costs in-doc links (they render as
+ * plain text, which is what they did before this existed) and an empty Docs
+ * list — never a panel that will not draw. That is also why this is the one
+ * loader that does NOT go through {@link useSample}: `useSample` rethrows in a
+ * production build, and routing through it left the arrow holding the dynamic
+ * import reachable enough that Rollup shipped the whole fixture module as its
+ * own chunk — the exact thing SAMPLE_FALLBACK_ALLOWED exists to prevent. The
+ * early return below folds to `return []` at build time, and the import after
+ * it is removed with the dead code.
+ */
+export async function loadDocIndex(): Promise<DocIndexEntry[]> {
+  try {
+    return await getJson<DocIndexEntry[]>('/api/docs');
+  } catch (err) {
+    note('doc index', err);
+    if (!SAMPLE_FALLBACK_ALLOWED) return [];
+    sampleActive = true;
+    return (await import('./sample/docs.js')).sampleDocIndex;
   }
 }
 
@@ -338,6 +380,10 @@ export interface SettingsResponse {
   keys: KeyStatusMap;
   repoId: string;
   stateDir: string;
+  /** The reader's resolved git addresses (same set drift attribution uses). */
+  identity?: string[];
+  /** May this reader edit `.scale/policy.json` from the Team tab? */
+  isLead?: boolean;
 }
 
 /**
@@ -350,6 +396,8 @@ export interface SettingsPatch {
   user?: string;
   language?: 'en' | 'ko';
   gate?: Partial<ScaleConfig['gate']>;
+  /** Shape of the comprehension check itself — items, focus, grounding. */
+  quiz?: Partial<ScaleConfig['quiz']>;
   unlock?: Partial<ScaleConfig['unlock']>;
   exempt?: Partial<ScaleConfig['exempt']>;
   drift?: Partial<ScaleConfig['drift']>;
@@ -384,6 +432,115 @@ export async function saveSettings(patch: SettingsPatch): Promise<SaveResponse> 
  */
 export async function unsetSetting(path: string): Promise<SaveResponse> {
   return postJson<SaveResponse>('/api/settings/unset', { path });
+}
+
+// ---------------------------------------------------------------------------
+// Settings previews — read-only, offline, no API key
+//
+// The deny-message preview is NOT here: `gateDenyReason` is a pure string
+// builder exported through `@scale/core/browser`, so the modal renders it
+// client-side with the same function the gate ships, and a round-trip would
+// only add latency and a way for the two to drift.
+//
+// The quiz preview has to be a request: it reads the repo's `.scale/` docs off
+// disk. It still runs no model — `deterministicQuizItems`, the same offline
+// generator that backs a keyless check.
+// ---------------------------------------------------------------------------
+
+export interface QuizPreviewItem {
+  stem: string;
+  options: string[];
+  dim: DimName;
+}
+
+export interface QuizPreview {
+  componentId: string;
+  title: string;
+  /** No `correctIndex`/`answer`: the key never reaches the browser. */
+  items: QuizPreviewItem[];
+  /** Every component the picker may offer. */
+  components: { id: string; title: string }[];
+  /** False — the offline generator has no diff, so `grounding` cannot show. */
+  groundingPreviewable: boolean;
+}
+
+/** GET /api/preview/quiz — a real check built offline from this repo's docs. */
+export async function previewQuiz(q: {
+  items: number;
+  focus: string;
+  grounding: string;
+  component?: string;
+}): Promise<QuizPreview> {
+  const params = new URLSearchParams({
+    items: String(q.items),
+    focus: q.focus,
+    grounding: q.grounding,
+  });
+  if (q.component) params.set('component', q.component);
+  return getJson<QuizPreview>(`/api/preview/quiz?${params.toString()}`);
+}
+
+// ---------------------------------------------------------------------------
+// Team policy (.scale/policy.json) — the Team tab
+//
+// A different FILE from everything above: committed to the repo, shared by the
+// team, and edited only by whoever the policy itself lists under `leads`. That
+// list is a UX gate, not a security boundary — the server says so too, and the
+// tab repeats it to the reader.
+// ---------------------------------------------------------------------------
+
+/** GET /api/policy — the raw team policy plus who the reader is in it. */
+export interface PolicyResponse {
+  /** Absolute path of `.scale/policy.json`, shown so the file is findable. */
+  path: string;
+  exists: boolean;
+  parseError: boolean;
+  /**
+   * The RAW file: sparse, exactly as committed. Not a parsed policy — a parse
+   * would fill in every schema default and the UI could no longer distinguish
+   * "the team chose soft" from "nobody chose anything".
+   */
+  raw: PolicyRaw | null;
+  /** `raw.leads`, normalized to lowercase and deduped by the server. */
+  leads: string[];
+  /** The reader's resolved git addresses. */
+  identity: string[];
+  isLead: boolean;
+  /** `.scale/policy.json` is modified or untracked in git — not yet shared. */
+  dirty: boolean;
+  /** Why a present policy is being ignored, or null. */
+  error?: string | null;
+  /** Set when a write left the policy with no leads (bootstrap reopened). */
+  warning?: string;
+}
+
+/** The sparse policy object as it sits on disk. Every section is optional. */
+export interface PolicyRaw {
+  leads?: string[];
+  gate?: Partial<ScaleConfig['gate']>;
+  quiz?: Partial<ScaleConfig['quiz']>;
+  unlock?: Partial<ScaleConfig['unlock']>;
+  exempt?: Partial<ScaleConfig['exempt']>;
+  drift?: Partial<ScaleConfig['drift']>;
+  budgets?: Partial<ScaleConfig['budgets']>;
+  thresholds?: Partial<ScaleConfig['thresholds']>;
+}
+
+/** POST /api/policy body. `leads` REPLACES; sections deep-merge leaf by leaf. */
+export type PolicyPatch = PolicyRaw;
+
+export async function loadPolicy(): Promise<PolicyResponse> {
+  return getJson<PolicyResponse>('/api/policy');
+}
+
+/** POST /api/policy — 403s with `{error:'not a lead'}` for a non-lead. */
+export async function savePolicy(patch: PolicyPatch): Promise<PolicyResponse> {
+  return postJson<PolicyResponse>('/api/policy', patch);
+}
+
+/** POST /api/policy/unset — drop one dotted leaf so the schema default returns. */
+export async function unsetPolicy(path: string): Promise<PolicyResponse> {
+  return postJson<PolicyResponse>('/api/policy/unset', { path });
 }
 
 /**

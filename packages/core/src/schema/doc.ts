@@ -47,3 +47,27 @@ export const DocFrontmatterSchema = z.object({
   rationale: z.array(RationaleEntrySchema),
 });
 export type DocFrontmatter = z.infer<typeof DocFrontmatterSchema>;
+
+/**
+ * One row of the viewer's doc index (`GET /api/docs`).
+ *
+ * `dir` is the doc's folder RELATIVE to `.scale/`, slash-separated
+ * (`viewer/component-panel`). It exists because a doc's "Related components"
+ * links are written as relative folder paths (`[Panel](../component-panel/)`) —
+ * the form that works when the tree is read on disk or on GitHub — and the
+ * viewer has to turn one back into the STABLE frontmatter id that its routes,
+ * coverage and quests are all keyed by. Folder path is the only thing the two
+ * representations share, so the index has to carry it.
+ */
+export const DocIndexEntrySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  province: z.string(),
+  /** Folder path relative to `.scale/`, `/`-separated, no trailing slash. */
+  dir: z.string(),
+});
+export type DocIndexEntry = z.infer<typeof DocIndexEntrySchema>;
+
+/** The whole `GET /api/docs` body: every component doc this repo has. */
+export const DocIndexSchema = z.array(DocIndexEntrySchema);
+export type DocIndex = z.infer<typeof DocIndexSchema>;

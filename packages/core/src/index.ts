@@ -14,6 +14,9 @@ export * from './schema/policy.js';
 // Pure coverage model.
 export * from './coverage-model.js';
 
+// Stable English anchor slugs for doc sections (shared with the viewer).
+export * from './doc-slug.js';
+
 // File→component index.
 export * from './index-map.js';
 

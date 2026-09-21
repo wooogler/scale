@@ -19,6 +19,19 @@ export * from './schema/telemetry.js';
 // Pure coverage model.
 export * from './coverage-model.js';
 
+// Stable English anchor slugs for doc sections. On the browser surface because
+// the viewer renders the heading ids and the CLI writes the links to them —
+// one implementation, or `--section` and the DOM drift apart silently.
+export * from './doc-slug.js';
+
+// The edit-gate decision and its agent-facing text. Deliberately on the browser
+// surface: `gateDenyReason` / `quizSpecLine` are pure string builders over the
+// config, which lets the Settings modal PREVIEW the exact text the agent will
+// receive — rendered by the same function that ships it, so the preview cannot
+// drift from the product. gate.ts imports only sibling types and `meanDims`; a
+// test pins that the whole browser surface stays free of node builtins.
+export * from './gate.js';
+
 // File→component index (pure).
 export * from './index-map.js';
 

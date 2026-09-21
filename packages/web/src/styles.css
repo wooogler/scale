@@ -606,6 +606,57 @@ body {
 .md p {
   margin: 0 0 10px;
 }
+.md-list {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+.md-list li {
+  margin: 0 0 4px;
+}
+
+/* In-doc links. The two kinds are told apart on purpose: one keeps you in the
+   viewer, the other leaves it, and a reader deciding whether to click should
+   not have to hover to find out which. */
+.md-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(124, 92, 255, 0.4);
+}
+.md-link:hover {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+.md-link-ext::after {
+  content: '↗';
+  font-size: 0.85em;
+  margin-left: 2px;
+  opacity: 0.7;
+}
+
+/* Where a `#/c/<id>/<section>` link just landed you. ~1.5s, then gone — long
+   enough to catch the eye on a doc that scrolled under you, short enough not
+   to become part of how the section looks. SECTION_FLASH_MS in Panel.tsx
+   removes the class; keep the two in step. */
+.section-target {
+  animation: section-flash 1.5s ease-out;
+  border-radius: 6px;
+}
+@keyframes section-flash {
+  0% {
+    background: rgba(124, 92, 255, 0.28);
+    box-shadow: 0 0 0 6px rgba(124, 92, 255, 0.28);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .section-target {
+    animation: none;
+    background: rgba(124, 92, 255, 0.18);
+  }
+}
 .md code {
   font-family: ui-monospace, monospace;
   background: #1d2230;
@@ -1219,6 +1270,241 @@ body {
 .set-body {
   gap: 20px;
 }
+
+/* Tab strip between the modal head and the body. Sits ON the head's bottom
+   border (which it replaces) so the selected tab's underline reads as one
+   continuous edge rather than a second rule under the first. Same palette as
+   .set-choice: muted until selected, accent when it is. */
+.set-tabs {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 0 18px;
+  background: #12151d;
+  border-bottom: 1px solid var(--border);
+}
+.set-tab {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  /* The transparent underline is always in the box so selecting a tab shifts
+     nothing — only its color changes. */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 11px 12px 9px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.set-tab:hover {
+  color: var(--text);
+}
+.set-tab-on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.set-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -3px;
+  border-radius: 4px;
+}
+/* The panel carries the layout the sections used to get from .set-body, so a
+   tab's sections space themselves exactly as they did when all of them were
+   siblings in one scroll. */
+.set-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ---- per-setting tips and live previews ---- */
+
+/* The "?" toggle. Deliberately quiet until hovered or open: it sits beside a
+   label on every row, and three of these shouting at once would read as an
+   error state. */
+.set-tip-btn {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.set-tip-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.set-tip-btn-on {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+/* The expanded body. `flex-basis` puts it on its own line inside a wrapping
+   `.set-row`; `grid-column` does the same inside the `.set-nums` grid. */
+.set-tip {
+  flex-basis: 100%;
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.65;
+  /* Tip bodies carry real newlines between their 1-3 sentences. */
+  white-space: pre-line;
+  color: var(--text-dim);
+  background: var(--panel-bg-2);
+  border-left: 2px solid var(--accent);
+  border-radius: 0 7px 7px 0;
+}
+.set-nums > .set-tip {
+  grid-column: 1 / -1;
+}
+
+/* The verbatim agent-facing deny text. `pre-wrap` so a narrow pane wraps it
+   instead of scrolling sideways. */
+.set-preview {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+  background: #0c0f16;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+/* One derived sentence (frequency, team outcome) — a conclusion, not a note. */
+.set-preview-line {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--panel-bg-2);
+  border-left: 2px solid var(--validated);
+  border-radius: 0 7px 7px 0;
+}
+.set-preview-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.set-preview-pick .set-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The sample check. */
+.set-sample {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: opacity 0.12s ease;
+}
+/* The previous sample stays readable while the next one loads. */
+.set-sample-stale {
+  opacity: 0.45;
+}
+.set-sample-item {
+  padding: 10px 12px;
+  background: #0c0f16;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.set-sample-stem {
+  display: block;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.set-sample-opts {
+  list-style: upper-alpha;
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.set-dim {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  vertical-align: 1px;
+}
+.set-dim-structure {
+  color: var(--explored);
+}
+.set-dim-concepts {
+  color: var(--validated);
+}
+.set-dim-rationale {
+  color: var(--stale);
+}
+
+/* Team tab — the leads list and the policy-file state badges. */
+.set-leads {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.set-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 6px 5px 10px;
+}
+.set-lead code {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+}
+/* "uncommitted" is the state that means the team is NOT yet living under these
+   defaults, so it gets the same attention color a fallen territory does. */
+.set-policy-dirty {
+  color: var(--stale);
+}
+.set-policy-missing {
+  color: var(--text-dim);
+}
+.set-policy-clean {
+  color: var(--validated);
+}
 .set-section {
   display: flex;
   flex-direction: column;
@@ -1508,4 +1794,106 @@ body {
 }
 .auth-banner code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ---------- header actions + docs browser ---------- */
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-actions .settings-btn {
+  margin-left: 0;
+}
+.docs-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 8px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.docs-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(124, 92, 255, 0.12);
+}
+
+.docs-modal {
+  width: 560px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.docs-badge {
+  background: var(--explored);
+}
+.docs-filter {
+  width: 100%;
+  margin: 10px 0;
+  padding: 7px 10px;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+.docs-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.docs-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+.docs-group {
+  margin: 0 0 14px;
+}
+.docs-province {
+  margin: 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.docs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.docs-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 5px 8px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.docs-entry:hover {
+  background: var(--panel-bg-2);
+  border-color: var(--border);
+}
+.docs-entry-active {
+  border-color: var(--accent);
+  background: rgba(124, 92, 255, 0.12);
+}
+.docs-entry-title {
+  font-weight: 600;
+}
+.docs-entry-id {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
 }
