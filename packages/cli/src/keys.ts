@@ -84,6 +84,20 @@ export function setKey(provider: LlmProvider, key: string): void {
   writeKeyFile(next);
 }
 
+/**
+ * Store a key that arrived on STDIN.
+ *
+ * Split out from {@link setKey} so the CLI path has somewhere to be tested
+ * without a subprocess, and so the trimming rule ("a trailing newline from
+ * `echo` is not part of the key") lives in one place. The caller must never
+ * accept key material as an argv value: argv is visible in `ps`, in shell
+ * history, and in any hook transcript. Returns nothing — there is deliberately
+ * no echo of what was stored.
+ */
+export function setKeyFromInput(provider: LlmProvider, raw: string): void {
+  setKey(provider, raw.trim());
+}
+
 export interface ProviderKeyStatus {
   /** True when a key is available from either source. */
   configured: boolean;

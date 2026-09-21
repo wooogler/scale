@@ -153,6 +153,36 @@ describe('schema fixtures', () => {
     expect(parsed.budgets.maxPerSession).toBe(7);
   });
 
+  it('quiz shape defaults to the behaviour that predates the setting', () => {
+    const parsed = ScaleConfigSchema.parse({ user: 'x' });
+    expect(parsed.quiz.items).toBe(2);
+    expect(parsed.quiz.focus).toBe('auto');
+    expect(parsed.quiz.grounding).toBe('balanced');
+  });
+
+  it('bounds quiz.items to 1..5 and rejects a non-integer', () => {
+    // 0 items is not "off" — `gate.enabled` is off. A zero-item check would
+    // deny the edit and then ask nothing, which is a lock with no way out.
+    expect(() => ScaleConfigSchema.parse({ user: 'x', quiz: { items: 0 } })).toThrow();
+    expect(() => ScaleConfigSchema.parse({ user: 'x', quiz: { items: 6 } })).toThrow();
+    expect(() => ScaleConfigSchema.parse({ user: 'x', quiz: { items: 2.5 } })).toThrow();
+    expect(ScaleConfigSchema.parse({ user: 'x', quiz: { items: 1 } }).quiz.items).toBe(1);
+    expect(ScaleConfigSchema.parse({ user: 'x', quiz: { items: 5 } }).quiz.items).toBe(5);
+  });
+
+  it('quiz focus/grounding are closed enums', () => {
+    expect(() => ScaleConfigSchema.parse({ user: 'x', quiz: { focus: 'vibes' } })).toThrow();
+    expect(() => ScaleConfigSchema.parse({ user: 'x', quiz: { grounding: 'diff ' } })).toThrow();
+    const parsed = ScaleConfigSchema.parse({
+      user: 'x',
+      quiz: { focus: 'rationale', grounding: 'diff' },
+    });
+    expect(parsed.quiz.focus).toBe('rationale');
+    expect(parsed.quiz.grounding).toBe('diff');
+    // A partial quiz block still defaults the rest.
+    expect(parsed.quiz.items).toBe(2);
+  });
+
   it('rejects a negative interruption budget', () => {
     expect(() =>
       ScaleConfigSchema.parse({ user: 'x', budgets: { maxPerSession: -1 } }),

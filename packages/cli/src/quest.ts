@@ -24,6 +24,8 @@ import { execFileSync } from 'node:child_process';
 
 import {
   type ScaleConfig,
+  type QuizConfig,
+  QuizConfigSchema,
   type Language,
   type LoadedScale,
   type LoadedDoc,
@@ -67,6 +69,15 @@ import { chatText, MissingKeyError } from './llm.js';
 
 /** Default number of quests generated per post-session run (PLAN §6.2). */
 export const DEFAULT_TOP_K = 3;
+
+/**
+ * Schema defaults for the quiz shape (2 items, auto focus, balanced grounding).
+ *
+ * Used where a caller has no effective config to hand — the exported
+ * deterministic generator, whose older two-argument callers must keep
+ * producing exactly what they produced before this setting existed.
+ */
+export const DEFAULT_QUIZ: QuizConfig = QuizConfigSchema.parse({});
 
 export interface QuestGenResult {
   /** 'llm' when the configured model produced every quest; 'fallback' when all
@@ -282,18 +293,58 @@ const KO_ITEM_INSTRUCTION =
   'and established technical terms in English. The JSON structure and its keys stay ' +
   'exactly as specified.';
 
+/**
+ * The `focus` / `grounding` half of the user's quiz settings, rendered as
+ * prompt sentences (schema/config.ts QuizConfigSchema).
+ *
+ * `focus` ≠ auto REPLACES the "vary the dimension" rule rather than joining it:
+ * asking for five rationale items and for variety in the same breath is a
+ * contradiction the model would resolve by ignoring one of them, silently.
+ *
+ * `grounding: doc` is enforced at the CALL SITE too — the drift excerpt is not
+ * passed to `groundingText` at all — so "ignore the change" is a fact about
+ * what the model was shown, not a request it might disregard.
+ */
+function quizThemeInstructions(quiz: QuizConfig, hasDrift: boolean): string {
+  const focus =
+    quiz.focus === 'auto'
+      ? 'Vary the dimension across the items — do not write two of the same kind.'
+      : `EVERY item must probe the "${quiz.focus}" dimension and set "dim" to ` +
+        `"${quiz.focus}". Do not vary the dimension.`;
+
+  const grounding =
+    quiz.grounding === 'diff'
+      ? hasDrift
+        ? ' Every stem must be ABOUT THE CHANGE described in the recent-changes ' +
+          'section above — what it did, what it broke, or what it now makes ' +
+          'possible — not about the component in the abstract.'
+        : ' Ground every stem in the component doc; no change context is ' +
+          'available for this component, so do not invent one.'
+      : quiz.grounding === 'doc'
+        ? ' Ground every stem in the component\'s documented design alone.'
+        : '';
+
+  return `${focus}${grounding}`;
+}
+
 async function llmQuizItems(
   provider: LlmProvider,
   model: string,
   doc: LoadedDoc,
+  quiz: QuizConfig,
   language: Language = 'en',
   neighbours?: ComponentNeighbours,
   drift?: DriftContext | null,
 ): Promise<QuestItem[]> {
+  // `doc` grounding means the model never SEES the change, not that it is
+  // asked to look away from it.
+  const shownDrift = quiz.grounding === 'doc' ? null : drift;
   const text = await chatText({
     provider,
     model,
-    maxTokens: 1024,
+    // Five items do not fit in the two-item budget, and a truncated reply is a
+    // parse failure that silently downgrades the whole check to the fallback.
+    maxTokens: Math.max(1024, 512 * quiz.items),
     system:
       'You write multiple-choice comprehension items for a code-onboarding tutor. ' +
       'Ground every item strictly in the provided component doc — its concepts, ' +
@@ -318,13 +369,14 @@ async function llmQuizItems(
       {
         role: 'user',
         content:
-          `${groundingText(doc, neighbours, drift)}\n\n` +
-          'Write exactly 2 multiple-choice items. Return JSON of the form:\n' +
+          `${groundingText(doc, neighbours, shownDrift)}\n\n` +
+          `Write exactly ${quiz.items} multiple-choice item${quiz.items === 1 ? '' : 's'}. ` +
+          'Return JSON of the form:\n' +
           '{"items":[{"stem":"...","options":["A","B","C","D"],"correctIndex":0,"dim":"concepts"}]}\n' +
           'Rules: exactly 4 options each; correctIndex is 0-3; the correct option must ' +
           'be faithful to the doc; distractors plausible but wrong, and similar in ' +
-          'length and register so none is a giveaway. Vary the dimension across the ' +
-          'two items — do not write two of the same kind.',
+          'length and register so none is a giveaway. ' +
+          quizThemeInstructions(quiz, shownDrift != null),
       },
     ],
   });
@@ -357,11 +409,15 @@ async function llmQuizItems(
       options,
       answer: options[correctIndex]!,
       correctIndex,
-      dim: asDim(raw.dim, 'concepts'),
+      // An explicit focus is the user's instruction to the GRADER as much as to
+      // the writer — `scale record --dim` is driven off this tag, so letting a
+      // model's stray `dim` through would silently credit a dimension the
+      // junior did not ask to be drilled on.
+      dim: quiz.focus === 'auto' ? asDim(raw.dim, 'concepts') : quiz.focus,
     });
   }
   if (items.length === 0) throw new Error('llm quiz produced no valid items');
-  return items.slice(0, 2);
+  return items.slice(0, quiz.items);
 }
 
 async function llmSocraticItems(
@@ -524,15 +580,25 @@ function mcqItem(
   };
 }
 
+/**
+ * Doc-grounded MCQ items with no model call — the path that has to work with
+ * no API key, and the one a transient API failure falls back to.
+ *
+ * `quiz.items` decides HOW MANY; `quiz.focus` decides which dimension is drawn
+ * from first. `quiz.grounding` is deliberately NOT honored here: these items
+ * are templates over the doc's frontmatter and have no access to the session
+ * diff, so there is no diff-themed item to write. A `grounding: diff` user who
+ * lands on this path gets doc-grounded items rather than a shorter check.
+ */
 export function deterministicQuizItems(
   doc: LoadedDoc,
   loaded: LoadedScale,
   language: Language = 'en',
   neighbours?: ComponentNeighbours,
+  quiz: QuizConfig = DEFAULT_QUIZ,
 ): QuestItem[] {
   const fm = doc.frontmatter;
   const ko = language === 'ko';
-  const items: QuestItem[] = [];
 
   // Distractor pools drawn from OTHER components (grounded but wrong-for-this),
   // with the component's MEASURED 1-hop neighbours first.
@@ -561,57 +627,72 @@ export function deterministicQuizItems(
     }
   }
 
-  // Item 1 (concepts): "which concept belongs to this component".
+  // Per-dimension pools, as FACTORIES rather than items: nothing is built
+  // until the draw order asks for it, and a `rep`>0 (the doc ran out of
+  // entries before `quiz.items` was satisfied) re-seeds the distractor pick so
+  // a recycled entry at least comes with a different option set.
+  //
   // Stems are per-language templates; embedded titles/concept names come from
   // the (always-English) docs and stay English in the Korean stems.
-  if (fm.concepts.length > 0) {
-    const c = fm.concepts[0]!;
-    items.push(
-      mcqItem(
-        ko
-          ? `다음 중 "${fm.title}"의 핵심 개념은 무엇인가요?`
-          : `Which of these is a core concept of "${fm.title}"?`,
-        c.name,
-        pickDistractors(nearConcepts, farConcepts, c.name, 3, `${fm.id}:concepts`),
-        'concepts',
-        language,
-      ),
-    );
-  }
+  const seed = (base: string, rep: number): string => (rep === 0 ? base : `${base}:${rep}`);
 
-  // Item 2 (rationale): "why was this decision made".
-  const r = fm.rationale.find((e) => e.why);
-  if (r && r.why) {
-    items.push(
-      mcqItem(
-        ko
-          ? `"${fm.title}"에서 "${r.decision}"라는 결정은 왜 내려졌을까요?`
-          : `In "${fm.title}", why was this decision made — "${r.decision}"?`,
-        r.why,
-        pickDistractors(nearWhys, farWhys, r.why, 3, `${fm.id}:rationale`),
-        'rationale',
-        language,
-      ),
-    );
-  }
-
-  // Guarantee 2 items even for a thin doc: fall back to a structure item over
-  // the component's sources / a second concept.
-  while (items.length < 2) {
-    if (fm.concepts.length > items.length) {
-      const c = fm.concepts[items.length]!;
-      items.push(
+  // "Which concept belongs to this component". The FIRST concept keeps its own
+  // stem and its bare `:concepts` seed — it is the item every existing quiz
+  // opened with, and re-seeding it would churn every distractor set on disk.
+  const conceptItems = fm.concepts.map(
+    (c, i) =>
+      (rep: number): QuestItem =>
         mcqItem(
-          ko ? `"${fm.title}"가 다루는 개념은 무엇인가요?` : `Which idea does "${fm.title}" cover?`,
+          i === 0
+            ? ko
+              ? `다음 중 "${fm.title}"의 핵심 개념은 무엇인가요?`
+              : `Which of these is a core concept of "${fm.title}"?`
+            : ko
+              ? `"${fm.title}"가 다루는 개념은 무엇인가요?`
+              : `Which idea does "${fm.title}" cover?`,
           c.name,
-          pickDistractors(nearConcepts, farConcepts, c.name, 3, `${fm.id}:concepts2`),
+          pickDistractors(
+            nearConcepts,
+            farConcepts,
+            c.name,
+            3,
+            seed(`${fm.id}:concepts${i === 0 ? '' : i + 1}`, rep),
+          ),
           'concepts',
           language,
         ),
-      );
-    } else {
-      const src = fm.sources[0] ?? fm.title;
-      items.push(
+  );
+
+  // "Why was this decision made" — only entries that actually state a why.
+  const rationaleItems = fm.rationale
+    .filter((e) => Boolean(e.why))
+    .map(
+      (r, i) =>
+        (rep: number): QuestItem =>
+          mcqItem(
+            ko
+              ? `"${fm.title}"에서 "${r.decision}"라는 결정은 왜 내려졌을까요?`
+              : `In "${fm.title}", why was this decision made — "${r.decision}"?`,
+            r.why!,
+            pickDistractors(
+              nearWhys,
+              farWhys,
+              r.why!,
+              3,
+              seed(`${fm.id}:rationale${i === 0 ? '' : i + 1}`, rep),
+            ),
+            'rationale',
+            language,
+          ),
+    );
+
+  // Structure: one per source file, or the title when the doc anchors none.
+  // These carry FIXED distractors, so recycling one would produce a byte-identical
+  // item — they are drawn at most once each (see `drawn` below).
+  const structureSources = fm.sources.length > 0 ? fm.sources : [fm.title];
+  const structureItems = structureSources.map(
+    (src) =>
+      (): QuestItem =>
         mcqItem(
           ko
             ? `"${fm.title}"가 담당하는 코드베이스 영역은 어디인가요?`
@@ -623,11 +704,77 @@ export function deterministicQuizItems(
           'structure',
           language,
         ),
-      );
+  );
+
+  const pools: Record<DimName, ((rep: number) => QuestItem)[]> = {
+    concepts: conceptItems,
+    rationale: rationaleItems,
+    structure: structureItems,
+  };
+  const drawn: Record<DimName, number> = { concepts: 0, rationale: 0, structure: 0 };
+
+  /**
+   * Next unused item of `dim`, or null when that pool is exhausted. `recycle`
+   * wraps back to the pool's start with a fresh seed — used only once every
+   * pool has been drained and `quiz.items` is still unmet, and never for
+   * structure (fixed distractors ⇒ an exact duplicate).
+   */
+  const next = (dim: DimName, recycle = false): QuestItem | null => {
+    const pool = pools[dim];
+    if (pool.length === 0) return null;
+    const n = drawn[dim];
+    if (n >= pool.length) {
+      if (!recycle || dim === 'structure') return null;
+      drawn[dim] = n + 1;
+      return pool[n % pool.length]!(Math.floor(n / pool.length));
+    }
+    drawn[dim] = n + 1;
+    return pool[n]!(0);
+  };
+
+  const wanted = Math.max(1, quiz.items);
+  const items: QuestItem[] = [];
+
+  // 1. An explicit focus drains ITS dimension first — that is the whole point
+  //    of naming one. It still falls through below rather than returning a
+  //    short check, because a doc with no rationale entries would otherwise
+  //    answer `focus: rationale` with nothing at all.
+  if (quiz.focus !== 'auto') {
+    for (let i = items.length; i < wanted; i++) {
+      const it = next(quiz.focus);
+      if (!it) break;
+      items.push(it);
     }
   }
 
-  return items.slice(0, 2);
+  // 2. `auto` order, unchanged from before this setting existed: the leading
+  //    concept, then the leading rationale — the pair every 2-item check has
+  //    always been.
+  if (items.length < wanted) {
+    const c = next('concepts');
+    if (c) items.push(c);
+  }
+  if (items.length < wanted) {
+    const r = next('rationale');
+    if (r) items.push(r);
+  }
+
+  // 3. Fill from whatever the doc still has, then — only for a doc too thin to
+  //    reach `quiz.items` honestly — recycle concept/rationale entries with a
+  //    fresh distractor draw. A doc with neither concepts nor rationale ends
+  //    here with its structure items alone, which is at least one.
+  while (items.length < wanted) {
+    const it =
+      next('concepts') ??
+      next('rationale') ??
+      next('structure') ??
+      next('concepts', true) ??
+      next('rationale', true);
+    if (!it) break;
+    items.push(it);
+  }
+
+  return items;
 }
 
 export function deterministicSocraticItems(
@@ -735,6 +882,7 @@ export async function generateQuests(
                 provider,
                 model,
                 doc,
+                config.quiz,
                 config.language,
                 neighbours.get(componentId),
                 drift,
@@ -763,7 +911,13 @@ export async function generateQuests(
       usedFallback = true;
       items =
         modality === 'quiz'
-          ? deterministicQuizItems(doc, loaded, config.language, neighbours.get(componentId))
+          ? deterministicQuizItems(
+              doc,
+              loaded,
+              config.language,
+              neighbours.get(componentId),
+              config.quiz,
+            )
           : deterministicSocraticItems(doc, config.language);
     }
     quests.push(makeQuest(componentId, modality, items));
@@ -839,7 +993,7 @@ export async function generateVoluntaryQuest(
   try {
     items =
       modality === 'quiz'
-        ? await llmQuizItems(provider, model, doc, config.language, neighbours, drift)
+        ? await llmQuizItems(provider, model, doc, config.quiz, config.language, neighbours, drift)
         : await llmSocraticItems(provider, model, doc, config.language, neighbours, drift);
     via = 'llm';
   } catch {
@@ -848,7 +1002,7 @@ export async function generateVoluntaryQuest(
   if (!items || items.length === 0) {
     items =
       modality === 'quiz'
-        ? deterministicQuizItems(doc, loaded, config.language, neighbours)
+        ? deterministicQuizItems(doc, loaded, config.language, neighbours, config.quiz)
         : deterministicSocraticItems(doc, config.language);
     via = 'fallback';
   }

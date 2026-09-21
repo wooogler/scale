@@ -16,7 +16,7 @@
 
 import { spawnSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, delimiter } from "node:path";
 import { existsSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url)); // .../plugin/hooks/lib
@@ -78,6 +78,39 @@ function devFallback() {
 }
 
 /**
+ * Is `cmd` runnable? A pure-fs PATH walk, because the only alternative —
+ * spawning something to find out — costs a process on the hook path, and the
+ * async answer arrives after the caller has already exited.
+ * @param {string} cmd
+ */
+function existsOnPath(cmd) {
+  if (cmd.includes("/") || cmd.includes("\\")) return existsSync(cmd);
+  const dirs = (process.env.PATH || "").split(delimiter).filter(Boolean);
+  const exts =
+    process.platform === "win32"
+      ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+      : [""];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      if (existsSync(resolve(dir, cmd + ext))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Like {@link resolveCli}, but for a spawn whose failure we will never hear
+ * about: the caller exits immediately, so an ENOENT arriving on the next tick
+ * has nobody left to retry it. Decide here, synchronously, instead.
+ * @returns {{cmd: string, prefix: string[]}|null} null = no CLI anywhere → no-op
+ */
+function resolveCliSync() {
+  if (process.env.SCALE_BIN) return { cmd: process.env.SCALE_BIN, prefix: [] };
+  if (existsOnPath("scale")) return { cmd: "scale", prefix: [] };
+  return devFallback();
+}
+
+/**
  * Run the CLI synchronously, piping `input` to its stdin. Fails open.
  * @param {string[]} args    CLI args, e.g. ["context"] or ["log","prompt"].
  * @param {string}   input   Raw JSON to pass on stdin (the hook payload).
@@ -113,15 +146,42 @@ export function runScaleSync(args, input, opts = {}) {
 }
 
 /**
+ * Run the CLI and parse its stdout as JSON. Returns null for every failure
+ * there is — missing CLI, non-zero exit, timeout, or output that is not JSON —
+ * because every caller's next move is the same: carry on without it.
+ * @param {string[]} args
+ * @param {string}   input
+ * @param {object}   [opts]
+ * @returns {any|null}
+ */
+export function runScaleJson(args, input, opts = {}) {
+  const r = runScaleSync(args, input, opts);
+  if (!r.ok) return null;
+  try {
+    const parsed = JSON.parse(r.stdout.trim());
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fire-and-forget: run the CLI fully detached so the parent hook can exit
  * immediately (used for SessionEnd → quest generate, which may call an LLM and
  * must never block session exit — PLAN §6.2). Fails open silently.
+ *
+ * `opts.marker === false` drops the `--detached` argv marker. Only the commands
+ * that declare that flag (quest generate) may receive it; `serve ensure` would
+ * reject it as an unknown option, and a detached process that dies on argv
+ * parsing is indistinguishable from one that worked.
  * @param {string[]} args
  * @param {string}   input
+ * @param {{marker?: boolean}} [opts]
  */
-export function runScaleDetached(args, input) {
+export function runScaleDetached(args, input, opts = {}) {
+  const tail = opts.marker === false ? [] : ["--detached"];
   const launch = ({ cmd, prefix }) => {
-    const child = spawn(cmd, [...prefix, ...args, "--detached"], {
+    const child = spawn(cmd, [...prefix, ...args, ...tail], {
       detached: true,
       stdio: ["pipe", "ignore", "ignore"],
       env: { ...process.env },
@@ -139,25 +199,100 @@ export function runScaleDetached(args, input) {
   };
 
   try {
-    const child = launch(resolveCli());
-    child.on("error", (e) => {
-      if (e && e.code === "ENOENT") {
-        const fb = devFallback();
-        if (fb) launch(fb);
-      }
-    });
+    // Resolved SYNCHRONOUSLY: the caller typically exits on the next line, so
+    // an ENOENT handler would be killed before it could ever fall back. No CLI
+    // found anywhere = no-op, which is what failing open means here.
+    const cli = resolveCliSync();
+    if (cli) launch(cli);
   } catch {
     /* fail open */
   }
 }
 
-/** Emit a SessionStart/UserPromptSubmit additionalContext envelope, if any. */
-export function emitAdditionalContext(hookEventName, text) {
-  const trimmed = (text || "").trim();
-  if (!trimmed) return;
-  process.stdout.write(
-    JSON.stringify({
-      hookSpecificOutput: { hookEventName, additionalContext: trimmed },
-    })
-  );
+/**
+ * Drop a URL's query string, keeping any hash. String surgery, not `new URL()`:
+ * the parser normalises (`http://h:p` → `http://h:p/`) and these URLs are
+ * printed verbatim.
+ * @param {string} url
+ */
+function stripQuery(url) {
+  const q = url.indexOf("?");
+  if (q === -1) return url;
+  const hash = url.indexOf("#");
+  return hash > q ? url.slice(0, q) + url.slice(hash) : url.slice(0, q);
+}
+
+/**
+ * Build the SessionStart hook envelope — PURE, so the wording and the rules
+ * about when the user is spoken to are unit-testable without spawning a CLI.
+ *
+ * Two audiences, one JSON object (Claude Code hook output format):
+ *   - `hookSpecificOutput.additionalContext` → goes to CLAUDE.
+ *   - `systemMessage`                        → is shown to the USER.
+ * They are top-level peers; both may appear in the same object.
+ *
+ * The systemMessage is the one line a junior sees per session, so it is shown
+ * only on `startup` and `resume`. A `clear` or `compact` is a mid-session
+ * mechanic the user did not ask SCALE about, and repeating the banner there is
+ * how a useful line becomes noise nobody reads.
+ *
+ * @param {object}  args
+ * @param {string}  [args.source]  startup | resume | clear | compact
+ * @param {string}  [args.context] stdout of `scale context`
+ * @param {{url?: string}|null} [args.viewer] result of `scale serve ensure --json`
+ * @param {object|null} [args.setup] result of `scale setup status --json`
+ * @returns {object|null} the envelope to print, or null when there is nothing to say
+ */
+export function buildSessionStartEnvelope({ source, context, viewer, setup } = {}) {
+  const raw =
+    (viewer && typeof viewer.url === "string" && viewer.url) ||
+    (setup && setup.viewer && typeof setup.viewer.url === "string" && setup.viewer.url) ||
+    null;
+  // Both audiences here are transcript: `additionalContext` goes to Claude,
+  // `systemMessage` is shown and logged. `serve ensure --json` answers with the
+  // URL a BROWSER needs, which off loopback carries `?token=` — an API bearer
+  // credential for a server that writes config and holds API keys. Strip the
+  // query (mirrors `publicViewerUrl` in packages/cli/src/serve-state.ts; done
+  // here too so this holds whichever source supplied the URL).
+  const url = raw ? stripQuery(raw) : null;
+
+  // `scale context` already prints the viewer line when it can resolve one;
+  // appending a second copy would make Claude quote the URL twice.
+  let text = (context || "").trim();
+  if (url && !text.includes(url)) {
+    const line =
+      `Map viewer: ${url} — /scale-open opens it, /scale-open <id> opens one component.`;
+    text = text ? `${text}\n${line}` : line;
+  }
+
+  // Everything below is best-effort: an absent `setup` means we could not ask,
+  // which must read as "assume it is fine" rather than as "not set up".
+  const initialized = setup ? setup.initialized !== false : true;
+  const hasMemory = setup && setup.memory ? setup.memory.present !== false : true;
+
+  let systemMessage = null;
+  if (url && (source === "startup" || source === "resume")) {
+    if (!initialized) {
+      systemMessage =
+        `SCALE is not set up for this repo yet — run /scale-settings to set it ` +
+        `up in chat (map viewer: ${url}).`;
+    } else if (!hasMemory) {
+      systemMessage =
+        `SCALE · map viewer: ${url} · no coverage memory yet — /scale-map ` +
+        `builds it (senior) · settings in chat: /scale-settings`;
+    } else {
+      systemMessage = `SCALE · map viewer: ${url} · settings in chat: /scale-settings`;
+    }
+  }
+
+  if (!text && !systemMessage) return null;
+  const envelope = {};
+  if (text) {
+    envelope.hookSpecificOutput = {
+      hookEventName: "SessionStart",
+      additionalContext: text,
+    };
+  }
+  if (systemMessage) envelope.systemMessage = systemMessage;
+  return envelope;
 }

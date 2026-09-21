@@ -20,15 +20,24 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { LlmProvider } from '@scale/core';
 import { resolveKey } from './keys.js';
+import { agentViewerBase } from './serve-state.js';
 
 /** Thrown when the selected provider has no key in env or the key file. */
 export class MissingKeyError extends Error {
   readonly provider: LlmProvider;
   constructor(provider: LlmProvider) {
+    // Name both routes that do not require a terminal: the chat command, and
+    // the viewer's own URL (read from the state file — sync, no probe, and a
+    // default when nothing is recorded). "Add it in the map viewer" without a
+    // URL is an instruction the reader cannot follow.
+    // `agentViewerBase`: the recorded URL without its `?token=`, because this
+    // message is surfaced to Claude and into the transcript.
+    const viewer = agentViewerBase();
     super(
       `no API key for ${provider}. Set ${
         provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'
-      }, or add one in the map viewer (⚙ API key).`,
+      }, or add one with /scale-settings in chat, or in the map viewer at ` +
+        `${viewer} (⚙ API key).`,
     );
     this.name = 'MissingKeyError';
     this.provider = provider;

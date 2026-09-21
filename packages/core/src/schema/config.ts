@@ -40,6 +40,64 @@ export const GateConfigSchema = z
 export type GateConfig = z.infer<typeof GateConfigSchema>;
 
 /**
+ * Which coverage dimension the quiz items aim at (PLAN-GATE §3.2).
+ *
+ * `auto` keeps the behaviour the gate shipped with: the tutor targets the
+ * component's WEAKEST dimension and varies the dimension across items, so a
+ * check reads the whole picture. The named values exist because "how often"
+ * was the only quiz knob a junior had, and a junior who keeps failing on
+ * `rationale` could not ask to be drilled on it — they could only ask to be
+ * interrupted less, which is the opposite of what they needed.
+ */
+export const QuizFocusSchema = z.enum(['auto', 'structure', 'concepts', 'rationale']);
+export type QuizFocus = z.infer<typeof QuizFocusSchema>;
+
+/**
+ * What the item stems are ABOUT — the other half of "theme" (PLAN-GATE §13.5).
+ *
+ * `balanced` is the current mixing rule: the doc grounds the item, and the
+ * session's diff (or a drift excerpt) sharpens it when one is available.
+ *
+ *  - `diff` — every stem must reference the change the junior just made. The
+ *    sharpest version of the moment, and the one that fails hardest when there
+ *    is no diff to speak of, so it degrades to doc-grounding rather than
+ *    inventing a change.
+ *  - `doc`  — the documented design only; the diff is not shown to the model
+ *    at all. This is also the privacy-minimal theme: combined with
+ *    `drift.shareDiff: off` no source line ever reaches the intervention model.
+ */
+export const QuizGroundingSchema = z.enum(['balanced', 'diff', 'doc']);
+export type QuizGrounding = z.infer<typeof QuizGroundingSchema>;
+
+/**
+ * The comprehension check ITSELF, as opposed to when it fires (PLAN-GATE §3.2).
+ *
+ * `gate.enabled` and `budgets.*` answer "how often does this interrupt me";
+ * nothing answered "and what does it ask". These are the shape knobs, and they
+ * are team-policy-defaultable for the same reason the budgets are — a lead
+ * piloting SCALE on a codebase with thin docs wants shorter checks for
+ * everyone, not a per-member negotiation.
+ *
+ * Only `quiz` modality reads these. A Socratic dialogue is capped at ≤3
+ * exchanges by the tutor skill and has no item count to set.
+ */
+export const QuizConfigSchema = z
+  .object({
+    /**
+     * MCQ items per gate check. Bounded at 5 deliberately: the gate interrupts
+     * real work under a budget, and a check that outlasts the thought the
+     * junior was holding costs more than it teaches.
+     */
+    items: z.number().int().min(1).max(5).default(2),
+    /** Which coverage dimension items target. */
+    focus: QuizFocusSchema.default('auto'),
+    /** Theme of the stems — diff-grounded, doc-only, or the mix. */
+    grounding: QuizGroundingSchema.default('balanced'),
+  })
+  .default({});
+export type QuizConfig = z.infer<typeof QuizConfigSchema>;
+
+/**
  * What it takes to durably unlock a component (PLAN-GATE §3.1). Deliberately
  * SEPARATE from thresholds.validateDim: the coverage model's `validated` bar is
  * cumulative (EMA from zero cannot cross it in one sitting, by design), while a
@@ -385,6 +443,7 @@ export const ScaleConfigSchema = z.preprocess(
     language: LanguageSchema.default('en'),
     identity: IdentityConfigSchema,
     gate: GateConfigSchema,
+    quiz: QuizConfigSchema,
     unlock: UnlockConfigSchema,
     exempt: ExemptConfigSchema,
     drift: DriftConfigSchema,

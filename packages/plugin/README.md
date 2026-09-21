@@ -1,10 +1,10 @@
 # scale — SCALE Claude Code plugin
 
 The **SCALE** Claude Code plugin: hooks that capture coverage evidence and gate
-commits, two skills (`scale-map`, `scale-tutor`), four `/scale-*` slash commands,
-and a **self-contained `scale` CLI** (plus the web map) bundled right into the
-plugin. SCALE = **S**caffolded **C**overage-**A**ware **L**earning **E**ngine
-(see `../../PLAN.md`).
+edits, three skills (`scale-map`, `scale-tutor`, `scale-settings`), six
+`/scale-*` slash commands, and a **self-contained `scale` CLI** (plus the web
+map) bundled right into the plugin. SCALE = **S**caffolded **C**overage-**A**ware
+**L**earning **E**ngine (see `../../PLAN.md`).
 
 **Self-contained.** `bin/scale.mjs` inlines every dependency (@scale/core,
 commander, zod, yaml, @anthropic-ai/sdk) into one file, and `web-dist/` holds the
@@ -24,19 +24,23 @@ packages/plugin/
 ├── hooks/
 │   ├── hooks.json           # event → script wiring (PLAN §7.2)
 │   ├── lib/scale.mjs        # shared helper: resolve & run the `scale` CLI, fail-open
-│   ├── session-start.mjs    # SessionStart      → scale context   (inject 3-line coverage)
+│   ├── session-start.mjs    # SessionStart      → scale serve ensure + scale context
+│   │                        #                     (viewer URL + coverage; systemMessage)
 │   ├── prompt-submit.mjs    # UserPromptSubmit   → scale log prompt (component mentions)
 │   ├── pre-edit.mjs         # PreToolUse(Edit|Write|MultiEdit) → scale gate edit (in-flow gate + propose ts)
 │   ├── post-edit.mjs        # PostToolUse(Edit|Write|MultiEdit)→ scale log touch  (+ review pair)
 │   └── session-end.mjs      # SessionEnd        → scale quest generate (DETACHED, async)
 ├── skills/
-│   ├── scale-map/SKILL.md   # Mode B coverage-memory builder (senior; forks cluedoc)
-│   └── scale-tutor/SKILL.md # junior quiz & Socratic tutor + voluntary study
+│   ├── scale-map/SKILL.md      # Mode B coverage-memory builder (senior; forks cluedoc)
+│   ├── scale-tutor/SKILL.md    # junior quiz & Socratic tutor + voluntary study
+│   └── scale-settings/SKILL.md # first-run setup + every later settings change, in chat
 ├── commands/
-│   ├── scale-map.md         # /scale-map    — build/sync coverage memory
-│   ├── scale-status.md      # /scale-status — coverage at a glance
-│   ├── scale-study.md       # /scale-study  — voluntary learning (§6.3)
-│   └── scale-quiz.md        # /scale-quiz   — manual check (testing)
+│   ├── scale-map.md         # /scale-map      — build/sync coverage memory
+│   ├── scale-status.md      # /scale-status   — coverage at a glance
+│   ├── scale-study.md       # /scale-study    — voluntary learning (§6.3)
+│   ├── scale-quiz.md        # /scale-quiz     — manual check (testing)
+│   ├── scale-settings.md    # /scale-settings — setup & settings, no terminal
+│   └── scale-open.md        # /scale-open     — open the map viewer (or one component)
 ├── package.json
 └── README.md
 ```
@@ -64,6 +68,16 @@ claude plugin install scale@scale-marketplace
 
 then quit and reopen Claude Code (hooks load at session start). The same two
 steps exist as `/plugin marketplace add` and `/plugin install` inside a session.
+
+**Then you are done with the terminal.** On the next session start the hook runs
+`scale serve ensure` and prints one line — `SCALE · map viewer:
+http://localhost:4318 · settings in chat: /scale-settings`, or a nudge to run
+`/scale-settings` when the repo has no state yet. **`/scale-settings`** walks
+first-run setup in chat (label, language, gate shape, model) and handles every
+later change; **`/scale-open`** opens the map. The only step that deliberately
+stays out of chat is the API key: the settings skill points at the viewer's
+settings page, or at `scale keys set <provider> --stdin` in the user's own
+terminal, and never accepts a key pasted into the conversation.
 
 - **update:** `claude plugin marketplace update scale-marketplace`, then
   `claude plugin update scale@scale-marketplace`, then restart.
@@ -131,8 +145,13 @@ Until `.scale/` exists, the hooks fail open (no-ops) and `scale status` says
 there is nothing to show. **Per-user state** — coverage, evidence, quests,
 config, condition — lives outside the repo under `~/.scale/<repo-id>/`, created on
 first use; `scale init` is optional and only pins your user label (it is what
-`scale config get/set` need). Nothing is written into the target repo except the
-`.scale/` memory the senior builds.
+`scale config get/set` need), and `/scale-settings` runs it for you. Nothing is
+written into the target repo except the `.scale/` memory the senior builds.
+
+One more per-user file is **transient**: `~/.scale/<repo-id>/serve.json` is the
+running viewer's calling card (`pid`, `port`, `host`, `url`, `startedAt`,
+`idleMinutes`, `version`), written by `scale serve ensure` and removed by
+`scale serve stop`. A detached viewer exits after 240 idle minutes by default.
 
 ## Regenerating the bundle
 
@@ -228,6 +247,17 @@ The one hook that can affect flow is **`pre-edit.mjs`**, wired on
 reaches fog/low-coverage/stale territory (and only when the CLI's budget policy
 allows) it returns a `deny` with a reason telling the agent to run the
 `scale-tutor` check; after `scale record` writes a validation marker, the retried
-edit passes. The user's escape hatch is `scale gate defer <componentId>`
-(defer = drop). Everything else is silent evidence capture. In post-session
-conditions the gate is a no-op (PLAN §6.1).
+edit passes. The deny reason ends with the ways back in — a `#/c/<id>` deep link
+into the viewer, `/scale-open <id>`, and `/scale-study <id>` — so an async user is
+never left looking for the command. The user's escape hatch is
+`scale gate defer <componentId>` (defer = drop). Everything else is silent
+evidence capture. In post-session conditions the gate is a no-op (PLAN §6.1).
+
+**`session-start.mjs`** is the other one worth knowing. It runs `scale serve
+ensure --json` (the viewer is up before the junior reads the banner), then
+`scale context`, then `scale setup status --json` to pick the banner — all three
+sharing one ~4 s deadline inside the 5 s hook timeout, each call getting what is
+left and being skipped rather than started when under 150 ms remains. Its
+envelope carries `additionalContext` for Claude and a top-level `systemMessage`
+for the user, holding the viewer URL and either `/scale-settings` (set up or
+change things) or `/scale-map` (no coverage memory yet).

@@ -23,5 +23,10 @@ prints, per PLAN §5.1:
 
 Use `scale status --json` for the structured form. Keep the presentation
 concise. If the coverage memory or state is not yet initialized, `scale status`
-says so; point to `/scale-map` (to build the memory) or `scale init` (to init
-state).
+says so; point to `/scale-map` (to build the memory) or `/scale-settings setup`
+(to init state and pick the settings, without a terminal).
+
+End every report with the map viewer URL as a clickable link — get it from
+`scale serve url` (or `scale serve ensure --json` if nothing is running yet) —
+plus one line: **`/scale-open <component-id>`** opens a territory in the viewer,
+and **`/scale-settings`** changes the gate, language, model or any other setting.

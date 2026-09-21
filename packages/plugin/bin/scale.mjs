@@ -982,8 +982,8 @@ var require_command = __commonJS({
   "node_modules/commander/lib/command.js"(exports) {
     var EventEmitter = __require("node:events").EventEmitter;
     var childProcess = __require("node:child_process");
-    var path14 = __require("node:path");
-    var fs15 = __require("node:fs");
+    var path16 = __require("node:path");
+    var fs17 = __require("node:fs");
     var process2 = __require("node:process");
     var { Argument: Argument2, humanReadableArgName } = require_argument();
     var { CommanderError: CommanderError2 } = require_error();
@@ -1915,11 +1915,11 @@ Expecting one of '${allowedValues.join("', '")}'`);
         let launchWithNode = false;
         const sourceExt = [".js", ".ts", ".tsx", ".mjs", ".cjs"];
         function findFile(baseDir, baseName) {
-          const localBin = path14.resolve(baseDir, baseName);
-          if (fs15.existsSync(localBin)) return localBin;
-          if (sourceExt.includes(path14.extname(baseName))) return void 0;
+          const localBin = path16.resolve(baseDir, baseName);
+          if (fs17.existsSync(localBin)) return localBin;
+          if (sourceExt.includes(path16.extname(baseName))) return void 0;
           const foundExt = sourceExt.find(
-            (ext) => fs15.existsSync(`${localBin}${ext}`)
+            (ext) => fs17.existsSync(`${localBin}${ext}`)
           );
           if (foundExt) return `${localBin}${foundExt}`;
           return void 0;
@@ -1931,21 +1931,21 @@ Expecting one of '${allowedValues.join("', '")}'`);
         if (this._scriptPath) {
           let resolvedScriptPath;
           try {
-            resolvedScriptPath = fs15.realpathSync(this._scriptPath);
+            resolvedScriptPath = fs17.realpathSync(this._scriptPath);
           } catch (err) {
             resolvedScriptPath = this._scriptPath;
           }
-          executableDir = path14.resolve(
-            path14.dirname(resolvedScriptPath),
+          executableDir = path16.resolve(
+            path16.dirname(resolvedScriptPath),
             executableDir
           );
         }
         if (executableDir) {
           let localFile = findFile(executableDir, executableFile);
           if (!localFile && !subcommand._executableFile && this._scriptPath) {
-            const legacyName = path14.basename(
+            const legacyName = path16.basename(
               this._scriptPath,
-              path14.extname(this._scriptPath)
+              path16.extname(this._scriptPath)
             );
             if (legacyName !== this._name) {
               localFile = findFile(
@@ -1956,7 +1956,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
           }
           executableFile = localFile || executableFile;
         }
-        launchWithNode = sourceExt.includes(path14.extname(executableFile));
+        launchWithNode = sourceExt.includes(path16.extname(executableFile));
         let proc;
         if (process2.platform !== "win32") {
           if (launchWithNode) {
@@ -2796,7 +2796,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
        * @return {Command}
        */
       nameFromFilename(filename) {
-        this._name = path14.basename(filename, path14.extname(filename));
+        this._name = path16.basename(filename, path16.extname(filename));
         return this;
       }
       /**
@@ -2810,9 +2810,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
        * @param {string} [path]
        * @return {(string|null|Command)}
        */
-      executableDir(path15) {
-        if (path15 === void 0) return this._executableDir;
-        this._executableDir = path15;
+      executableDir(path17) {
+        if (path17 === void 0) return this._executableDir;
+        this._executableDir = path17;
         return this;
       }
       /**
@@ -3119,17 +3119,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path14) {
-      const ctrl = callVisitor(key, node, visitor, path14);
+    function visit_(key, node, visitor, path16) {
+      const ctrl = callVisitor(key, node, visitor, path16);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path14, ctrl);
-        return visit_(key, ctrl, visitor, path14);
+        replaceNode(key, path16, ctrl);
+        return visit_(key, ctrl, visitor, path16);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path14 = Object.freeze(path14.concat(node));
+          path16 = Object.freeze(path16.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path14);
+            const ci = visit_(i, node.items[i], visitor, path16);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -3140,13 +3140,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path14 = Object.freeze(path14.concat(node));
-          const ck = visit_("key", node.key, visitor, path14);
+          path16 = Object.freeze(path16.concat(node));
+          const ck = visit_("key", node.key, visitor, path16);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path14);
+          const cv = visit_("value", node.value, visitor, path16);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -3167,17 +3167,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path14) {
-      const ctrl = await callVisitor(key, node, visitor, path14);
+    async function visitAsync_(key, node, visitor, path16) {
+      const ctrl = await callVisitor(key, node, visitor, path16);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path14, ctrl);
-        return visitAsync_(key, ctrl, visitor, path14);
+        replaceNode(key, path16, ctrl);
+        return visitAsync_(key, ctrl, visitor, path16);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path14 = Object.freeze(path14.concat(node));
+          path16 = Object.freeze(path16.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path14);
+            const ci = await visitAsync_(i, node.items[i], visitor, path16);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -3188,13 +3188,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path14 = Object.freeze(path14.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path14);
+          path16 = Object.freeze(path16.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path16);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path14);
+          const cv = await visitAsync_("value", node.value, visitor, path16);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -3221,23 +3221,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path14) {
+    function callVisitor(key, node, visitor, path16) {
       if (typeof visitor === "function")
-        return visitor(key, node, path14);
+        return visitor(key, node, path16);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path14);
+        return visitor.Map?.(key, node, path16);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path14);
+        return visitor.Seq?.(key, node, path16);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path14);
+        return visitor.Pair?.(key, node, path16);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path14);
+        return visitor.Scalar?.(key, node, path16);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path14);
+        return visitor.Alias?.(key, node, path16);
       return void 0;
     }
-    function replaceNode(key, path14, node) {
-      const parent = path14[path14.length - 1];
+    function replaceNode(key, path16, node) {
+      const parent = path16[path16.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -3847,10 +3847,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path14, value) {
+    function collectionFromPath(schema, path16, value) {
       let v = value;
-      for (let i = path14.length - 1; i >= 0; --i) {
-        const k = path14[i];
+      for (let i = path16.length - 1; i >= 0; --i) {
+        const k = path16[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -3869,7 +3869,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path14) => path14 == null || typeof path14 === "object" && !!path14[Symbol.iterator]().next().done;
+    var isEmptyPath = (path16) => path16 == null || typeof path16 === "object" && !!path16[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -3899,11 +3899,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path14, value) {
-        if (isEmptyPath(path14))
+      addIn(path16, value) {
+        if (isEmptyPath(path16))
           this.add(value);
         else {
-          const [key, ...rest] = path14;
+          const [key, ...rest] = path16;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -3917,8 +3917,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path14) {
-        const [key, ...rest] = path14;
+      deleteIn(path16) {
+        const [key, ...rest] = path16;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -3932,8 +3932,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path14, keepScalar) {
-        const [key, ...rest] = path14;
+      getIn(path16, keepScalar) {
+        const [key, ...rest] = path16;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -3951,8 +3951,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path14) {
-        const [key, ...rest] = path14;
+      hasIn(path16) {
+        const [key, ...rest] = path16;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -3962,8 +3962,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path14, value) {
-        const [key, ...rest] = path14;
+      setIn(path16, value) {
+        const [key, ...rest] = path16;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -6478,9 +6478,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path14, value) {
+      addIn(path16, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path14, value);
+          this.contents.addIn(path16, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -6555,14 +6555,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path14) {
-        if (Collection.isEmptyPath(path14)) {
+      deleteIn(path16) {
+        if (Collection.isEmptyPath(path16)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path14) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path16) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -6577,10 +6577,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path14, keepScalar) {
-        if (Collection.isEmptyPath(path14))
+      getIn(path16, keepScalar) {
+        if (Collection.isEmptyPath(path16))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path14, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path16, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -6591,10 +6591,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path14) {
-        if (Collection.isEmptyPath(path14))
+      hasIn(path16) {
+        if (Collection.isEmptyPath(path16))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path14) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path16) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -6611,13 +6611,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path14, value) {
-        if (Collection.isEmptyPath(path14)) {
+      setIn(path16, value) {
+        if (Collection.isEmptyPath(path16)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path14), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path16), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path14, value);
+          this.contents.setIn(path16, value);
         }
       }
       /**
@@ -8577,9 +8577,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path14) => {
+    visit.itemAtPath = (cst, path16) => {
       let item = cst;
-      for (const [field, index] of path14) {
+      for (const [field, index] of path16) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -8588,23 +8588,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path14) => {
-      const parent = visit.itemAtPath(cst, path14.slice(0, -1));
-      const field = path14[path14.length - 1][0];
+    visit.parentCollection = (cst, path16) => {
+      const parent = visit.itemAtPath(cst, path16.slice(0, -1));
+      const field = path16[path16.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path14, item, visitor) {
-      let ctrl = visitor(item, path14);
+    function _visit(path16, item, visitor) {
+      let ctrl = visitor(item, path16);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path14.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path16.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -8615,10 +8615,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path14);
+            ctrl = ctrl(item, path16);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path14) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path16) : ctrl;
     }
     exports.visit = visit;
   }
@@ -9920,14 +9920,14 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs15 = this.flowScalar(this.type);
+              const fs17 = this.flowScalar(this.type);
               if (atNextItem || it.value) {
-                map2.items.push({ start, key: fs15, sep: [] });
+                map2.items.push({ start, key: fs17, sep: [] });
                 this.onKeyLine = true;
               } else if (it.sep) {
-                this.stack.push(fs15);
+                this.stack.push(fs17);
               } else {
-                Object.assign(it, { key: fs15, sep: [] });
+                Object.assign(it, { key: fs17, sep: [] });
                 this.onKeyLine = true;
               }
               return;
@@ -10055,13 +10055,13 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs15 = this.flowScalar(this.type);
+              const fs17 = this.flowScalar(this.type);
               if (!it || it.value)
-                fc.items.push({ start: [], key: fs15, sep: [] });
+                fc.items.push({ start: [], key: fs17, sep: [] });
               else if (it.sep)
-                this.stack.push(fs15);
+                this.stack.push(fs17);
               else
-                Object.assign(it, { key: fs15, sep: [] });
+                Object.assign(it, { key: fs17, sep: [] });
               return;
             }
             case "flow-map-end":
@@ -11306,15 +11306,15 @@ function redactSensitive(body) {
   }
   return null;
 }
-async function checkCredentialsFileSafety(path14, onWarn = (m) => console.warn(`anthropic-sdk: ${m}`)) {
+async function checkCredentialsFileSafety(path16, onWarn = (m) => console.warn(`anthropic-sdk: ${m}`)) {
   if (typeof process === "undefined" || process.platform === "win32")
     return;
-  const fs15 = await import("node:fs");
-  let resolved = path14;
+  const fs17 = await import("node:fs");
+  let resolved = path16;
   let st;
   try {
-    resolved = await fs15.promises.realpath(path14);
-    st = await fs15.promises.stat(resolved);
+    resolved = await fs17.promises.realpath(path16);
+    st = await fs17.promises.stat(resolved);
   } catch {
     return;
   }
@@ -11330,27 +11330,27 @@ async function checkCredentialsFileSafety(path14, onWarn = (m) => console.warn(`
   }
 }
 async function writeCredentialsFileAtomic(targetPath, data) {
-  const fs15 = await import("node:fs");
-  const path14 = await import("node:path");
-  const dir = path14.dirname(targetPath);
-  await fs15.promises.mkdir(dir, { recursive: true, mode: 448 });
+  const fs17 = await import("node:fs");
+  const path16 = await import("node:path");
+  const dir = path16.dirname(targetPath);
+  await fs17.promises.mkdir(dir, { recursive: true, mode: 448 });
   const tmpPath = `${targetPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
-    const fh = await fs15.promises.open(tmpPath, "w", 384);
+    const fh = await fs17.promises.open(tmpPath, "w", 384);
     try {
       await fh.writeFile(JSON.stringify(data, null, 2));
       await fh.sync();
     } finally {
       await fh.close();
     }
-    await fs15.promises.rename(tmpPath, targetPath);
+    await fs17.promises.rename(tmpPath, targetPath);
   } catch (err) {
-    await fs15.promises.unlink(tmpPath).catch(() => {
+    await fs17.promises.unlink(tmpPath).catch(() => {
     });
     throw err;
   }
   try {
-    const dirFh = await fs15.promises.open(dir, "r");
+    const dirFh = await fs17.promises.open(dir, "r");
     try {
       await dirFh.sync();
     } finally {
@@ -11714,12 +11714,12 @@ var init_credentials = __esm({
         return null;
       }
       validateProfileName(profileName);
-      const fs15 = await import("node:fs");
-      const path14 = await import("node:path");
-      const configPath = path14.join(rootConfigPath, "configs", `${profileName}.json`);
+      const fs17 = await import("node:fs");
+      const path16 = await import("node:path");
+      const configPath = path16.join(rootConfigPath, "configs", `${profileName}.json`);
       let configRaw;
       try {
-        configRaw = await fs15.promises.readFile(configPath, "utf-8");
+        configRaw = await fs17.promises.readFile(configPath, "utf-8");
       } catch (err) {
         if (err?.code !== "ENOENT") {
           throw new Error(`failed to read config file ${configPath}: ${err}`);
@@ -11800,14 +11800,14 @@ var init_credentials = __esm({
         return null;
       }
       validateProfileName(profileName);
-      const path14 = await import("node:path");
-      return path14.join(rootConfigPath, "credentials", `${profileName}.json`);
+      const path16 = await import("node:path");
+      return path16.join(rootConfigPath, "credentials", `${profileName}.json`);
     };
     getRootConfigPath = async () => {
       if (!supportsLocalConfigFiles()) {
         return null;
       }
-      const path14 = await import("node:path");
+      const path16 = await import("node:path");
       const configDir = readEnv("ANTHROPIC_CONFIG_DIR");
       if (configDir) {
         return configDir;
@@ -11816,21 +11816,21 @@ var init_credentials = __esm({
       if (os4 === "Windows") {
         const appData = readEnv("APPDATA");
         if (appData) {
-          return path14.join(appData, "Anthropic");
+          return path16.join(appData, "Anthropic");
         }
         const userProfile = readEnv("USERPROFILE");
         if (userProfile) {
-          return path14.join(userProfile, "AppData", "Roaming", "Anthropic");
+          return path16.join(userProfile, "AppData", "Roaming", "Anthropic");
         }
         return null;
       }
       const xdgConfigHome = readEnv("XDG_CONFIG_HOME");
       if (xdgConfigHome) {
-        return path14.join(xdgConfigHome, "anthropic");
+        return path16.join(xdgConfigHome, "anthropic");
       }
       const home = readEnv("HOME");
       if (home) {
-        return path14.join(home, ".config", "anthropic");
+        return path16.join(home, ".config", "anthropic");
       }
       return null;
     };
@@ -11847,11 +11847,11 @@ var init_credentials = __esm({
       if (profileName) {
         return profileName;
       }
-      const fs15 = await import("node:fs");
-      const path14 = await import("node:path");
-      const filePath = path14.join(rootConfigPath, "active_config");
+      const fs17 = await import("node:fs");
+      const path16 = await import("node:path");
+      const filePath = path16.join(rootConfigPath, "active_config");
       try {
-        return (await fs15.promises.readFile(filePath, "utf-8")).trim() || "default";
+        return (await fs17.promises.readFile(filePath, "utf-8")).trim() || "default";
       } catch (err) {
         if (err?.code !== "ENOENT") {
           throw new Error(`failed to read ${filePath}: ${err}`);
@@ -11863,21 +11863,21 @@ var init_credentials = __esm({
 });
 
 // node_modules/@anthropic-ai/sdk/lib/credentials/identity-token.mjs
-function identityTokenFromFile(path14) {
-  if (!path14) {
+function identityTokenFromFile(path16) {
+  if (!path16) {
     throw new AnthropicError("Identity token file path is empty");
   }
   return async () => {
-    const fs15 = await import("node:fs");
+    const fs17 = await import("node:fs");
     let content;
     try {
-      content = await fs15.promises.readFile(path14, "utf-8");
+      content = await fs17.promises.readFile(path16, "utf-8");
     } catch (err) {
-      throw new AnthropicError(`Failed to read identity token file at ${path14}: ${err}`);
+      throw new AnthropicError(`Failed to read identity token file at ${path16}: ${err}`);
     }
     const token = content.trim();
     if (!token) {
-      throw new AnthropicError(`Identity token file at ${path14} is empty`);
+      throw new AnthropicError(`Identity token file at ${path16} is empty`);
     }
     return token;
   };
@@ -11962,11 +11962,11 @@ var init_oidc_federation = __esm({
 // node_modules/@anthropic-ai/sdk/lib/credentials/user-oauth.mjs
 function userOAuthProvider(config2) {
   return async (opts) => {
-    const fs15 = await import("node:fs");
+    const fs17 = await import("node:fs");
     await checkCredentialsFileSafety(config2.credentialsPath, config2.onSafetyWarning);
     let raw;
     try {
-      raw = await fs15.promises.readFile(config2.credentialsPath, "utf-8");
+      raw = await fs17.promises.readFile(config2.credentialsPath, "utf-8");
     } catch (err) {
       throw new WorkloadIdentityError(`Credentials file not found at ${config2.credentialsPath}: ${err}`);
     }
@@ -12138,11 +12138,11 @@ function resolveIdentityTokenProvider(auth) {
 }
 function cachedExchangeProvider(exchange, credentialsPath, onCacheWriteError, onSafetyWarning) {
   return async (opts) => {
-    const fs15 = await import("node:fs");
+    const fs17 = await import("node:fs");
     await checkCredentialsFileSafety(credentialsPath, onSafetyWarning);
     let existing;
     try {
-      const raw = await fs15.promises.readFile(credentialsPath, "utf-8");
+      const raw = await fs17.promises.readFile(credentialsPath, "utf-8");
       existing = JSON.parse(raw);
       const token = existing?.["access_token"];
       if (token && !opts?.forceRefresh) {
@@ -13202,12 +13202,12 @@ var init_path = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/path.mjs"() {
     init_error();
     EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
-    createPathTagFunction = (pathEncoder = encodeURIPath) => function path14(statics, ...params) {
+    createPathTagFunction = (pathEncoder = encodeURIPath) => function path16(statics, ...params) {
       if (statics.length === 1)
         return statics[0];
       let postPath = false;
       const invalidSegments = [];
-      const path15 = statics.reduce((previousValue, currentValue, index) => {
+      const path17 = statics.reduce((previousValue, currentValue, index) => {
         if (/[?#]/.test(currentValue)) {
           postPath = true;
         }
@@ -13224,7 +13224,7 @@ var init_path = __esm({
         }
         return previousValue + currentValue + (index === params.length ? "" : encoded);
       }, "");
-      const pathOnly = path15.split(/[?#]/, 1)[0];
+      const pathOnly = path17.split(/[?#]/, 1)[0];
       const invalidSegmentPattern = /(?<=^|\/)(?:\.|%2e){1,2}(?=\/|$)/gi;
       let match;
       while ((match = invalidSegmentPattern.exec(pathOnly)) !== null) {
@@ -13245,10 +13245,10 @@ var init_path = __esm({
         }, "");
         throw new AnthropicError(`Path parameters result in path with invalid segments:
 ${invalidSegments.map((e) => e.error).join("\n")}
-${path15}
+${path17}
 ${underline}`);
       }
-      return path15;
+      return path17;
     };
     path5 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
   }
@@ -22024,9 +22024,9 @@ var init_client = __esm({
       makeStatusError(status, error, message, headers) {
         return APIError.generate(status, error, message, headers);
       }
-      buildURL(path14, query, defaultBaseURL) {
+      buildURL(path16, query, defaultBaseURL) {
         const baseURL = !__classPrivateFieldGet(this, _BaseAnthropic_instances, "m", _BaseAnthropic_baseURLOverridden).call(this) && defaultBaseURL || this.baseURL;
-        const url = isAbsoluteURL(path14) ? new URL(path14) : new URL(baseURL + (baseURL.endsWith("/") && path14.startsWith("/") ? path14.slice(1) : path14));
+        const url = isAbsoluteURL(path16) ? new URL(path16) : new URL(baseURL + (baseURL.endsWith("/") && path16.startsWith("/") ? path16.slice(1) : path16));
         const defaultQuery = this.defaultQuery();
         const pathQuery = Object.fromEntries(url.searchParams);
         if (!isEmptyObj(defaultQuery) || !isEmptyObj(pathQuery)) {
@@ -22098,24 +22098,24 @@ var init_client = __esm({
       backendMiddleware() {
         return [];
       }
-      get(path14, opts) {
-        return this.methodRequest("get", path14, opts);
+      get(path16, opts) {
+        return this.methodRequest("get", path16, opts);
       }
-      post(path14, opts) {
-        return this.methodRequest("post", path14, opts);
+      post(path16, opts) {
+        return this.methodRequest("post", path16, opts);
       }
-      patch(path14, opts) {
-        return this.methodRequest("patch", path14, opts);
+      patch(path16, opts) {
+        return this.methodRequest("patch", path16, opts);
       }
-      put(path14, opts) {
-        return this.methodRequest("put", path14, opts);
+      put(path16, opts) {
+        return this.methodRequest("put", path16, opts);
       }
-      delete(path14, opts) {
-        return this.methodRequest("delete", path14, opts);
+      delete(path16, opts) {
+        return this.methodRequest("delete", path16, opts);
       }
-      methodRequest(method, path14, opts) {
+      methodRequest(method, path16, opts) {
         return this.request(Promise.resolve(opts).then((opts2) => {
-          return { method, path: path14, ...opts2 };
+          return { method, path: path16, ...opts2 };
         }));
       }
       request(options, remainingRetries = null) {
@@ -22229,8 +22229,8 @@ var init_client = __esm({
         }));
         return { response, options, controller, requestLogID, retryOfRequestLogID, startTime };
       }
-      getAPIList(path14, Page2, opts) {
-        return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path14, ...opts2 })) : { method: "get", path: path14, ...opts });
+      getAPIList(path16, Page2, opts) {
+        return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path16, ...opts2 })) : { method: "get", path: path16, ...opts });
       }
       requestAPIList(Page2, options) {
         const request = this.makeRequest(options, null, void 0);
@@ -22346,14 +22346,14 @@ var init_client = __esm({
       }
       async buildRequest(inputOptions, { retryCount = 0 } = {}) {
         const options = { ...inputOptions };
-        const { method, path: path14, query, defaultBaseURL } = options;
+        const { method, path: path16, query, defaultBaseURL } = options;
         if (this._authState.resolution) {
           await this._authState.resolution;
         }
         if (!this._baseURLIsExplicit && this._authState.baseURL && this.baseURL !== this._authState.baseURL) {
           this.baseURL = this._authState.baseURL;
         }
-        const url = this.buildURL(path14, query, defaultBaseURL);
+        const url = this.buildURL(path16, query, defaultBaseURL);
         if ("timeout" in options)
           validatePositiveInteger("timeout", options.timeout);
         options.timeout = options.timeout ?? this.timeout;
@@ -22492,11 +22492,11 @@ var init_sdk = __esm({
 });
 
 // packages/cli/src/index.ts
-import path13 from "node:path";
-import fs14 from "node:fs";
+import path15 from "node:path";
+import fs16 from "node:fs";
 import readline2 from "node:readline";
 import crypto7 from "node:crypto";
-import { execFileSync as execFileSync7 } from "node:child_process";
+import { execFileSync as execFileSync7, spawn as spawn3 } from "node:child_process";
 
 // node_modules/commander/esm.mjs
 var import_index = __toESM(require_commander(), 1);
@@ -22993,8 +22993,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path14, errorMaps, issueData } = params;
-  const fullPath = [...path14, ...issueData.path || []];
+  const { data, path: path16, errorMaps, issueData } = params;
+  const fullPath = [...path16, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -23110,11 +23110,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path14, key) {
+  constructor(parent, value, path16, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path14;
+    this._path = path16;
     this._key = key;
   }
   get path() {
@@ -26582,6 +26582,14 @@ var DocFrontmatterSchema = external_exports.object({
   concepts: external_exports.array(ConceptSchema),
   rationale: external_exports.array(RationaleEntrySchema)
 });
+var DocIndexEntrySchema = external_exports.object({
+  id: external_exports.string(),
+  title: external_exports.string(),
+  province: external_exports.string(),
+  /** Folder path relative to `.scale/`, `/`-separated, no trailing slash. */
+  dir: external_exports.string()
+});
+var DocIndexSchema = external_exports.array(DocIndexEntrySchema);
 
 // packages/core/dist/schema/sections.js
 var SECTIONS = [
@@ -26809,6 +26817,20 @@ var GateConfigSchema = external_exports.object({
   assessment: AssessmentSchema.default("sync"),
   enforcement: EnforcementSchema.default("soft")
 }).default({});
+var QuizFocusSchema = external_exports.enum(["auto", "structure", "concepts", "rationale"]);
+var QuizGroundingSchema = external_exports.enum(["balanced", "diff", "doc"]);
+var QuizConfigSchema = external_exports.object({
+  /**
+   * MCQ items per gate check. Bounded at 5 deliberately: the gate interrupts
+   * real work under a budget, and a check that outlasts the thought the
+   * junior was holding costs more than it teaches.
+   */
+  items: external_exports.number().int().min(1).max(5).default(2),
+  /** Which coverage dimension items target. */
+  focus: QuizFocusSchema.default("auto"),
+  /** Theme of the stems — diff-grounded, doc-only, or the mix. */
+  grounding: QuizGroundingSchema.default("balanced")
+}).default({});
 var UnlockConfigSchema = external_exports.object({
   /** A single check's mean score must reach this to count as passed. */
   passBar: external_exports.number().min(0).max(1).default(0.6),
@@ -26977,6 +26999,7 @@ var ScaleConfigSchema = external_exports.preprocess(migrateLegacyConfig, externa
   language: LanguageSchema.default("en"),
   identity: IdentityConfigSchema,
   gate: GateConfigSchema,
+  quiz: QuizConfigSchema,
   unlock: UnlockConfigSchema,
   exempt: ExemptConfigSchema,
   drift: DriftConfigSchema,
@@ -27112,8 +27135,8 @@ function byNumber(from, to, lowerLoosens) {
   const wentDown = n[1] < n[0];
   return wentDown === lowerLoosens ? "loosen" : "tighten";
 }
-function overrideDirection(path14, from, to) {
-  switch (path14) {
+function overrideDirection(path16, from, to) {
+  switch (path16) {
     case "gate.enabled":
       if (from === to)
         return "neutral";
@@ -27156,7 +27179,7 @@ function overrideDirection(path14, from, to) {
       return a === b ? "neutral" : b > a ? "loosen" : "tighten";
     }
     default:
-      if (path14.startsWith("models.") || path14.startsWith("identity.") || path14.startsWith("thresholds.")) {
+      if (path16.startsWith("models.") || path16.startsWith("identity.") || path16.startsWith("thresholds.")) {
         return "neutral";
       }
       return null;
@@ -27181,8 +27204,8 @@ function configChangeRows(before, after, policyLeaves, policyPaths, meta) {
   const a = flattenLeaves(before);
   const b = flattenLeaves(after);
   const rows = [];
-  for (const path14 of /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])) {
-    if (jsonEqual(a[path14], b[path14]))
+  for (const path16 of /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (jsonEqual(a[path16], b[path16]))
       continue;
     rows.push({
       v: 1,
@@ -27190,13 +27213,13 @@ function configChangeRows(before, after, policyLeaves, policyPaths, meta) {
       ts: meta.ts,
       user: meta.user,
       sessionId: meta.sessionId,
-      path: path14,
-      from: a[path14] ?? null,
-      to: b[path14] ?? null,
+      path: path16,
+      from: a[path16] ?? null,
+      to: b[path16] ?? null,
       source: meta.source,
       reset: meta.reset,
-      policyValue: policyPaths.has(path14) ? policyLeaves[path14] ?? null : null,
-      direction: overrideDirection(path14, a[path14], b[path14])
+      policyValue: policyPaths.has(path16) ? policyLeaves[path16] ?? null : null,
+      direction: overrideDirection(path16, a[path16], b[path16])
     });
   }
   return rows;
@@ -27205,12 +27228,48 @@ function configChangeRows(before, after, policyLeaves, policyPaths, meta) {
 // packages/core/dist/schema/policy.js
 var POLICY_SECTIONS = [
   "gate",
+  // The check's SHAPE (items/focus/grounding) is policy-settable for the same
+  // reason `budgets` is: a lead piloting on a codebase with thin docs sets the
+  // check length once, and a member who wants longer checks still overrides it.
+  "quiz",
   "unlock",
   "exempt",
   "drift",
   "budgets",
   "thresholds"
 ];
+var LeadsSchema = external_exports.array(external_exports.string().min(1));
+var PolicyFileSchema = external_exports.object({
+  leads: LeadsSchema.optional(),
+  gate: GateConfigSchema.optional(),
+  quiz: QuizConfigSchema.optional(),
+  unlock: UnlockConfigSchema.optional(),
+  exempt: ExemptConfigSchema.optional(),
+  drift: DriftConfigSchema.optional(),
+  budgets: BudgetsSchema.optional(),
+  thresholds: ThresholdsSchema.optional()
+}).passthrough();
+function normalizeEmail(v) {
+  return typeof v === "string" ? v.trim().toLowerCase() : "";
+}
+function policyLeads(policyRaw) {
+  if (!isPlainObject(policyRaw) || !Array.isArray(policyRaw.leads))
+    return [];
+  const out = [];
+  for (const raw of policyRaw.leads) {
+    const email = normalizeEmail(raw);
+    if (email && !out.includes(email))
+      out.push(email);
+  }
+  return out;
+}
+function isLead(policyRaw, identityEmails) {
+  const leads = policyLeads(policyRaw);
+  if (leads.length === 0)
+    return true;
+  const mine = new Set(identityEmails.map(normalizeEmail).filter(Boolean));
+  return leads.some((lead) => mine.has(lead));
+}
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -27301,14 +27360,14 @@ function explainConfig(userRaw, policyRaw) {
         overlay[s] = policyRaw[s];
   }
   const out = {};
-  for (const path14 of Object.keys(effective)) {
-    const fromUser = hasPath(user, path14);
-    const fromPolicy = hasPath(overlay, path14);
-    out[path14] = {
-      value: effective[path14],
+  for (const path16 of Object.keys(effective)) {
+    const fromUser = hasPath(user, path16);
+    const fromPolicy = hasPath(overlay, path16);
+    out[path16] = {
+      value: effective[path16],
       source: fromUser ? "user" : fromPolicy ? "policy" : "default",
-      defaultValue: defaults2[path14],
-      ...fromPolicy ? { policyValue: policyLeaves[path14] } : {}
+      defaultValue: defaults2[path16],
+      ...fromPolicy ? { policyValue: policyLeaves[path16] } : {}
     };
   }
   return out;
@@ -27382,6 +27441,11 @@ function classifyState(prev, opts = {}) {
     return "explored";
   }
   return "fog";
+}
+
+// packages/core/dist/doc-slug.js
+function slugify(text) {
+  return text.replace(/[`*_~]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 // packages/core/dist/index-map.js
@@ -27553,6 +27617,7 @@ function loadScaleDir(repoRoot) {
           rootDoc = {
             id: fm2.id,
             path: r.absDir,
+            dir: "",
             province: "",
             parentId: null,
             frontmatter: fm2,
@@ -27577,16 +27642,18 @@ function loadScaleDir(repoRoot) {
       continue;
     }
     const province = r.segments[0] ?? "";
+    const rel = relOfDir(r.absDir);
     docs.push({
       id: fm.id,
       path: r.absDir,
+      dir: rel,
       province,
       parentId: null,
       // resolved in second pass
       frontmatter: fm,
       body: r.body
     });
-    folderPathToId.set(relOfDir(r.absDir), fm.id);
+    folderPathToId.set(rel, fm.id);
   }
   const nodeIds = new Set(docs.map((d) => d.id));
   for (const d of docs) {
@@ -28367,16 +28434,23 @@ function topCandidate(cands, importance) {
   });
   return sorted[0];
 }
-function gateDenyReason(component, config2, drift) {
+function quizSpecLine(quiz) {
+  return `quiz: ${quiz.items} item(s), focus ${quiz.focus}, grounding ${quiz.grounding}`;
+}
+function gateDenyReason(component, config2, drift, viewerUrl2) {
   const { modality, assessment, enforcement } = config2.gate;
   const language = config2.language;
   const head = drift ? drift.cause === "self" ? `SCALE edit gate \u2014 the '${component}' territory is locked again. The junior DID demonstrate this component before; since then it has been rewritten far enough (by their own work) that the old check no longer covers it. This moment is for the JUNIOR, not for you to resolve.` : `SCALE edit gate \u2014 the '${component}' territory REBELLED and is locked again. The junior DID demonstrate this component before; ${drift.authors.length > 0 ? drift.authors.join(", ") : "someone else"} has changed it since, so their understanding is out of date \u2014 this is not a failure on their part. This moment is for the JUNIOR, not for you to resolve.` : `SCALE edit gate \u2014 the '${component}' territory is LOCKED for this user (comprehension not yet demonstrated), and this edit reaches into it. This moment is for the JUNIOR, not for you to resolve.`;
   const body = assessment === "sync" ? `Run the ${modality} comprehension check on '${component}' using the scale-tutor skill and put it in front of them now` + (drift ? `, focused on WHAT CHANGED since they last validated it rather than re-asking what they already answered` : "") + `. After they complete it (scale record), retry the edit \u2014 a passing check unlocks this territory durably.` : `This user is on ASYNC assessment: do NOT quiz them now. Briefly TEACH instead \u2014 explain what '${component}' does and why, grounded in its component doc under .scale/ and in what this edit is trying to change. Then tell the junior the territory stays locked until they pass its check later (in the SCALE map viewer, or with /scale-study ${component} in a coming session). The edit itself stays blocked for now.`;
   const skip = enforcement === "hard" ? `Skipping is disabled by team policy (enforcement: hard) \u2014 do not look for a way around the lock; work elsewhere or unlock it properly.` : `Do NOT skip on their behalf. If \u2014 and only if \u2014 the junior says to skip, run \`scale gate defer ${component}\` (this unlocks it for THIS SESSION only), then retry the edit. If you skip without asking (e.g. no junior is in the loop), you MUST run \`scale gate defer ${component} --by agent\` and say so in your reply.`;
   const ko = language === "ko" ? ` The junior's interaction language is KOREAN: deliver everything junior-facing entirely in Korean, keeping code identifiers and technical terms in English.` : "";
+  const spec = modality === "quiz" ? `
+${quizSpecLine(config2.quiz)}` : "";
+  const access2 = viewerUrl2 ? `
+Map viewer: ${viewerUrl2}  \xB7  or /scale-open ${component}  \xB7  or /scale-study ${component}` : "";
   return `${head}
-${body}
-${skip}${ko}`;
+${body}${spec}
+${skip}${ko}${access2}`;
 }
 function gateEditDecision(input) {
   const { config: config2, session: session2 } = input;
@@ -28417,7 +28491,7 @@ function gateEditDecision(input) {
     return {
       action: "deny",
       component: pending,
-      reason: gateDenyReason(pending, config2, input.drifted?.[pending])
+      reason: gateDenyReason(pending, config2, input.drifted?.[pending], input.viewerUrlFor?.(pending))
     };
   }
   if (session2.interventionsThisSession >= config2.budgets.maxPerSession) {
@@ -28430,7 +28504,7 @@ function gateEditDecision(input) {
   return {
     action: "deny",
     component: target.id,
-    reason: gateDenyReason(target.id, config2, input.drifted?.[target.id]),
+    reason: gateDenyReason(target.id, config2, input.drifted?.[target.id], input.viewerUrlFor?.(target.id)),
     spendBudget: true
   };
 }
@@ -28615,8 +28689,8 @@ function partitionPasses(findings) {
 // packages/cli/src/serve.ts
 import http from "node:http";
 import os3 from "node:os";
-import fs12 from "node:fs";
-import path11 from "node:path";
+import fs13 from "node:fs";
+import path12 from "node:path";
 import crypto6 from "node:crypto";
 import { execFileSync as execFileSync6 } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -28667,7 +28741,7 @@ function readTelemetrySafe(dir) {
 import { promises as fsp } from "node:fs";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
-function slugify(input) {
+function slugify2(input) {
   return input.toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/\.git$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
 }
 function resolveRepoId(cwd = process.cwd()) {
@@ -28685,11 +28759,11 @@ function resolveRepoId(cwd = process.cwd()) {
   const remote = git4(["remote", "get-url", "origin"]);
   if (remote) {
     const normalized = remote.replace(/^git@([^:]+):/, "$1/");
-    return slugify(normalized);
+    return slugify2(normalized);
   }
   const top = git4(["rev-parse", "--show-toplevel"]);
-  if (top) return slugify(path3.basename(top));
-  return slugify(path3.basename(cwd));
+  if (top) return slugify2(path3.basename(top));
+  return slugify2(path3.basename(cwd));
 }
 function stateDir(cwd = process.cwd()) {
   return path3.join(os.homedir(), ".scale", resolveRepoId(cwd));
@@ -29244,6 +29318,9 @@ function myIdentities(cwd, config2) {
   }
   return out;
 }
+function currentIdentityEmails(cwd, config2) {
+  return [...myIdentities(cwd, config2)].sort();
+}
 function changedFilesSince(cwd, anchors) {
   const unique = [...new Set(anchors.filter(Boolean))];
   if (unique.length === 0) return null;
@@ -29623,7 +29700,7 @@ function declarationName(raw) {
 function parseHunks(diff) {
   const hunks = [];
   const regions = [];
-  let path14 = "";
+  let path16 = "";
   let current = null;
   const flush = () => {
     if (!current) return;
@@ -29631,7 +29708,7 @@ function parseHunks(diff) {
       header: current.header,
       body: current.body.join("\n"),
       churn: current.churn,
-      ...path14 ? { path: path14 } : {}
+      ...path16 ? { path: path16 } : {}
     });
     current = null;
   };
@@ -29639,7 +29716,7 @@ function parseHunks(diff) {
     const fileMatch = FILE_HEADER.exec(line);
     if (fileMatch) {
       flush();
-      path14 = fileMatch[2] ?? fileMatch[1] ?? "";
+      path16 = fileMatch[2] ?? fileMatch[1] ?? "";
       continue;
     }
     const m = HUNK_HEADER.exec(line);
@@ -29699,7 +29776,7 @@ function driftContext(cwd, sinceSha, sources, cause, share = "full") {
 }
 
 // packages/cli/src/quest.ts
-import fs10 from "node:fs";
+import fs11 from "node:fs";
 import nodePath from "node:path";
 import crypto4 from "node:crypto";
 import { execFileSync as execFileSync5 } from "node:child_process";
@@ -29754,6 +29831,9 @@ function setKey(provider, key) {
   else delete next[provider];
   writeKeyFile(next);
 }
+function setKeyFromInput(provider, raw) {
+  setKey(provider, raw.trim());
+}
 function mask(key) {
   const tail = key.slice(-4);
   const head = key.startsWith("sk-") ? "sk-" : "";
@@ -29775,12 +29855,293 @@ function keyStatus() {
   return out;
 }
 
+// packages/cli/src/serve-state.ts
+import fs10 from "node:fs";
+import net from "node:net";
+import path10 from "node:path";
+import { spawn as spawn2 } from "node:child_process";
+var DEFAULT_PORT = 4318;
+var PORT_WALK_START = 4319;
+var PORT_WALK_END = 4328;
+var DEFAULT_HOST = "127.0.0.1";
+function serveStatePath(cwd = process.cwd()) {
+  return path10.join(stateDir(cwd), "serve.json");
+}
+function readServeState(cwd = process.cwd()) {
+  try {
+    const raw = JSON.parse(fs10.readFileSync(serveStatePath(cwd), "utf8"));
+    if (!raw || typeof raw !== "object") return null;
+    const s = raw;
+    if (typeof s.port !== "number" || !Number.isInteger(s.port) || s.port <= 0) return null;
+    return {
+      pid: typeof s.pid === "number" ? s.pid : 0,
+      port: s.port,
+      host: typeof s.host === "string" ? s.host : DEFAULT_HOST,
+      url: typeof s.url === "string" && s.url ? s.url : viewerOrigin(DEFAULT_HOST, s.port),
+      startedAt: typeof s.startedAt === "string" ? s.startedAt : "",
+      idleMinutes: typeof s.idleMinutes === "number" ? s.idleMinutes : null,
+      version: typeof s.version === "string" ? s.version : ""
+    };
+  } catch {
+    return null;
+  }
+}
+function writeServeState(state, cwd = process.cwd()) {
+  try {
+    const dir = stateDir(cwd);
+    ensureStateDir(dir);
+    fs10.writeFileSync(path10.join(dir, "serve.json"), JSON.stringify(state, null, 2) + "\n");
+  } catch {
+  }
+}
+function removeServeState(cwd = process.cwd()) {
+  try {
+    fs10.rmSync(serveStatePath(cwd), { force: true });
+  } catch {
+  }
+}
+function viewerOrigin(host, port) {
+  const h = host === "127.0.0.1" || host === "0.0.0.0" || host === "::" || host === "::1" || !host ? "localhost" : host;
+  return `http://${h}:${port}`;
+}
+function defaultViewerUrl(port = DEFAULT_PORT) {
+  return viewerOrigin(DEFAULT_HOST, port);
+}
+function publicViewerUrl(url) {
+  const q = url.indexOf("?");
+  if (q === -1) return url;
+  const hash = url.indexOf("#");
+  return hash > q ? url.slice(0, q) + url.slice(hash) : url.slice(0, q);
+}
+function agentViewerBase(cwd = process.cwd()) {
+  return publicViewerUrl(readServeState(cwd)?.url ?? defaultViewerUrl());
+}
+function viewerUrl(base2, target = {}) {
+  const hash = target.component !== void 0 && target.component !== "" ? `#/c/${encodeURIComponent(target.component)}${target.section ? `/${encodeURIComponent(target.section)}` : ""}` : target.settings !== void 0 ? target.settings === "" ? "#/settings" : `#/settings/${encodeURIComponent(target.settings)}` : "";
+  if (hash === "") return base2;
+  try {
+    const u = new URL(base2);
+    u.hash = hash;
+    return u.toString();
+  } catch {
+    return base2;
+  }
+}
+async function probeHealth(base2, timeoutMs = 300) {
+  try {
+    const res = await fetch(new URL("/api/health", base2), {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { accept: "application/json" }
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    if (!body || body.ok !== true || typeof body.repoId !== "string") return null;
+    return {
+      ok: true,
+      repoId: body.repoId,
+      pid: typeof body.pid === "number" ? body.pid : 0,
+      version: typeof body.version === "string" ? body.version : "",
+      startedAt: typeof body.startedAt === "string" ? body.startedAt : ""
+    };
+  } catch {
+    return null;
+  }
+}
+function tcpOpen(host, port, timeoutMs = 150) {
+  const connectHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  return new Promise((resolve4) => {
+    const socket = net.connect({ host: connectHost, port });
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve4(v);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+async function resolveViewer(cwd = process.cwd(), target = {}, timeoutMs = 300) {
+  const state = readServeState(cwd);
+  if (state) {
+    const health = await probeHealth(viewerOrigin(state.host, state.port), timeoutMs);
+    if (health && health.repoId === resolveRepoId(cwd)) {
+      return { url: viewerUrl(state.url, target), running: true, port: state.port };
+    }
+    return {
+      url: viewerUrl(viewerOrigin(state.host, state.port), target),
+      running: false,
+      port: state.port
+    };
+  }
+  return { url: viewerUrl(defaultViewerUrl(), target), running: false, port: DEFAULT_PORT };
+}
+function portCandidates(preferred) {
+  const out = [preferred];
+  for (let p = PORT_WALK_START; p <= PORT_WALK_END; p++) if (p !== preferred) out.push(p);
+  return out;
+}
+var SCAN_BUDGET_MS = 1e3;
+var BOOT_BUDGET_MS = 2200;
+function spawnDaemon(cwd, host, port, idleMinutes, token) {
+  const script = process.argv[1];
+  if (!script) return null;
+  const args = [
+    ...process.execArgv,
+    script,
+    "serve",
+    "--port",
+    String(port),
+    "--host",
+    host
+  ];
+  if (idleMinutes && idleMinutes > 0) args.push("--idle-minutes", String(idleMinutes));
+  if (token) args.push("--token", token);
+  try {
+    const child = spawn2(process.execPath, args, {
+      cwd,
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env }
+    });
+    child.on("error", () => {
+    });
+    child.unref();
+    return child.pid ?? null;
+  } catch {
+    return null;
+  }
+}
+async function pollHealth(base2, repoId, budgetMs) {
+  const deadline = Date.now() + budgetMs;
+  for (; ; ) {
+    const health = await probeHealth(base2, 250);
+    if (health && health.repoId === repoId) return health;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, 120));
+  }
+}
+function sameOrigin(a, b) {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+function serverWrittenState(cwd, host, port) {
+  const s = readServeState(cwd);
+  if (!s || s.port !== port) return null;
+  return sameOrigin(s.url, viewerOrigin(host, port)) ? s : null;
+}
+function stateFor(port, host, pid, idleMinutes, version, startedAt, url) {
+  return {
+    pid,
+    port,
+    host,
+    url: url ?? viewerOrigin(host, port),
+    startedAt,
+    idleMinutes: idleMinutes && idleMinutes > 0 ? idleMinutes : null,
+    version
+  };
+}
+async function ensureServer(opts = {}) {
+  const cwd = opts.cwd ?? process.cwd();
+  const host = opts.host ?? DEFAULT_HOST;
+  const repoId = resolveRepoId(cwd);
+  const preferred = opts.port ?? DEFAULT_PORT;
+  const recorded = readServeState(cwd);
+  if (recorded) {
+    const health2 = await probeHealth(viewerOrigin(recorded.host, recorded.port), 400);
+    if (health2 && health2.repoId === repoId) {
+      return {
+        url: recorded.url,
+        port: recorded.port,
+        pid: health2.pid || recorded.pid,
+        started: false,
+        reused: true
+      };
+    }
+    removeServeState(cwd);
+  }
+  const scanDeadline = Date.now() + SCAN_BUDGET_MS;
+  const candidates = portCandidates(preferred);
+  let firstFree = null;
+  for (const port of candidates) {
+    if (Date.now() > scanDeadline && firstFree === null) break;
+    const base3 = viewerOrigin(host, port);
+    if (await tcpOpen(host, port, 150)) {
+      const health2 = await probeHealth(base3, 300);
+      if (health2 && health2.repoId === repoId) {
+        const known = serverWrittenState(cwd, host, port) ?? (recorded && recorded.port === port && sameOrigin(recorded.url, base3) ? recorded : null);
+        const url = known?.url ?? base3;
+        writeServeState(
+          stateFor(port, host, health2.pid, opts.idleMinutes, health2.version, health2.startedAt, url),
+          cwd
+        );
+        return { url, port, pid: health2.pid, started: false, reused: true };
+      }
+      continue;
+    }
+    firstFree = port;
+    break;
+  }
+  if (firstFree === null) {
+    throw new Error(
+      `no free port for the map viewer (tried ${preferred} and ${PORT_WALK_START}-${PORT_WALK_END})`
+    );
+  }
+  if (opts.spawn === false) {
+    return { url: viewerOrigin(host, firstFree), port: firstFree, pid: null, started: false, reused: false };
+  }
+  const base2 = viewerOrigin(host, firstFree);
+  spawnDaemon(cwd, host, firstFree, opts.idleMinutes, opts.token);
+  const health = await pollHealth(base2, repoId, BOOT_BUDGET_MS);
+  if (!health) {
+    throw new Error(`the map viewer did not come up on ${host}:${firstFree} \u2014 try \`scale serve\` to see why`);
+  }
+  const written = serverWrittenState(cwd, host, firstFree);
+  if (written) {
+    return {
+      url: written.url,
+      port: firstFree,
+      pid: health.pid || written.pid,
+      started: true,
+      reused: false
+    };
+  }
+  writeServeState(
+    stateFor(firstFree, host, health.pid, opts.idleMinutes, health.version, health.startedAt),
+    cwd
+  );
+  return { url: base2, port: firstFree, pid: health.pid, started: true, reused: false };
+}
+async function stopServer(cwd = process.cwd()) {
+  const state = readServeState(cwd);
+  if (!state) return { stopped: false, pid: null, port: null };
+  const health = await probeHealth(viewerOrigin(state.host, state.port), 400);
+  let stopped = false;
+  const pid = health && health.repoId === resolveRepoId(cwd) ? health.pid : 0;
+  if (pid > 0) {
+    try {
+      process.kill(pid, "SIGTERM");
+      stopped = true;
+    } catch {
+    }
+  }
+  removeServeState(cwd);
+  return { stopped, pid: pid || state.pid || null, port: state.port };
+}
+
 // packages/cli/src/llm.ts
 var MissingKeyError = class extends Error {
   provider;
   constructor(provider) {
+    const viewer = agentViewerBase();
     super(
-      `no API key for ${provider}. Set ${provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}, or add one in the map viewer (\u2699 API key).`
+      `no API key for ${provider}. Set ${provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}, or add one with /scale-settings in chat, or in the map viewer at ${viewer} (\u2699 API key).`
     );
     this.name = "MissingKeyError";
     this.provider = provider;
@@ -29842,10 +30203,11 @@ async function chatText(req) {
 
 // packages/cli/src/quest.ts
 var DEFAULT_TOP_K = 3;
+var DEFAULT_QUIZ = QuizConfigSchema.parse({});
 function readMapJsonSafe(cwd) {
   try {
     return JSON.parse(
-      fs10.readFileSync(nodePath.join(cwd, ".scale", "map.json"), "utf8")
+      fs11.readFileSync(nodePath.join(cwd, ".scale", "map.json"), "utf8")
     );
   } catch {
     return null;
@@ -29869,7 +30231,7 @@ function touchedComponentsSince(dir, sinceIso) {
   if (!Number.isFinite(cutoff)) return out;
   let text;
   try {
-    text = fs10.readFileSync(paths.evidence(dir), "utf8");
+    text = fs11.readFileSync(paths.evidence(dir), "utf8");
   } catch {
     return out;
   }
@@ -29937,20 +30299,28 @@ function asDim(v, fallback) {
   return typeof v === "string" && DIMS.includes(v) ? v : fallback;
 }
 var KO_ITEM_INSTRUCTION = " Write every learner-facing string (question prompts, options, seed questions, feedback) in Korean. Keep code identifiers, file paths, function/variable names, and established technical terms in English. The JSON structure and its keys stay exactly as specified.";
-async function llmQuizItems(provider, model, doc2, language = "en", neighbours, drift) {
+function quizThemeInstructions(quiz, hasDrift) {
+  const focus = quiz.focus === "auto" ? "Vary the dimension across the items \u2014 do not write two of the same kind." : `EVERY item must probe the "${quiz.focus}" dimension and set "dim" to "${quiz.focus}". Do not vary the dimension.`;
+  const grounding = quiz.grounding === "diff" ? hasDrift ? " Every stem must be ABOUT THE CHANGE described in the recent-changes section above \u2014 what it did, what it broke, or what it now makes possible \u2014 not about the component in the abstract." : " Ground every stem in the component doc; no change context is available for this component, so do not invent one." : quiz.grounding === "doc" ? " Ground every stem in the component's documented design alone." : "";
+  return `${focus}${grounding}`;
+}
+async function llmQuizItems(provider, model, doc2, quiz, language = "en", neighbours, drift) {
+  const shownDrift = quiz.grounding === "doc" ? null : drift;
   const text = await chatText({
     provider,
     model,
-    maxTokens: 1024,
+    // Five items do not fit in the two-item budget, and a truncated reply is a
+    // parse failure that silently downgrades the whole check to the fallback.
+    maxTokens: Math.max(1024, 512 * quiz.items),
     system: 'You write multiple-choice comprehension items for a code-onboarding tutor. Ground every item strictly in the provided component doc \u2014 its concepts, its rationale, and its prose. Each item tags the comprehension dimension it probes: "structure" (how the component is built \u2014 its moving parts, its data and control flow, its invariants), "concepts" (its named ideas), or "rationale" (why it was designed that way, and what the rejected alternatives would have cost). NEVER write a lookup item: nothing whose answer is a name, a file, or a restatement that could be found by searching the doc for a word in the question. An item must require reasoning ABOUT the mechanism \u2014 predict a behavior in a new case, identify what breaks if a decision were reversed, or pick the consequence of an invariant being violated. Distractors must be real misconceptions: the plausible-but-wrong reading of the design, or the alternative the doc explicitly rejected. Return ONLY JSON, no prose.' + (language === "ko" ? KO_ITEM_INSTRUCTION : ""),
     messages: [
       {
         role: "user",
-        content: `${groundingText(doc2, neighbours, drift)}
+        content: `${groundingText(doc2, neighbours, shownDrift)}
 
-Write exactly 2 multiple-choice items. Return JSON of the form:
+Write exactly ${quiz.items} multiple-choice item${quiz.items === 1 ? "" : "s"}. Return JSON of the form:
 {"items":[{"stem":"...","options":["A","B","C","D"],"correctIndex":0,"dim":"concepts"}]}
-Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be faithful to the doc; distractors plausible but wrong, and similar in length and register so none is a giveaway. Vary the dimension across the two items \u2014 do not write two of the same kind.`
+Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be faithful to the doc; distractors plausible but wrong, and similar in length and register so none is a giveaway. ` + quizThemeInstructions(quiz, shownDrift != null)
       }
     ]
   });
@@ -29970,11 +30340,15 @@ Rules: exactly 4 options each; correctIndex is 0-3; the correct option must be f
       options,
       answer: options[correctIndex],
       correctIndex,
-      dim: asDim(raw.dim, "concepts")
+      // An explicit focus is the user's instruction to the GRADER as much as to
+      // the writer — `scale record --dim` is driven off this tag, so letting a
+      // model's stray `dim` through would silently credit a dimension the
+      // junior did not ask to be drilled on.
+      dim: quiz.focus === "auto" ? asDim(raw.dim, "concepts") : quiz.focus
     });
   }
   if (items.length === 0) throw new Error("llm quiz produced no valid items");
-  return items.slice(0, 2);
+  return items.slice(0, quiz.items);
 }
 async function llmSocraticItems(provider, model, doc2, language = "en", neighbours, drift) {
   const text = await chatText({
@@ -30062,10 +30436,9 @@ function mcqItem(stem, correct, distractors, dim, language = "en") {
     dim
   };
 }
-function deterministicQuizItems(doc2, loaded, language = "en", neighbours) {
+function deterministicQuizItems(doc2, loaded, language = "en", neighbours, quiz = DEFAULT_QUIZ) {
   const fm = doc2.frontmatter;
   const ko = language === "ko";
-  const items = [];
   const nearIds = /* @__PURE__ */ new Set([
     ...neighbours?.dependsOn ?? [],
     ...neighbours?.dependedOnBy ?? []
@@ -30078,60 +30451,92 @@ function deterministicQuizItems(doc2, loaded, language = "en", neighbours) {
     if (p.id === fm.id) continue;
     const isNear = nearIds.has(p.id);
     for (const c of p.frontmatter.concepts) (isNear ? nearConcepts : farConcepts).push(c.name);
-    for (const r2 of p.frontmatter.rationale) {
-      if (r2.why) (isNear ? nearWhys : farWhys).push(r2.why);
+    for (const r of p.frontmatter.rationale) {
+      if (r.why) (isNear ? nearWhys : farWhys).push(r.why);
     }
   }
-  if (fm.concepts.length > 0) {
-    const c = fm.concepts[0];
-    items.push(
-      mcqItem(
-        ko ? `\uB2E4\uC74C \uC911 "${fm.title}"\uC758 \uD575\uC2EC \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which of these is a core concept of "${fm.title}"?`,
+  const seed = (base2, rep) => rep === 0 ? base2 : `${base2}:${rep}`;
+  const conceptItems = fm.concepts.map(
+    (c, i) => (rep) => mcqItem(
+      i === 0 ? ko ? `\uB2E4\uC74C \uC911 "${fm.title}"\uC758 \uD575\uC2EC \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which of these is a core concept of "${fm.title}"?` : ko ? `"${fm.title}"\uAC00 \uB2E4\uB8E8\uB294 \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which idea does "${fm.title}" cover?`,
+      c.name,
+      pickDistractors(
+        nearConcepts,
+        farConcepts,
         c.name,
-        pickDistractors(nearConcepts, farConcepts, c.name, 3, `${fm.id}:concepts`),
-        "concepts",
-        language
-      )
-    );
-  }
-  const r = fm.rationale.find((e) => e.why);
-  if (r && r.why) {
-    items.push(
-      mcqItem(
-        ko ? `"${fm.title}"\uC5D0\uC11C "${r.decision}"\uB77C\uB294 \uACB0\uC815\uC740 \uC65C \uB0B4\uB824\uC84C\uC744\uAE4C\uC694?` : `In "${fm.title}", why was this decision made \u2014 "${r.decision}"?`,
+        3,
+        seed(`${fm.id}:concepts${i === 0 ? "" : i + 1}`, rep)
+      ),
+      "concepts",
+      language
+    )
+  );
+  const rationaleItems = fm.rationale.filter((e) => Boolean(e.why)).map(
+    (r, i) => (rep) => mcqItem(
+      ko ? `"${fm.title}"\uC5D0\uC11C "${r.decision}"\uB77C\uB294 \uACB0\uC815\uC740 \uC65C \uB0B4\uB824\uC84C\uC744\uAE4C\uC694?` : `In "${fm.title}", why was this decision made \u2014 "${r.decision}"?`,
+      r.why,
+      pickDistractors(
+        nearWhys,
+        farWhys,
         r.why,
-        pickDistractors(nearWhys, farWhys, r.why, 3, `${fm.id}:rationale`),
-        "rationale",
-        language
-      )
-    );
-  }
-  while (items.length < 2) {
-    if (fm.concepts.length > items.length) {
-      const c = fm.concepts[items.length];
-      items.push(
-        mcqItem(
-          ko ? `"${fm.title}"\uAC00 \uB2E4\uB8E8\uB294 \uAC1C\uB150\uC740 \uBB34\uC5C7\uC778\uAC00\uC694?` : `Which idea does "${fm.title}" cover?`,
-          c.name,
-          pickDistractors(nearConcepts, farConcepts, c.name, 3, `${fm.id}:concepts2`),
-          "concepts",
-          language
-        )
-      );
-    } else {
-      const src = fm.sources[0] ?? fm.title;
-      items.push(
-        mcqItem(
-          ko ? `"${fm.title}"\uAC00 \uB2F4\uB2F9\uD558\uB294 \uCF54\uB4DC\uBCA0\uC774\uC2A4 \uC601\uC5ED\uC740 \uC5B4\uB514\uC778\uAC00\uC694?` : `Which area of the codebase does "${fm.title}" own?`,
-          src,
-          ko ? ["\uAD00\uB828 \uC5C6\uB294 \uBAA8\uB4C8", "\uBE4C\uB4DC \uC2DC\uC2A4\uD15C", "\uC11C\uB4DC\uD30C\uD2F0 \uC758\uC874\uC131"] : ["An unrelated module", "The build system", "Third-party dependencies"],
-          "structure",
-          language
-        )
-      );
+        3,
+        seed(`${fm.id}:rationale${i === 0 ? "" : i + 1}`, rep)
+      ),
+      "rationale",
+      language
+    )
+  );
+  const structureSources = fm.sources.length > 0 ? fm.sources : [fm.title];
+  const structureItems = structureSources.map(
+    (src) => () => mcqItem(
+      ko ? `"${fm.title}"\uAC00 \uB2F4\uB2F9\uD558\uB294 \uCF54\uB4DC\uBCA0\uC774\uC2A4 \uC601\uC5ED\uC740 \uC5B4\uB514\uC778\uAC00\uC694?` : `Which area of the codebase does "${fm.title}" own?`,
+      src,
+      ko ? ["\uAD00\uB828 \uC5C6\uB294 \uBAA8\uB4C8", "\uBE4C\uB4DC \uC2DC\uC2A4\uD15C", "\uC11C\uB4DC\uD30C\uD2F0 \uC758\uC874\uC131"] : ["An unrelated module", "The build system", "Third-party dependencies"],
+      "structure",
+      language
+    )
+  );
+  const pools = {
+    concepts: conceptItems,
+    rationale: rationaleItems,
+    structure: structureItems
+  };
+  const drawn = { concepts: 0, rationale: 0, structure: 0 };
+  const next = (dim, recycle = false) => {
+    const pool = pools[dim];
+    if (pool.length === 0) return null;
+    const n = drawn[dim];
+    if (n >= pool.length) {
+      if (!recycle || dim === "structure") return null;
+      drawn[dim] = n + 1;
+      return pool[n % pool.length](Math.floor(n / pool.length));
+    }
+    drawn[dim] = n + 1;
+    return pool[n](0);
+  };
+  const wanted = Math.max(1, quiz.items);
+  const items = [];
+  if (quiz.focus !== "auto") {
+    for (let i = items.length; i < wanted; i++) {
+      const it = next(quiz.focus);
+      if (!it) break;
+      items.push(it);
     }
   }
-  return items.slice(0, 2);
+  if (items.length < wanted) {
+    const c = next("concepts");
+    if (c) items.push(c);
+  }
+  if (items.length < wanted) {
+    const r = next("rationale");
+    if (r) items.push(r);
+  }
+  while (items.length < wanted) {
+    const it = next("concepts") ?? next("rationale") ?? next("structure") ?? next("concepts", true) ?? next("rationale", true);
+    if (!it) break;
+    items.push(it);
+  }
+  return items;
 }
 function deterministicSocraticItems(doc2, language = "en") {
   const fm = doc2.frontmatter;
@@ -30194,6 +30599,7 @@ async function generateQuests(cwd, opts = {}) {
           provider,
           model,
           doc2,
+          config2.quiz,
           config2.language,
           neighbours.get(componentId),
           drift
@@ -30214,7 +30620,13 @@ async function generateQuests(cwd, opts = {}) {
     }
     if (!items) {
       usedFallback = true;
-      items = modality === "quiz" ? deterministicQuizItems(doc2, loaded, config2.language, neighbours.get(componentId)) : deterministicSocraticItems(doc2, config2.language);
+      items = modality === "quiz" ? deterministicQuizItems(
+        doc2,
+        loaded,
+        config2.language,
+        neighbours.get(componentId),
+        config2.quiz
+      ) : deterministicSocraticItems(doc2, config2.language);
     }
     quests.push(makeQuest(componentId, modality, items));
   }
@@ -30223,7 +30635,7 @@ async function generateQuests(cwd, opts = {}) {
   );
   const merged = [...existing, ...quests];
   ensureStateDir(dir);
-  fs10.writeFileSync(questsPath, JSON.stringify(merged, null, 2) + "\n");
+  fs11.writeFileSync(questsPath, JSON.stringify(merged, null, 2) + "\n");
   return {
     via: usedLlm ? usedFallback ? "mixed" : "llm" : "fallback",
     model,
@@ -30258,13 +30670,13 @@ async function generateVoluntaryQuest(cwd, componentId) {
   let items = null;
   let via = "fallback";
   try {
-    items = modality === "quiz" ? await llmQuizItems(provider, model, doc2, config2.language, neighbours, drift) : await llmSocraticItems(provider, model, doc2, config2.language, neighbours, drift);
+    items = modality === "quiz" ? await llmQuizItems(provider, model, doc2, config2.quiz, config2.language, neighbours, drift) : await llmSocraticItems(provider, model, doc2, config2.language, neighbours, drift);
     via = "llm";
   } catch {
     items = null;
   }
   if (!items || items.length === 0) {
-    items = modality === "quiz" ? deterministicQuizItems(doc2, loaded, config2.language, neighbours) : deterministicSocraticItems(doc2, config2.language);
+    items = modality === "quiz" ? deterministicQuizItems(doc2, loaded, config2.language, neighbours, config2.quiz) : deterministicSocraticItems(doc2, config2.language);
     via = "fallback";
   }
   const quest2 = makeQuest(componentId, modality, items, "voluntary");
@@ -30272,7 +30684,7 @@ async function generateVoluntaryQuest(cwd, componentId) {
     (q) => !(q.origin === "voluntary" && q.status === "pending" && q.componentId === componentId)
   );
   ensureStateDir(dir);
-  fs10.writeFileSync(paths.quests(dir), JSON.stringify([...existing, quest2], null, 2) + "\n");
+  fs11.writeFileSync(paths.quests(dir), JSON.stringify([...existing, quest2], null, 2) + "\n");
   return { quest: quest2, via, model };
 }
 var DIM_NAMES = ["structure", "concepts", "rationale"];
@@ -30400,7 +30812,7 @@ function finishCompletion(cwd, dir, quests, questId, componentId, recorded) {
     (q) => q.id === questId ? { ...q, status: "completed" } : q
   );
   ensureStateDir(dir);
-  fs10.writeFileSync(paths.quests(dir), JSON.stringify(updated, null, 2) + "\n");
+  fs11.writeFileSync(paths.quests(dir), JSON.stringify(updated, null, 2) + "\n");
   let component = emptyComponentCoverage();
   try {
     const { coverage: coverage2 } = recomputeCoverageFromDisk(cwd);
@@ -30412,8 +30824,8 @@ function finishCompletion(cwd, dir, quests, questId, componentId, recorded) {
 
 // packages/cli/src/translate.ts
 import crypto5 from "node:crypto";
-import fs11 from "node:fs";
-import path10 from "node:path";
+import fs12 from "node:fs";
+import path11 from "node:path";
 var TARGET_LANGS = /* @__PURE__ */ new Set(["ko"]);
 var LANG_NAMES = { ko: "Korean", en: "English" };
 var CachedTranslationSchema = external_exports.object({
@@ -30445,26 +30857,26 @@ function cacheFileName(id, lang) {
   return `${safe}.${lang}.json`;
 }
 function translationCachePath(dir, id, lang) {
-  return path10.join(paths.translations(dir), cacheFileName(id, lang));
+  return path11.join(paths.translations(dir), cacheFileName(id, lang));
 }
 function readmePath(doc2) {
   try {
-    const hit = fs11.readdirSync(doc2.path, { withFileTypes: true }).find((e) => e.isFile() && e.name.toLowerCase() === "readme.md");
-    if (hit) return path10.join(doc2.path, hit.name);
+    const hit = fs12.readdirSync(doc2.path, { withFileTypes: true }).find((e) => e.isFile() && e.name.toLowerCase() === "readme.md");
+    if (hit) return path11.join(doc2.path, hit.name);
   } catch {
   }
-  return path10.join(doc2.path, "README.md");
+  return path11.join(doc2.path, "README.md");
 }
 function sourceShaOf(doc2) {
   try {
-    return crypto5.createHash("sha256").update(fs11.readFileSync(readmePath(doc2))).digest("hex");
+    return crypto5.createHash("sha256").update(fs12.readFileSync(readmePath(doc2))).digest("hex");
   } catch {
     return crypto5.createHash("sha256").update(doc2.body, "utf8").digest("hex");
   }
 }
 function readCache(dir, id, lang, sourceSha) {
   try {
-    const raw = fs11.readFileSync(translationCachePath(dir, id, lang), "utf8");
+    const raw = fs12.readFileSync(translationCachePath(dir, id, lang), "utf8");
     const rec = CachedTranslationSchema.parse(JSON.parse(raw));
     if (rec.id !== id || rec.lang !== lang || rec.sourceSha !== sourceSha) return null;
     return rec;
@@ -30475,14 +30887,14 @@ function readCache(dir, id, lang, sourceSha) {
 function writeCache(dir, rec) {
   const target = translationCachePath(dir, rec.id, rec.lang);
   ensureStateDir(dir);
-  fs11.mkdirSync(paths.translations(dir), { recursive: true });
+  fs12.mkdirSync(paths.translations(dir), { recursive: true });
   const tmp = `${target}.tmp.${process.pid}.${Date.now().toString(36)}`;
   try {
-    fs11.writeFileSync(tmp, JSON.stringify(rec, null, 2) + "\n");
-    fs11.renameSync(tmp, target);
+    fs12.writeFileSync(tmp, JSON.stringify(rec, null, 2) + "\n");
+    fs12.renameSync(tmp, target);
   } catch {
     try {
-      fs11.unlinkSync(tmp);
+      fs12.unlinkSync(tmp);
     } catch {
     }
   }
@@ -30822,6 +31234,7 @@ async function translateUncached(opts, sourceSha, english) {
 }
 
 // packages/cli/src/serve.ts
+var SERVE_VERSION = true ? "0.4.0" : "0.0.0-dev";
 var SOCRATIC_MAX_EXCHANGES = 3;
 var socraticDialogues = /* @__PURE__ */ new Map();
 var DIALOGUE_TTL_MS = 60 * 60 * 1e3;
@@ -30852,23 +31265,23 @@ function shortHeadSha3(cwd) {
 function readConfigOrDefault2(cwd, dir) {
   return loadEffectiveConfig(cwd, dir).config;
 }
-var here = path11.dirname(fileURLToPath(import.meta.url));
+var here = path12.dirname(fileURLToPath(import.meta.url));
 function resolveWebDist() {
   const candidates = [];
-  if (process.env.SCALE_WEB_DIST) candidates.push(path11.resolve(process.env.SCALE_WEB_DIST));
-  candidates.push(path11.resolve(here, "..", "web-dist"));
-  candidates.push(path11.resolve(here, "web-dist"));
+  if (process.env.SCALE_WEB_DIST) candidates.push(path12.resolve(process.env.SCALE_WEB_DIST));
+  candidates.push(path12.resolve(here, "..", "web-dist"));
+  candidates.push(path12.resolve(here, "web-dist"));
   const argv1 = process.argv[1];
   if (argv1) {
-    const argvDir = path11.dirname(path11.resolve(argv1));
-    candidates.push(path11.resolve(argvDir, "..", "web-dist"));
-    candidates.push(path11.resolve(argvDir, "web-dist"));
+    const argvDir = path12.dirname(path12.resolve(argv1));
+    candidates.push(path12.resolve(argvDir, "..", "web-dist"));
+    candidates.push(path12.resolve(argvDir, "web-dist"));
   }
-  const monorepo = path11.resolve(here, "..", "..", "web", "dist");
+  const monorepo = path12.resolve(here, "..", "..", "web", "dist");
   candidates.push(monorepo);
   for (const c of candidates) {
     try {
-      if (fs12.existsSync(path11.join(c, "index.html"))) return c;
+      if (fs13.existsSync(path12.join(c, "index.html"))) return c;
     } catch {
     }
   }
@@ -30943,7 +31356,7 @@ function parseBody(raw) {
 }
 function readMapJson(cwd) {
   try {
-    const raw = fs12.readFileSync(path11.join(cwd, ".scale", "map.json"), "utf8");
+    const raw = fs13.readFileSync(path12.join(cwd, ".scale", "map.json"), "utf8");
     return JSON.parse(raw);
   } catch {
     return null;
@@ -30960,27 +31373,27 @@ function synthesizeCoverage(map2, dir) {
   });
 }
 function serveStatic(res, urlPath) {
-  if (!fs12.existsSync(WEB_DIST)) {
-    const html = '<!doctype html><meta charset="utf-8"><title>scale serve</title><body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem"><h1>SCALE map</h1><p>The web app has not been built yet. Run:</p><pre>npm run build -w @scale/web</pre><p>then restart <code>scale serve</code>. The JSON API is already live at <code>/api/map</code>, <code>/api/coverage</code>, <code>/api/doc/:id</code>, <code>POST /api/doc/:id/translation</code> (\u{1F9E0} LLM), <code>/api/quests</code>.</p></body>';
+  if (!fs13.existsSync(WEB_DIST)) {
+    const html = '<!doctype html><meta charset="utf-8"><title>scale serve</title><body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem"><h1>SCALE map</h1><p>The web app has not been built yet. Run:</p><pre>npm run build -w @scale/web</pre><p>then restart <code>scale serve</code>. The JSON API is already live at <code>/api/map</code>, <code>/api/coverage</code>, <code>/api/docs</code>, <code>/api/doc/:id</code>, <code>POST /api/doc/:id/translation</code> (\u{1F9E0} LLM), <code>/api/quests</code>.</p></body>';
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(html);
     return;
   }
   const rel = decodeURIComponent(urlPath.split("?")[0] ?? "/").replace(/^\/+/, "");
-  let filePath = path11.resolve(WEB_DIST, rel);
-  if (filePath !== WEB_DIST && !filePath.startsWith(WEB_DIST + path11.sep)) {
-    filePath = path11.join(WEB_DIST, "index.html");
+  let filePath = path12.resolve(WEB_DIST, rel);
+  if (filePath !== WEB_DIST && !filePath.startsWith(WEB_DIST + path12.sep)) {
+    filePath = path12.join(WEB_DIST, "index.html");
   }
-  if (!fs12.existsSync(filePath) || fs12.statSync(filePath).isDirectory()) {
-    filePath = path11.join(WEB_DIST, "index.html");
+  if (!fs13.existsSync(filePath) || fs13.statSync(filePath).isDirectory()) {
+    filePath = path12.join(WEB_DIST, "index.html");
   }
-  if (!fs12.existsSync(filePath)) {
+  if (!fs13.existsSync(filePath)) {
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
     return;
   }
-  const ext = path11.extname(filePath).toLowerCase();
-  const body = fs12.readFileSync(filePath);
+  const ext = path12.extname(filePath).toLowerCase();
+  const body = fs13.readFileSync(filePath);
   res.writeHead(200, {
     "content-type": MIME[ext] ?? "application/octet-stream",
     "content-length": body.length
@@ -31001,11 +31414,15 @@ function presentsToken(req, url, token) {
   };
   return fromHeader !== "" && eq(fromHeader) || fromQuery !== "" && eq(fromQuery);
 }
-async function handle(req, res, cwd, token) {
+async function handle(req, res, cwd, token, health) {
   const dir = stateDir(cwd);
   const url = req.url ?? "/";
   const pathname = url.split("?")[0] ?? "/";
   const isApi = pathname === "/api" || pathname.startsWith("/api/");
+  if (pathname === "/api/health") {
+    sendJson(res, 200, health);
+    return;
+  }
   const authed = token !== null && presentsToken(req, url, token);
   if (isApi && token !== null && !authed && req.method !== "OPTIONS") {
     res.writeHead(401, {
@@ -31051,6 +31468,14 @@ async function handle(req, res, cwd, token) {
       await handleSettingsPatch(req, res, cwd, dir);
       return;
     }
+    if (pathname === "/api/policy/unset") {
+      await handlePolicyUnset(req, res, cwd, dir);
+      return;
+    }
+    if (pathname === "/api/policy" || pathname === "/api/policy/") {
+      await handlePolicyPatch(req, res, cwd, dir);
+      return;
+    }
     if (pathname === "/api/keys" || pathname === "/api/keys/") {
       await handleKeySet(req, res);
       return;
@@ -31091,10 +31516,10 @@ async function handle(req, res, cwd, token) {
   if (pathname === "/api/coverage") {
     const evPath = paths.evidence(dir);
     const covPath = paths.coverage(dir);
-    const hasEvidence = fs12.existsSync(evPath) && fs12.statSync(evPath).size > 0;
+    const hasEvidence = fs13.existsSync(evPath) && fs13.statSync(evPath).size > 0;
     if (hasEvidence) {
-      const evMtime = fs12.statSync(evPath).mtimeMs;
-      const covMtime = fs12.existsSync(covPath) ? fs12.statSync(covPath).mtimeMs : -1;
+      const evMtime = fs13.statSync(evPath).mtimeMs;
+      const covMtime = fs13.existsSync(covPath) ? fs13.statSync(covPath).mtimeMs : -1;
       if (covMtime < evMtime) {
         try {
           sendJson(res, 200, recomputeCoverageFromDisk(cwd).coverage);
@@ -31123,6 +31548,7 @@ async function handle(req, res, cwd, token) {
   }
   if (pathname === "/api/settings" || pathname === "/api/settings/") {
     const eff = loadEffectiveConfig(cwd, dir);
+    const identity = identityOf(cwd, dir);
     sendJson(res, 200, {
       config: eff.config,
       policy: {
@@ -31133,8 +31559,29 @@ async function handle(req, res, cwd, token) {
       sources: settingsSources(cwd, dir),
       keys: keyStatus(),
       repoId: resolveRepoId(cwd),
-      stateDir: dir
+      stateDir: dir,
+      identity,
+      isLead: isLead(readPolicyRaw(cwd).raw, identity)
     });
+    return;
+  }
+  if (pathname === "/api/policy" || pathname === "/api/policy/") {
+    sendJson(res, 200, policyPayload(cwd, dir));
+    return;
+  }
+  if (pathname === "/api/preview/quiz" || pathname === "/api/preview/quiz/") {
+    handleQuizPreview(res, new URL(url, "http://x").searchParams, cwd, dir);
+    return;
+  }
+  if (pathname === "/api/docs" || pathname === "/api/docs/") {
+    const index = loadScaleDir(cwd).docs.map((d) => ({
+      id: d.id,
+      title: d.frontmatter.title,
+      province: d.province,
+      dir: d.dir
+    }));
+    index.sort((a, b) => a.province.localeCompare(b.province) || a.title.localeCompare(b.title));
+    sendJson(res, 200, index);
     return;
   }
   const docMatch = /^\/api\/doc\/([^/]+)\/?$/.exec(pathname);
@@ -31146,7 +31593,7 @@ async function handle(req, res, cwd, token) {
       sendJson(res, 404, { error: "unknown component", id });
       return;
     }
-    sendJson(res, 200, { frontmatter: doc2.frontmatter, body: doc2.body });
+    sendJson(res, 200, { frontmatter: doc2.frontmatter, body: doc2.body, dir: doc2.dir });
     return;
   }
   if (pathname.startsWith("/api/")) {
@@ -31247,7 +31694,16 @@ async function handleSettingsPatch(req, res, cwd, dir) {
   const next = { ...currentRaw };
   if (typeof patch.user === "string" && patch.user.trim()) next.user = patch.user.trim();
   if (typeof patch.language === "string") next.language = patch.language;
-  for (const section of ["gate", "unlock", "exempt", "drift", "budgets", "thresholds", "models"]) {
+  for (const section of [
+    "gate",
+    "quiz",
+    "unlock",
+    "exempt",
+    "drift",
+    "budgets",
+    "thresholds",
+    "models"
+  ]) {
     if (patch[section] !== void 0) {
       next[section] = mergeSection(next[section], patch[section]);
     }
@@ -31262,7 +31718,7 @@ async function handleSettingsPatch(req, res, cwd, dir) {
     return;
   }
   ensureStateDir(dir);
-  fs12.writeFileSync(paths.config(dir), JSON.stringify(migrated, null, 2) + "\n");
+  fs13.writeFileSync(paths.config(dir), JSON.stringify(migrated, null, 2) + "\n");
   recordConfigDelta(dir, cwd, before, resolved.config, "web", false);
   sendJson(res, 200, {
     config: resolved.config,
@@ -31297,13 +31753,205 @@ async function handleSettingsUnset(req, res, cwd, dir) {
     return;
   }
   ensureStateDir(dir);
-  fs12.writeFileSync(paths.config(dir), JSON.stringify(next, null, 2) + "\n");
+  fs13.writeFileSync(paths.config(dir), JSON.stringify(next, null, 2) + "\n");
   recordConfigDelta(dir, cwd, before, resolved.config, "web", true);
   sendJson(res, 200, {
     config: resolved.config,
     keys: keyStatus(),
     sources: settingsSources(cwd, dir)
   });
+}
+function richestDoc(loaded) {
+  let best = null;
+  let bestScore = -1;
+  for (const doc2 of loaded.docs) {
+    const score = doc2.frontmatter.concepts.length + doc2.frontmatter.rationale.length;
+    if (score > bestScore || score === bestScore && best && doc2.id < best.id) {
+      best = doc2;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+function handleQuizPreview(res, params, cwd, dir) {
+  const requested = {};
+  const items = params.get("items");
+  if (items !== null) requested.items = Number(items);
+  const focus = params.get("focus");
+  if (focus !== null) requested.focus = focus;
+  const grounding = params.get("grounding");
+  if (grounding !== null) requested.grounding = grounding;
+  const quiz = QuizConfigSchema.safeParse(requested);
+  if (!quiz.success) {
+    const issue = quiz.error.issues[0];
+    sendJson(res, 400, {
+      error: "invalid quiz shape",
+      detail: issue ? `${issue.path.join(".") || "(root)"}: ${issue.message}` : "invalid"
+    });
+    return;
+  }
+  const loaded = loadScaleDir(cwd);
+  if (loaded.docs.length === 0) {
+    sendJson(res, 404, { error: "no coverage memory", hint: "run /scale-map in this repo" });
+    return;
+  }
+  const wanted = params.get("component");
+  const doc2 = wanted ? docById(loaded, wanted) : richestDoc(loaded);
+  if (!doc2) {
+    sendJson(res, 404, { error: "unknown component", id: wanted });
+    return;
+  }
+  const config2 = readConfigOrDefault2(cwd, dir);
+  const map2 = readMapJson(cwd);
+  const neighbours = map2 ? neighbourIndex(map2).get(doc2.id) : void 0;
+  const generated = deterministicQuizItems(doc2, loaded, config2.language, neighbours, quiz.data);
+  sendJson(res, 200, {
+    componentId: doc2.id,
+    title: doc2.frontmatter.title,
+    // `correctIndex` and `answer` are deliberately stripped. This is the same
+    // rule the quest runner follows (questForClient): the answer key never
+    // reaches the browser, and a preview is not a reason to make an exception —
+    // these are real items the junior may be asked later.
+    items: generated.map((i) => ({ stem: i.prompt, options: i.options ?? [], dim: i.dim })),
+    /** Every component the picker may offer, cheapest possible payload. */
+    components: loaded.docs.map((d) => ({ id: d.id, title: d.frontmatter.title })).sort((a, b) => a.id < b.id ? -1 : 1),
+    /**
+     * The deterministic generator builds from the doc's frontmatter and has no
+     * access to a session diff, so `grounding` changes nothing here. Said out
+     * loud rather than silently showing identical items for three settings.
+     */
+    groundingPreviewable: false
+  });
+}
+function policyPath(cwd) {
+  return path12.join(cwd, ".scale", "policy.json");
+}
+function policyIsDirty(cwd) {
+  try {
+    const out = execFileSync6("git", ["status", "--porcelain", "--", ".scale/policy.json"], {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    });
+    return out.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+function identityOf(cwd, dir) {
+  try {
+    return currentIdentityEmails(cwd, loadEffectiveConfig(cwd, dir).config);
+  } catch {
+    return [];
+  }
+}
+function policyPayload(cwd, dir, extra = {}) {
+  const policy = readPolicyRaw(cwd);
+  const identity = identityOf(cwd, dir);
+  const eff = loadEffectiveConfig(cwd, dir);
+  return {
+    path: policyPath(cwd),
+    exists: policy.present,
+    parseError: policy.parseError,
+    // The RAW file, not a parsed one: a parse would materialize every schema
+    // default into the sections and the UI could no longer tell "the team set
+    // soft" from "nobody set anything".
+    raw: policy.parseError ? null : policy.raw ?? null,
+    leads: policyLeads(policy.raw),
+    identity,
+    isLead: isLead(policy.raw, identity),
+    dirty: policyIsDirty(cwd),
+    error: eff.policyError,
+    ...extra
+  };
+}
+function validatePolicy(next, dir) {
+  const parsed = PolicyFileSchema.safeParse(next);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return issue ? `${issue.path.join(".") || "(root)"}: ${issue.message}` : "invalid policy";
+  }
+  try {
+    const user = readUserConfigRaw(dir) ?? { user: process.env.USER ?? "user" };
+    const resolved = resolveConfig(migrateLegacyConfig(user), next);
+    if (resolved.policyError) return resolved.policyError;
+  } catch (err) {
+    return err.message;
+  }
+  return null;
+}
+function writePolicyFile(cwd, next) {
+  fs13.mkdirSync(path12.dirname(policyPath(cwd)), { recursive: true });
+  fs13.writeFileSync(policyPath(cwd), JSON.stringify(next, null, 2) + "\n");
+}
+function currentPolicyObject(cwd) {
+  const policy = readPolicyRaw(cwd);
+  if (policy.parseError || !policy.raw || typeof policy.raw !== "object" || Array.isArray(policy.raw)) {
+    return {};
+  }
+  return structuredClone(policy.raw);
+}
+async function handlePolicyPatch(req, res, cwd, dir) {
+  const before = readPolicyRaw(cwd);
+  const identity = identityOf(cwd, dir);
+  if (!isLead(before.raw, identity)) {
+    sendJson(res, 403, { error: "not a lead", leads: policyLeads(before.raw), identity });
+    return;
+  }
+  const patch = parseBody(await readBody(req));
+  const next = currentPolicyObject(cwd);
+  if (patch.leads !== void 0) {
+    if (!Array.isArray(patch.leads)) {
+      sendJson(res, 400, { error: "leads must be an array of email addresses" });
+      return;
+    }
+    const cleaned = [];
+    for (const raw of patch.leads) {
+      const email = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+      if (email && !cleaned.includes(email)) cleaned.push(email);
+    }
+    next.leads = cleaned;
+  }
+  for (const section of POLICY_SECTIONS) {
+    if (patch[section] === void 0) continue;
+    next[section] = deepMerge(next[section], patch[section]);
+  }
+  const invalid = validatePolicy(next, dir);
+  if (invalid) {
+    sendJson(res, 400, { error: "invalid policy", detail: invalid });
+    return;
+  }
+  writePolicyFile(cwd, next);
+  const warning = Array.isArray(next.leads) && next.leads.length === 0 && policyLeads(before.raw).length > 0 ? "no leads are listed any more \u2014 anyone can now edit the team policy" : void 0;
+  sendJson(res, 200, policyPayload(cwd, dir, warning ? { warning } : {}));
+}
+async function handlePolicyUnset(req, res, cwd, dir) {
+  const before = readPolicyRaw(cwd);
+  const identity = identityOf(cwd, dir);
+  if (!isLead(before.raw, identity)) {
+    sendJson(res, 403, { error: "not a lead", leads: policyLeads(before.raw), identity });
+    return;
+  }
+  const body = parseBody(await readBody(req));
+  const dotted = typeof body.path === "string" ? body.path.trim() : "";
+  if (!/^[a-zA-Z][\w.]*$/.test(dotted)) {
+    sendJson(res, 400, { error: "path must be a dotted policy key" });
+    return;
+  }
+  const section = dotted.split(".")[0];
+  if (section !== "leads" && !POLICY_SECTIONS.includes(section)) {
+    sendJson(res, 400, { error: `"${section}" is not a policy section` });
+    return;
+  }
+  const next = unsetPath(currentPolicyObject(cwd), dotted);
+  const invalid = validatePolicy(next, dir);
+  if (invalid) {
+    sendJson(res, 400, { error: "invalid policy", detail: invalid });
+    return;
+  }
+  writePolicyFile(cwd, next);
+  const warning = policyLeads(next).length === 0 && policyLeads(before.raw).length > 0 ? "no leads are listed any more \u2014 anyone can now edit the team policy" : void 0;
+  sendJson(res, 200, policyPayload(cwd, dir, warning ? { warning } : {}));
 }
 async function handleKeySet(req, res) {
   const body = parseBody(await readBody(req));
@@ -31505,7 +32153,7 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
     const updated = quests.map(
       (q) => q.id === questId ? { ...q, status: "completed" } : q
     );
-    fs12.writeFileSync(paths.quests(dir), JSON.stringify(updated, null, 2) + "\n");
+    fs13.writeFileSync(paths.quests(dir), JSON.stringify(updated, null, 2) + "\n");
     socraticDialogues.delete(questId);
     let component = emptyComponentCoverage();
     try {
@@ -31527,11 +32175,21 @@ async function handleSocraticMessage(req, res, cwd, dir, questId) {
 function startServer(opts) {
   const cwd = opts.cwd ?? process.cwd();
   const repoId = resolveRepoId(cwd);
+  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const health = {
+    ok: true,
+    repoId,
+    pid: process.pid,
+    version: SERVE_VERSION,
+    startedAt
+  };
+  let lastRequestAt = Date.now();
   const host = opts.host ?? "127.0.0.1";
   const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
   const token = opts.token?.trim() || (loopback ? null : crypto6.randomBytes(18).toString("base64url"));
   const server = http.createServer((req, res) => {
-    handle(req, res, cwd, token).catch((err) => {
+    lastRequestAt = Date.now();
+    handle(req, res, cwd, token, health).catch((err) => {
       sendJson(res, 500, { error: err.message });
     });
   });
@@ -31549,8 +32207,59 @@ function startServer(opts) {
     }
     process.exitCode = 1;
   });
+  const clearOwnState = () => {
+    if (!opts.trackState) return;
+    const current = readServeState(cwd);
+    if (!current || current.pid === process.pid) removeServeState(cwd);
+  };
+  let closing = false;
+  const shutdown = (why) => {
+    if (closing) return;
+    closing = true;
+    clearOwnState();
+    if (why === "idle") {
+      console.log(
+        `scale: no requests for ${opts.idleMinutes} minute(s) \u2014 the map viewer is exiting.`
+      );
+    }
+    server.close(() => process.exit(0));
+    const hard = setTimeout(() => process.exit(0), 1500);
+    hard.unref();
+  };
+  if (opts.trackState) {
+    process.once("SIGTERM", () => shutdown("signal"));
+    process.once("SIGINT", () => shutdown("signal"));
+    process.once("exit", clearOwnState);
+  }
+  const idleMinutes = opts.idleMinutes;
+  if (idleMinutes !== void 0 && idleMinutes > 0) {
+    const idleMs = idleMinutes * 6e4;
+    const tick = setInterval(
+      () => {
+        if (Date.now() - lastRequestAt >= idleMs) shutdown("idle");
+      },
+      Math.max(1e3, Math.min(idleMs, 3e4))
+    );
+    tick.unref();
+  }
   server.listen(opts.port, host, () => {
-    const scalePresent = fs12.existsSync(path11.join(cwd, ".scale"));
+    const scalePresent = fs13.existsSync(path12.join(cwd, ".scale"));
+    if (opts.trackState) {
+      const bound = server.address();
+      const actualPort = bound && typeof bound === "object" ? bound.port : opts.port;
+      writeServeState(
+        {
+          pid: process.pid,
+          port: actualPort,
+          host,
+          url: viewerOrigin(host, actualPort) + (token ? `/?token=${token}` : ""),
+          startedAt,
+          idleMinutes: idleMinutes && idleMinutes > 0 ? idleMinutes : null,
+          version: SERVE_VERSION
+        },
+        cwd
+      );
+    }
     const q = token ? `/?token=${token}` : "";
     if (loopback) {
       console.log(`scale: serving http://localhost:${opts.port}${q}`);
@@ -31564,10 +32273,10 @@ function startServer(opts) {
       );
     }
     console.log(`  repo-id:  ${repoId}`);
-    console.log(`  memory:   ${path11.join(cwd, ".scale")}${scalePresent ? "" : "  (missing!)"}`);
+    console.log(`  memory:   ${path12.join(cwd, ".scale")}${scalePresent ? "" : "  (missing!)"}`);
     console.log(`  state:    ${stateDir(cwd)}`);
     console.log(`  config:   ${paths.config(stateDir(cwd))}`);
-    if (!fs12.existsSync(WEB_DIST)) {
+    if (!fs13.existsSync(WEB_DIST)) {
       console.log("  web:      dist not built \u2014 run `npm run build -w @scale/web`");
     }
   });
@@ -31575,14 +32284,14 @@ function startServer(opts) {
 }
 
 // packages/cli/src/deps.ts
-import fs13 from "node:fs";
-import path12 from "node:path";
+import fs14 from "node:fs";
+import path13 from "node:path";
 var DEPS_MIN_COUNT = 2;
 function loadDependsOnEdges(cwd, nodeIds) {
   let deps;
   try {
     deps = JSON.parse(
-      fs13.readFileSync(path12.join(cwd, ".scale", "deps.json"), "utf8")
+      fs14.readFileSync(path13.join(cwd, ".scale", "deps.json"), "utf8")
     );
   } catch {
     return [];
@@ -31602,6 +32311,47 @@ function loadDependsOnEdges(cwd, nodeIds) {
     edges.push({ from, to, kind: "depends_on" });
   }
   return edges;
+}
+
+// packages/cli/src/setup.ts
+import fs15 from "node:fs";
+import path14 from "node:path";
+function countComponents(cwd) {
+  try {
+    return loadScaleDir(cwd).docs.length;
+  } catch {
+    return 0;
+  }
+}
+async function buildSetupStatus(cwd = process.cwd()) {
+  const dir = stateDir(cwd);
+  const eff = loadEffectiveConfig(cwd, dir).config;
+  const provider = eff.models.provider;
+  const components = countComponents(cwd);
+  const viewer = await resolveViewer(cwd, {}, 300);
+  return {
+    repoId: resolveRepoId(cwd),
+    stateDir: dir,
+    initialized: configExists(dir),
+    // The identity as the user actually wrote it, not the schema's fallback —
+    // "no config" must read as null, not as whoever $USER happens to be.
+    user: readConfigSafe(dir)?.user ?? null,
+    memory: {
+      present: fs15.existsSync(path14.join(cwd, ".scale")) && components > 0,
+      components
+    },
+    provider,
+    keyPresent: keyStatus()[provider].configured,
+    gate: {
+      assessment: eff.gate.assessment,
+      modality: eff.gate.modality,
+      enforcement: eff.gate.enforcement
+    },
+    language: eff.language,
+    // Token-free (`publicViewerUrl`): this JSON is read by the SessionStart
+    // hook and by skills, and ends up in the transcript verbatim.
+    viewer: { url: publicViewerUrl(viewer.url), running: viewer.running }
+  };
 }
 
 // packages/cli/src/hook-input.ts
@@ -31697,7 +32447,7 @@ function splitList(v) {
   return v.split(",").map((s) => s.trim()).filter(Boolean);
 }
 function relToRepo(cwd, file) {
-  const rel = path13.relative(cwd, path13.resolve(cwd, file));
+  const rel = path15.relative(cwd, path15.resolve(cwd, file));
   return rel && !rel.startsWith("..") ? rel : file;
 }
 function headSha(cwd) {
@@ -31725,7 +32475,7 @@ function git3(cwd, args) {
 function recentlyAddressedComponents(dir, now, ttlMinutes) {
   let text;
   try {
-    text = fs14.readFileSync(paths.evidence(dir), "utf8");
+    text = fs16.readFileSync(paths.evidence(dir), "utf8");
   } catch {
     return [];
   }
@@ -31760,7 +32510,7 @@ function recentlyAddressedComponents(dir, now, ttlMinutes) {
 function readMapJsonSafe2(cwd) {
   try {
     return JSON.parse(
-      fs14.readFileSync(path13.join(cwd, ".scale", "map.json"), "utf8")
+      fs16.readFileSync(path15.join(cwd, ".scale", "map.json"), "utf8")
     );
   } catch {
     return null;
@@ -31793,7 +32543,7 @@ function matchComponentsFromText(loaded, text) {
 function fmt(n) {
   return n.toFixed(2).replace(/\.?0+$/, "") || "0";
 }
-function contextSummary(res, config2, dir) {
+function contextSummary(res, config2, dir, viewer) {
   const language = config2.language;
   const { coverage: coverage2, map: map2 } = res;
   const counts = coverageCounts(coverage2, map2);
@@ -31835,11 +32585,17 @@ function contextSummary(res, config2, dir) {
   const owed = Object.keys(locks.pendingUnlocks).sort();
   if (owed.length > 0) {
     lines.push(
-      `Unlocked for editing: ${unlockedCount}/${map2.nodes.length}. ${owed.length} territory still owes a check from an earlier denied edit: ${owed.slice(0, 5).join(", ")}${owed.length > 5 ? ` +${owed.length - 5} more` : ""}. The junior can pass it with /scale-study <id> here, or in the map viewer (scale serve).`
+      `Unlocked for editing: ${unlockedCount}/${map2.nodes.length}. ${owed.length} territory still owes a check from an earlier denied edit: ${owed.slice(0, 5).join(", ")}${owed.length > 5 ? ` +${owed.length - 5} more` : ""}. The junior can pass it with /scale-study <id> here, or in the map viewer at ${viewer.url} (/scale-open <id> opens that component's panel).`
     );
   } else if (config2.gate.enabled) {
     lines.push(`Unlocked for editing: ${unlockedCount}/${map2.nodes.length}.`);
   }
+  if (config2.gate.modality === "quiz") {
+    lines.push(quizSpecLine(config2.quiz));
+  }
+  lines.push(
+    `Map viewer: ${viewer.url}` + (viewer.running ? "" : " (not running yet)") + ` \u2014 /scale-open opens it, /scale-open <id> opens one component.`
+  );
   if (language === "ko") {
     lines.push(
       "interaction language: ko \u2014 run comprehension checks in Korean (keep code identifiers in English)"
@@ -31863,6 +32619,9 @@ program2.command("init").description("Create the ~/.scale/<repo-id>/ state dir w
   console.log(
     `  gate: ${eff.config.gate.assessment}/${eff.config.gate.modality} (${eff.config.gate.enforcement})  user: ${eff.config.user}` + (eff.policyApplied ? "  [team policy applied]" : "")
   );
+  if (eff.config.gate.modality === "quiz") {
+    console.log(`  ${quizSpecLine(eff.config.quiz)}`);
+  }
 });
 program2.command("context").description("Print the SessionStart coverage summary (injected to the agent)").action(async () => {
   const cwd = process.cwd();
@@ -31899,7 +32658,15 @@ program2.command("context").description("Print the SessionStart coverage summary
     dir,
     res.map.nodes.map((n) => n.id)
   );
-  console.log(contextSummary(res, contextConfig, dir));
+  const view = await resolveViewer(cwd, {}, 300);
+  console.log(
+    // `publicViewerUrl`: this text is read by Claude and lands in the
+    // transcript, so it must not carry the API bearer token.
+    contextSummary(res, contextConfig, dir, {
+      url: publicViewerUrl(view.url),
+      running: view.running
+    })
+  );
 });
 var session = program2.command("session").description("Budget-period accounting for the interruption gate (PLAN \xA76.1)");
 session.command("end").description(
@@ -31951,7 +32718,7 @@ function resolveIdentityStatus(cwd, config2) {
   const mine = emails.length === 0 ? 0 : authors.filter((a) => emails.includes(a)).length;
   return { emails, recentCommits: authors.length, mineOfRecent: mine };
 }
-function buildStatus(cwd, res, dir) {
+function buildStatus(cwd, res, dir, viewer) {
   const { coverage: coverage2, map: map2 } = res;
   const counts = coverageCounts(coverage2, map2);
   const eff = loadEffectiveConfig(cwd, dir);
@@ -32000,7 +32767,8 @@ function buildStatus(cwd, res, dir) {
     },
     provinces,
     stale,
-    pendingQuests: pending.length
+    pendingQuests: pending.length,
+    viewer
   };
 }
 function renderStatus(s) {
@@ -32020,6 +32788,9 @@ function renderStatus(s) {
   if (s.rebellions.length > 0) {
     lines.push(`  re-locked by rebellion: ${s.rebellions.join(", ")}`);
   }
+  lines.push(
+    `  Map viewer: ${s.viewer.url}` + (s.viewer.running ? " (running)" : " (not running \u2014 /scale-open starts it)")
+  );
   lines.push("");
   if (s.counts.total === 0) {
     lines.push("  No coverage memory found \u2014 run `/scale-map` to build .scale/, then `scale map layout`.");
@@ -32051,7 +32822,7 @@ function renderStatus(s) {
 }
 program2.command("status").description(
   "Coverage at a glance: unification progress, per-province states, stale territory, and pending quests. Read-only, no LLM (git+file reads only)."
-).option("--json", "emit machine-readable JSON instead of the summary", false).action((opts) => {
+).option("--json", "emit machine-readable JSON instead of the summary", false).action(async (opts) => {
   const cwd = process.cwd();
   const dir = stateDir(cwd);
   let res;
@@ -32064,7 +32835,11 @@ program2.command("status").description(
     process.exitCode = 1;
     return;
   }
-  const status = buildStatus(cwd, res, dir);
+  const view = await resolveViewer(cwd, {}, 300);
+  const status = buildStatus(cwd, res, dir, {
+    url: publicViewerUrl(view.url),
+    running: view.running
+  });
   if (opts.json) {
     console.log(JSON.stringify(status, null, 2));
     return;
@@ -32204,7 +32979,7 @@ gate.command("edit").description(
     for (const f of files) pending[pendingKey(sessionId, f)] = at;
     writePendingEdits(dir, pending);
   }
-  if (files.length === 0 || !fs14.existsSync(path13.join(cwd, ".scale"))) {
+  if (files.length === 0 || !fs16.existsSync(path15.join(cwd, ".scale"))) {
     emit(true, null, null);
     return;
   }
@@ -32237,6 +33012,8 @@ gate.command("edit").description(
   if (map2) for (const n of map2.nodes) importance[n.id] = n.importance;
   syncLocksWithDrift(dir, coverage2.components);
   const locks = readLocksSafe(dir);
+  const viewerBase = agentViewerBase(cwd);
+  const viewerUrlFor = (component) => viewerUrl(viewerBase, { component });
   const decided = withSessionLock(dir, () => {
     const stored = readSessionSafe(dir);
     const session2 = stored && isSessionAdoptable(stored, config2.budgets.sessionIdleResetMinutes * 6e4) ? stored : defaultSession(sessionId || crypto7.randomUUID(), nowIso2());
@@ -32265,7 +33042,8 @@ gate.command("edit").description(
       ),
       recentlyAddressed,
       now,
-      importance
+      importance,
+      viewerUrlFor
     });
     const counters = { ...session2.counters, edits: session2.counters.edits + 1 };
     const driftCause = locks.drifted[decision.component ?? ""]?.cause;
@@ -32669,16 +33447,16 @@ function isTestFile(name) {
 function isGeneratedFile(full) {
   let fd;
   try {
-    fd = fs14.openSync(full, "r");
+    fd = fs16.openSync(full, "r");
     const buf = Buffer.alloc(256);
-    const n = fs14.readSync(fd, buf, 0, buf.length, 0);
+    const n = fs16.readSync(fd, buf, 0, buf.length, 0);
     return /@generated|@preserve GENERATED|DO NOT EDIT/i.test(buf.subarray(0, n).toString("utf8"));
   } catch {
     return false;
   } finally {
     if (fd !== void 0) {
       try {
-        fs14.closeSync(fd);
+        fs16.closeSync(fd);
       } catch {
       }
     }
@@ -32690,22 +33468,22 @@ function scanSourceLoc(root) {
   const walk2 = (d) => {
     let entries;
     try {
-      entries = fs14.readdirSync(d, { withFileTypes: true });
+      entries = fs16.readdirSync(d, { withFileTypes: true });
     } catch {
       return;
     }
     for (const e of entries) {
       const name = e.name;
-      const full = path13.join(d, name);
+      const full = path15.join(d, name);
       if (e.isDirectory()) {
         if (EXCLUDE_DIRS.has(name)) continue;
         walk2(full);
       } else if (e.isFile()) {
-        const ext = path13.extname(name).toLowerCase();
+        const ext = path15.extname(name).toLowerCase();
         if (!SOURCE_EXTS.has(ext) || isTestFile(name)) continue;
         if (isGeneratedFile(full)) continue;
         try {
-          const buf = fs14.readFileSync(full);
+          const buf = fs16.readFileSync(full);
           let n = 0;
           for (let i = 0; i < buf.length; i++) if (buf[i] === 10) n++;
           files++;
@@ -32929,7 +33707,7 @@ doc.command("show").description(
   }
   const found = docById(loadScaleDir(cwd), id);
   if (!found) {
-    console.error(`scale: no component doc with id "${id}" in ${path13.join(cwd, ".scale")}.`);
+    console.error(`scale: no component doc with id "${id}" in ${path15.join(cwd, ".scale")}.`);
     process.exitCode = 1;
     return;
   }
@@ -32958,8 +33736,8 @@ map.command("layout").description("Compute/extend the frozen spatial layout \u21
   false
 ).action((opts) => {
   const cwd = process.cwd();
-  const scaleDir = path13.join(cwd, ".scale");
-  if (!fs14.existsSync(scaleDir)) {
+  const scaleDir = path15.join(cwd, ".scale");
+  if (!fs16.existsSync(scaleDir)) {
     console.error(`scale: no coverage-memory dir at ${scaleDir} \u2014 nothing to lay out.`);
     process.exitCode = 1;
     return;
@@ -32981,8 +33759,8 @@ map.command("layout").description("Compute/extend the frozen spatial layout \u21
     opts.relayout ? null : existing,
     { relayout: !!opts.relayout }
   );
-  fs14.writeFileSync(
-    path13.join(scaleDir, "map.json"),
+  fs16.writeFileSync(
+    path15.join(scaleDir, "map.json"),
     JSON.stringify(mapJson, null, 2) + "\n"
   );
   if (opts.relayout) {
@@ -33017,18 +33795,18 @@ map.command("drift").description("Flag components whose sources changed since ma
 });
 map.command("index").description("Build the file\u2192component reverse index \u2192 .scale/index.json (gitignored)").option("-o, --out <path>", "write index JSON to this path (default .scale/index.json)").action((opts) => {
   const cwd = process.cwd();
-  const scaleDir = path13.join(cwd, ".scale");
-  if (!fs14.existsSync(scaleDir)) {
+  const scaleDir = path15.join(cwd, ".scale");
+  if (!fs16.existsSync(scaleDir)) {
     console.error(`scale: no coverage-memory dir at ${scaleDir} \u2014 nothing to index.`);
     process.exitCode = 1;
     return;
   }
   const loaded = loadScaleDir(cwd);
   const index = buildFileComponentIndex(componentSourcesIndex(loaded));
-  const outPath = opts.out ? path13.resolve(cwd, opts.out) : path13.join(scaleDir, "index.json");
-  fs14.writeFileSync(outPath, JSON.stringify(index, null, 2) + "\n");
+  const outPath = opts.out ? path15.resolve(cwd, opts.out) : path15.join(scaleDir, "index.json");
+  fs16.writeFileSync(outPath, JSON.stringify(index, null, 2) + "\n");
   console.log(
-    `scale: indexed ${loaded.docs.length} component(s), ${Object.keys(index).length} file(s) \u2192 ${path13.relative(cwd, outPath) || outPath}`
+    `scale: indexed ${loaded.docs.length} component(s), ${Object.keys(index).length} file(s) \u2192 ${path15.relative(cwd, outPath) || outPath}`
   );
 });
 map.command("check").description(
@@ -33040,8 +33818,8 @@ map.command("check").description(
     else console.error(`scale: ${error}`);
     process.exitCode = 1;
   };
-  const scaleDir = path13.join(cwd, ".scale");
-  if (!fs14.existsSync(scaleDir)) {
+  const scaleDir = path15.join(cwd, ".scale");
+  if (!fs16.existsSync(scaleDir)) {
     bail(`no coverage-memory dir at ${scaleDir} \u2014 nothing to check.`);
     return;
   }
@@ -33055,9 +33833,9 @@ map.command("check").description(
   const target = partitionTarget({ loc, files });
   const index = buildFileComponentIndex(componentSourcesIndex(loaded));
   const allAnchored = Object.keys(index);
-  const deadAnchors = allAnchored.filter((f) => !fs14.existsSync(path13.resolve(cwd, f)));
+  const deadAnchors = allAnchored.filter((f) => !fs16.existsSync(path15.resolve(cwd, f)));
   const sourceAnchored = allAnchored.filter(
-    (f) => SOURCE_EXTS.has(path13.extname(f).toLowerCase()) && !isTestFile(path13.basename(f)) && fs14.existsSync(path13.resolve(cwd, f))
+    (f) => SOURCE_EXTS.has(path15.extname(f).toLowerCase()) && !isTestFile(path15.basename(f)) && fs16.existsSync(path15.resolve(cwd, f))
   );
   const anchoredFiles = sourceAnchored.length;
   const perFile = anchoredFiles > 0 ? built / anchoredFiles : null;
@@ -33133,21 +33911,288 @@ map.command("check").description(
   console.log(out.join("\n"));
   if (!partitionPasses(findings)) process.exitCode = 1;
 });
-program2.command("serve").description("Serve the local web map app (pure Node; reads .scale/ from cwd)").option("-p, --port <number>", "port", "4318").option(
+function openInBrowser(url) {
+  const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
+  try {
+    const child = spawn3(cmd, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {
+    });
+    child.unref();
+  } catch {
+  }
+}
+function targetFromOpts(opts) {
+  if (opts.component) {
+    const section = opts.section ? slugify(opts.section) : "";
+    return { component: opts.component, ...section ? { section } : {} };
+  }
+  if (opts.settings !== void 0) {
+    return { settings: typeof opts.settings === "string" ? opts.settings : "" };
+  }
+  return {};
+}
+program2.command("serve").description(
+  "The local web map app. Bare `scale serve` runs it in the foreground; `ensure` starts a detached one if none is up, `stop` stops it, `url` prints where it is, `open` opens it in a browser."
+).argument("[action]", "ensure | stop | url | open (omit to run in the foreground)").option("-p, --port <number>", "port", String(DEFAULT_PORT)).option(
   "--host <addr>",
   "bind address; defaults to loopback. Off loopback the API requires a bearer token (see --token), because this server writes config and accepts API keys",
   "127.0.0.1"
 ).option(
   "--token <secret>",
   "bearer token the API requires (Authorization: Bearer \u2026 or ?token=\u2026). Generated for you when --host is not loopback and none is given; the printed URL carries it, so open THAT on the phone"
-).action((opts) => {
-  const port = Number(opts.port);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    console.error(`scale: invalid port "${opts.port}".`);
+).option(
+  "--idle-minutes <n>",
+  "exit cleanly after N minutes with no HTTP request. Off by default in the foreground; `ensure` passes 240, because nobody is watching that one"
+).option("--component <id>", "deep-link to a component panel (url, open)").option(
+  "--section <slug>",
+  "deep-link to one section of that component's doc \u2014 `concepts`, `decisions`, or a heading slug such as `design-decisions` (needs --component)"
+).option("--settings [tab]", "deep-link to Settings: general|gate|checks|team (url, open)").option("--json", "machine-readable output (ensure, url)", false).action(
+  async (action, opts) => {
+    const cwd = process.cwd();
+    const port = Number(opts.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      console.error(`scale: invalid port "${opts.port}".`);
+      process.exitCode = 1;
+      return;
+    }
+    let idleMinutes;
+    if (opts.idleMinutes !== void 0) {
+      const n = Number(opts.idleMinutes);
+      if (!Number.isFinite(n) || n <= 0) {
+        console.error(`scale: invalid --idle-minutes "${opts.idleMinutes}".`);
+        process.exitCode = 1;
+        return;
+      }
+      idleMinutes = n;
+    }
+    switch (action ?? "run") {
+      case "run":
+        startServer({
+          port,
+          host: opts.host,
+          cwd,
+          token: opts.token,
+          idleMinutes,
+          // The foreground server IS the viewer for this repo: record it, and
+          // take the state file with it on Ctrl-C.
+          trackState: true
+        });
+        return;
+      case "ensure": {
+        try {
+          const res = await ensureServer({
+            cwd,
+            port,
+            host: opts.host,
+            token: opts.token,
+            // A viewer started on the user's behalf must not outlive their
+            // interest in it by days. Four hours is a working day's session.
+            idleMinutes: idleMinutes ?? 240
+          });
+          if (opts.json) console.log(JSON.stringify(res));
+          else console.log(res.url);
+        } catch (err) {
+          console.error(`scale: ${err.message}`);
+          process.exitCode = 1;
+        }
+        return;
+      }
+      case "stop": {
+        const res = await stopServer(cwd);
+        if (opts.json) console.log(JSON.stringify(res));
+        else if (res.stopped) console.log(`scale: stopped the map viewer (pid ${res.pid}).`);
+        else console.log("scale: no map viewer of ours was running.");
+        return;
+      }
+      case "url": {
+        const view = await resolveViewer(cwd, targetFromOpts(opts), 300);
+        if (opts.json) console.log(JSON.stringify(view));
+        else console.log(view.url);
+        return;
+      }
+      case "open": {
+        try {
+          const res = await ensureServer({
+            cwd,
+            port,
+            host: opts.host,
+            token: opts.token,
+            idleMinutes: idleMinutes ?? 240
+          });
+          const url = viewerUrl(res.url, targetFromOpts(opts));
+          openInBrowser(url);
+          console.log(url);
+        } catch (err) {
+          console.error(`scale: ${err.message}`);
+          process.exitCode = 1;
+        }
+        return;
+      }
+      default:
+        console.error(
+          `scale: unknown \`serve\` action "${action}" \u2014 use ensure, stop, url or open.`
+        );
+        process.exitCode = 1;
+    }
+  }
+);
+var STDIN_BUDGET_MS = 3e4;
+function readStdin(timeoutMs = STDIN_BUDGET_MS) {
+  if (process.stdin.isTTY) {
+    console.error("scale: paste the key and press Ctrl-D (Ctrl-C to abort).");
+  }
+  return new Promise((resolve4, reject) => {
+    const chunks = [];
+    const onData = (c) => chunks.push(Buffer.from(c));
+    const done = (fn) => {
+      clearTimeout(timer);
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      process.stdin.off("error", onError);
+      process.stdin.pause();
+      fn();
+    };
+    const onEnd = () => done(() => resolve4(Buffer.concat(chunks).toString("utf8")));
+    const onError = (err) => done(() => reject(err));
+    const timer = setTimeout(
+      () => done(
+        () => reject(new Error(`nothing arrived on stdin within ${Math.round(timeoutMs / 1e3)}s`))
+      ),
+      timeoutMs
+    );
+    process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+    process.stdin.on("error", onError);
+  });
+}
+program2.command("keys").description(
+  "API keys for the intervention model. `status` says whether each provider has one; `set <provider> --stdin` stores one read from stdin."
+).argument("[action]", "status | set", "status").argument("[provider]", "anthropic | openai (for `set`)").option("--stdin", "read the key from stdin (required for `set`)", false).option("--json", "machine-readable output", false).action(
+  async (action, provider, opts) => {
+    if (action === "status") {
+      const status = keyStatus();
+      const out = {
+        anthropic: { present: status.anthropic.configured },
+        openai: { present: status.openai.configured }
+      };
+      if (opts.json) console.log(JSON.stringify(out));
+      else {
+        for (const p of ["anthropic", "openai"]) {
+          const src = status[p].source;
+          console.log(
+            `${p.padEnd(10)} ${out[p].present ? `configured (${src === "env" ? "environment" : "stored"})` : "not set"}`
+          );
+        }
+      }
+      return;
+    }
+    if (action !== "set") {
+      console.error("scale: usage \u2014 scale keys status [--json] | scale keys set <provider> --stdin");
+      process.exitCode = 1;
+      return;
+    }
+    const parsed = LlmProviderSchema.safeParse(provider);
+    if (!parsed.success) {
+      console.error("scale: usage \u2014 scale keys set <anthropic|openai> --stdin");
+      process.exitCode = 1;
+      return;
+    }
+    if (!opts.stdin) {
+      console.error(
+        "scale: --stdin is required. The key is read from stdin only \u2014 never from an argument, which `ps` and your shell history would keep."
+      );
+      process.exitCode = 1;
+      return;
+    }
+    let raw;
+    try {
+      raw = await readStdin();
+    } catch (err) {
+      console.error(
+        `scale: ${err.message}. Pipe the key in, e.g. \`pbpaste | scale keys set anthropic --stdin\`.`
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (!raw.trim()) {
+      console.error(
+        "scale: nothing on stdin. Pipe the key in, e.g. `pbpaste | scale keys set anthropic --stdin`."
+      );
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      setKeyFromInput(parsed.data, raw);
+    } catch (err) {
+      console.error(`scale: could not store the key \u2014 ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`scale: stored the ${parsed.data} key.`);
+  }
+);
+program2.command("setup").description("Report what SCALE still needs in this repo (config, memory, key, viewer)").argument("[action]", "only `status` is supported", "status").option("--json", "machine-readable output", false).action(async (action, opts) => {
+  if (action !== "status") {
+    console.error("scale: usage \u2014 scale setup status [--json]");
     process.exitCode = 1;
     return;
   }
-  startServer({ port, host: opts.host, cwd: process.cwd(), token: opts.token });
+  const s = await buildSetupStatus(process.cwd());
+  if (opts.json) {
+    console.log(JSON.stringify(s));
+    return;
+  }
+  console.log(`SCALE setup \u2014 ${s.repoId}`);
+  console.log(`  state      ${s.stateDir}`);
+  console.log(`  config     ${s.initialized ? `yes (user: ${s.user ?? "\u2014"})` : "not initialized"}`);
+  console.log(
+    `  memory     ${s.memory.present ? `${s.memory.components} component(s)` : "none \u2014 run /scale-map"}`
+  );
+  console.log(`  provider   ${s.provider}${s.keyPresent ? " (key present)" : " \u2014 NO API KEY"}`);
+  console.log(`  gate       ${s.gate.assessment}/${s.gate.modality} (${s.gate.enforcement})`);
+  console.log(`  language   ${s.language}`);
+  console.log(`  viewer     ${s.viewer.url}${s.viewer.running ? "" : "  (not running)"}`);
+});
+program2.command("policy").description("Show the committed team policy (.scale/policy.json) and your role in it").argument("[action]", "only `show` is supported", "show").action((action) => {
+  if (action !== "show") {
+    console.error("scale: usage \u2014 scale policy show");
+    console.error("  (edit the policy in the Settings modal Team tab, or in an editor)");
+    process.exitCode = 1;
+    return;
+  }
+  const cwd = process.cwd();
+  const dir = stateDir(cwd);
+  const file = path15.join(cwd, ".scale", "policy.json");
+  const policy = readPolicyRaw(cwd);
+  const eff = loadEffectiveConfig(cwd, dir);
+  const identity = currentIdentityEmails(cwd, eff.config);
+  const leads = policyLeads(policy.raw);
+  const lead = isLead(policy.raw, identity);
+  console.log(`policy file: ${file}`);
+  if (!policy.present) {
+    console.log("  (none committed \u2014 every setting falls back to the schema defaults)");
+  } else if (policy.parseError) {
+    console.log("  \u26A0 present but NOT valid JSON \u2014 it is being ignored entirely");
+  } else {
+    console.log(JSON.stringify(policy.raw, null, 2));
+    if (eff.policyError) console.log(`  \u26A0 ignored: ${eff.policyError}`);
+  }
+  console.log(
+    `
+leads: ${leads.length > 0 ? leads.join(", ") : "(nobody listed \u2014 anyone may edit)"}`
+  );
+  console.log(
+    `your git identity: ${identity.length > 0 ? identity.join(", ") : "(none resolved)"}`
+  );
+  console.log(`you are: ${lead ? "a TEAM LEAD" : "a member"}`);
+  if (lead && leads.length === 0) {
+    console.log(
+      "  Nobody is a lead yet, so anyone can edit the policy. Add yourself to `leads` to close it."
+    );
+  }
+  console.log(
+    "\nNote: `leads` gates the Settings UI, not the file. Anyone who can write the repo can edit .scale/policy.json directly \u2014 use git review / CODEOWNERS on that path for the real control."
+  );
 });
 var config = program2.command("config").description(
   "Read/write the user config (gate, budgets, thresholds). `get` shows the EFFECTIVE config (schema defaults < team policy < your overrides); `set` writes a personal override into your sparse config.json."
@@ -33170,12 +34215,57 @@ function setPath(obj, dotted, value) {
   cursor[keys[keys.length - 1]] = value;
   return out;
 }
-config.command("get").description("Print the EFFECTIVE config, or a single dotted key (e.g. gate.assessment)").argument("[key]", "dotted key path").option("--raw", "print your sparse user overrides file instead of the effective view", false).action((key, opts) => {
+function explainKey(cwd, dir, key, json) {
+  const policy = readPolicyRaw(cwd);
+  const sources = explainConfig(
+    readUserConfigRaw(dir) ?? { user: process.env.USER ?? "user" },
+    policy.parseError ? void 0 : policy.raw
+  );
+  const render = (k) => {
+    const leaf2 = sources[k];
+    const label = leaf2.source === "user" ? "user override" : leaf2.source === "policy" ? "team policy" : "default";
+    const extra = leaf2.source === "user" && leaf2.policyValue !== void 0 ? `; team default: ${JSON.stringify(leaf2.policyValue)}` : leaf2.source === "user" && leaf2.defaultValue !== void 0 ? `; default: ${JSON.stringify(leaf2.defaultValue)}` : "";
+    return `${k} = ${JSON.stringify(leaf2.value)}  (source: ${label}${extra})`;
+  };
+  if (!key) {
+    if (json) console.log(JSON.stringify(sources));
+    else for (const k of Object.keys(sources).sort()) console.log(render(k));
+    return;
+  }
+  const leaf = sources[key];
+  if (!leaf) {
+    console.error(`scale: no such config key "${key}".`);
+    process.exitCode = 1;
+    return;
+  }
+  if (json) {
+    console.log(
+      JSON.stringify({
+        key,
+        value: leaf.value,
+        source: leaf.source,
+        ...leaf.policyValue !== void 0 ? { policyValue: leaf.policyValue } : {},
+        ...leaf.defaultValue !== void 0 ? { defaultValue: leaf.defaultValue } : {}
+      })
+    );
+  } else {
+    console.log(render(key));
+  }
+}
+config.command("get").description("Print the EFFECTIVE config, or a single dotted key (e.g. gate.assessment)").argument("[key]", "dotted key path").option("--raw", "print your sparse user overrides file instead of the effective view", false).option(
+  "--explain",
+  "also say WHERE the value comes from: your override, the team policy, or the schema default (and what the team default would be)",
+  false
+).option("--json", "machine-readable output (with --explain)", false).action((key, opts) => {
   const cwd = process.cwd();
   const dir = stateDir(cwd);
   if (!configExists(dir)) {
     console.error("scale: no config found \u2014 run `scale init` first.");
     process.exitCode = 1;
+    return;
+  }
+  if (opts.explain) {
+    explainKey(cwd, dir, key, opts.json === true);
     return;
   }
   const view = opts.raw ? readUserConfigRaw(dir) ?? {} : loadEffectiveConfig(cwd, dir).config;
@@ -33289,7 +34379,7 @@ telemetry.command("summary").description("Counts and the learning-vs-avoidance r
 telemetry.command("path").description("Print the telemetry file path").action(() => console.log(paths.telemetry(stateDir(process.cwd()))));
 program2.command("reset").description("Delete the ~/.scale/<repo-id>/ state dir (demo/pilot reset)").option("-y, --yes", "skip the confirmation prompt", false).action(async (opts) => {
   const dir = stateDir();
-  if (!fs14.existsSync(dir)) {
+  if (!fs16.existsSync(dir)) {
     console.log(`scale: nothing to reset (no state at ${dir}).`);
     return;
   }
@@ -33300,7 +34390,7 @@ program2.command("reset").description("Delete the ~/.scale/<repo-id>/ state dir 
       return;
     }
   }
-  fs14.rmSync(dir, { recursive: true, force: true });
+  fs16.rmSync(dir, { recursive: true, force: true });
   console.log(`scale: reset \u2014 removed ${dir}`);
 });
 function confirm(prompt) {

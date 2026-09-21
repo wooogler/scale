@@ -1,4 +1,16 @@
-import { ScaleConfigSchema, migrateLegacyConfig, type ScaleConfig } from './config.js';
+import { z } from 'zod';
+import {
+  ScaleConfigSchema,
+  migrateLegacyConfig,
+  GateConfigSchema,
+  QuizConfigSchema,
+  UnlockConfigSchema,
+  ExemptConfigSchema,
+  DriftConfigSchema,
+  BudgetsSchema,
+  ThresholdsSchema,
+  type ScaleConfig,
+} from './config.js';
 
 /**
  * Team policy — the lead's DEFAULTS, not rules (PLAN-GATE §0-6, §2).
@@ -24,9 +36,19 @@ import { ScaleConfigSchema, migrateLegacyConfig, type ScaleConfig } from './conf
  * The CLI/serve writers are responsible for keeping it sparse.
  */
 
-/** The config sections a team policy may default. Everything else is personal. */
+/**
+ * The config sections a team policy may default. Everything else is personal.
+ *
+ * `leads` is deliberately NOT here: it is a policy-file key, not a config
+ * section, so it never merges into anyone's ScaleConfig and never appears in
+ * provenance. See {@link PolicyFileSchema} / {@link isLead}.
+ */
 export const POLICY_SECTIONS = [
   'gate',
+  // The check's SHAPE (items/focus/grounding) is policy-settable for the same
+  // reason `budgets` is: a lead piloting on a codebase with thin docs sets the
+  // check length once, and a member who wants longer checks still overrides it.
+  'quiz',
   'unlock',
   'exempt',
   'drift',
@@ -34,6 +56,94 @@ export const POLICY_SECTIONS = [
   'thresholds',
 ] as const;
 export type PolicySection = (typeof POLICY_SECTIONS)[number];
+
+/**
+ * Git email addresses of the people the team calls LEADS.
+ *
+ * Compared case-insensitively against the reader's own resolved identities (the
+ * same `git config user.email` + `identity.emails` set drift attribution uses),
+ * because git addresses are case-insensitive in practice and nobody should lose
+ * their own policy access to a capital letter.
+ */
+export const LeadsSchema = z.array(z.string().min(1));
+
+/**
+ * The whole `.scale/policy.json` FILE — the policy sections plus `leads`.
+ *
+ * Two things this schema is NOT:
+ *
+ *  - It is not a security boundary. `leads` gates the Settings modal's Team tab
+ *    and the `/api/policy` writes behind it, and nothing else: the file is
+ *    ordinary JSON in the repo, so anyone who can write the working tree can
+ *    edit it with an editor. The real control over what lands on the shared
+ *    branch is git — review and CODEOWNERS on this path. The list exists so a
+ *    member does not casually retune the team's defaults from a settings UI
+ *    while thinking they are changing their own, which is a UX problem.
+ *  - It is not the shape that gets WRITTEN. Every section schema fills its own
+ *    defaults, so parsing `{gate:{enforcement:'hard'}}` yields a fully
+ *    materialized `gate` — writing that back would freeze today's schema
+ *    defaults into the team file and pin every member to them forever. Callers
+ *    validate with this and persist the RAW sparse object they started from.
+ *
+ * Unknown keys pass through rather than failing, matching what the merge
+ * already does: `resolveConfig` copies only {@link POLICY_SECTIONS}, so a
+ * personal key (`user`, `language`, `models`) or a typo'd section in a policy
+ * file is inert, not fatal.
+ */
+export const PolicyFileSchema = z
+  .object({
+    leads: LeadsSchema.optional(),
+    gate: GateConfigSchema.optional(),
+    quiz: QuizConfigSchema.optional(),
+    unlock: UnlockConfigSchema.optional(),
+    exempt: ExemptConfigSchema.optional(),
+    drift: DriftConfigSchema.optional(),
+    budgets: BudgetsSchema.optional(),
+    thresholds: ThresholdsSchema.optional(),
+  })
+  .passthrough();
+export type PolicyFile = z.infer<typeof PolicyFileSchema>;
+
+/** Normalize one email for comparison: trimmed, lowercased, '' when unusable. */
+function normalizeEmail(v: unknown): string {
+  return typeof v === 'string' ? v.trim().toLowerCase() : '';
+}
+
+/**
+ * The `leads` list of a raw policy object, normalized and deduped. Anything
+ * that is not a list of non-empty strings reads as EMPTY — see {@link isLead}
+ * for why that is the safe direction.
+ */
+export function policyLeads(policyRaw: unknown): string[] {
+  if (!isPlainObject(policyRaw) || !Array.isArray(policyRaw.leads)) return [];
+  const out: string[] = [];
+  for (const raw of policyRaw.leads) {
+    const email = normalizeEmail(raw);
+    if (email && !out.includes(email)) out.push(email);
+  }
+  return out;
+}
+
+/**
+ * Does the person behind `identityEmails` count as a team lead?
+ *
+ * The BOOTSTRAP rule is the whole design: with no policy file, an unparseable
+ * one, or an empty `leads` list, EVERYONE is a lead. A repo that has never
+ * thought about roles must not be one nobody can configure, and a lock whose
+ * only key is inside the locked file is a bug, not a policy. The first person
+ * to add themselves to `leads` is what closes it — deliberately a positive act
+ * by a named human, recorded in git history like every other policy change.
+ *
+ * Consequently removing the last lead REOPENS the repo to everyone. That is the
+ * intended escape hatch (a lead who leaves the team should not be able to strand
+ * it), and the UI warns before it happens rather than refusing.
+ */
+export function isLead(policyRaw: unknown, identityEmails: string[]): boolean {
+  const leads = policyLeads(policyRaw);
+  if (leads.length === 0) return true; // bootstrap — see above
+  const mine = new Set(identityEmails.map(normalizeEmail).filter(Boolean));
+  return leads.some((lead) => mine.has(lead));
+}
 
 export interface ResolvedConfig {
   config: ScaleConfig;

@@ -150,6 +150,18 @@ export function myIdentities(cwd: string, config: ScaleConfig): Set<string> {
 }
 
 /**
+ * {@link myIdentities} as a sorted array — the display/transport form.
+ *
+ * The lead check ({@link isLead}) and the Team tab both answer "who am I, in
+ * git's eyes" and must answer it with exactly the same set drift attribution
+ * uses, or a person could be a lead for one feature and not the other. So this
+ * is a projection of that one resolver, never a second implementation.
+ */
+export function currentIdentityEmails(cwd: string, config: ScaleConfig): string[] {
+  return [...myIdentities(cwd, config)].sort();
+}
+
+/**
  * Every repo-relative path touched by ANY commit between the oldest of
  * `anchors` and HEAD — a true superset of what any single component could have
  * churned, since every anchor's commit range is a subset of that one.
