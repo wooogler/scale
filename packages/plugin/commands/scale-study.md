@@ -14,10 +14,13 @@ Use the **scale-tutor** skill in voluntary study mode.
 - Target component: `$ARGUMENTS` (a component `id`). If empty, offer a short menu
   of the junior's fog / low-coverage / stale territory and ask which to study.
 - Give a **reading guide** over the component doc first (hero visual, key
-  concepts, rationale; point at the `sources` to read the real code).
-- Then offer a **comprehension check** in the configured modality (quiz or
-  socratic). Passing counts as a voluntary validation, recorded via `scale
-  record` with `--origin voluntary`.
+  concepts, rationale; point at the `sources` to read the real code), with the
+  skill's **Reading pointers** — viewer section links (`#/c/<id>/<section>`,
+  translated for a Korean reader) and `[file:line](path:line)` code links.
+- Then offer a **comprehension check** in the configured modality (quiz —
+  one `AskUserQuestion` card per item — or socratic, in chat). Passing counts
+  as a voluntary validation, recorded via `scale record` with
+  `--origin voluntary`.
 
 Brief, supportive, grounded. If the junior only wants to read, that's fine —
 record nothing and leave the check open.

@@ -53,8 +53,9 @@ to the code they're shipping.
   comprehension check: an Edit/Write reaching into locked territory is denied
   (budget-limited, deterministic), and a passed check unlocks it **durably**. Two
   assessment venues, same lock: `sync` runs the check in chat right there; `async`
-  teaches at deny time and the junior unlocks later in the map viewer or via
-  `/scale-study`. Team leads set defaults in a committed `.scale/policy.json`;
+  teaches at deny time and the junior unlocks later in the map viewer — the deny hands
+  them a deep link to that component and the `/scale-open <id>` that opens it — or via
+  `/scale-study <id>`. Team leads set defaults in a committed `.scale/policy.json`;
   every member may override any knob in their own config.
 - **Game skin is UI only.** territory / conquest / fallen-or-rebuilt (and importance-sized castles)
   are a rendering layer over the neutral `component` / `coverage` / `staleness` model —
@@ -90,8 +91,18 @@ claude plugin install scale@scale-marketplace
 ```
 
 Then **quit and reopen Claude Code** — hooks are read at session start. That is the whole
-install: the hooks, both skills, the `/scale-*` commands, the map viewer, and a
+install: the hooks, the skills, the `/scale-*` commands, the map viewer, and a
 self-contained `scale` CLI all ship inside the plugin.
+
+**First run, from inside Claude Code.** On the next session start the hook starts the map
+viewer for you and prints one line — `SCALE · map viewer: http://localhost:4318 · settings
+in chat: /scale-settings`, or a nudge to run `/scale-settings` when the repo is not set up
+yet. Run **`/scale-settings`** and it walks the whole setup in chat: your label, language,
+the gate's shape (assessment / modality / enforcement) and the intervention model, one
+question at a time. The **API key is the one thing it never asks for in chat** — it points
+you at the viewer's settings page, or at `scale keys set <provider> --stdin` in your own
+terminal. No terminal is needed for anything else, and **`/scale-open`** brings the map up
+whenever you want it.
 
 To update: `claude plugin marketplace update scale-marketplace`, then
 `claude plugin update scale@scale-marketplace`, then restart.
@@ -159,6 +170,7 @@ added.
 |---|---|---|
 | `<repo>/.scale/` | the coverage memory — component docs + `map.json`, git-versioned | delete it like any other tracked content |
 | `~/.scale/<repo-id>/` | your coverage, evidence, quests, config | `rm -rf ~/.scale/<repo-id>` |
+| `~/.scale/<repo-id>/serve.json` | **transient** — the running viewer's calling card (`pid`, `port`, `host`, `url`, `startedAt`, `idleMinutes`, `version`) | `scale serve stop` removes it; a stale one is ignored |
 | `~/.scale/keys.json` | your API key (mode 0600) | delete only if you mean to; revoke it upstream too |
 
 `~/.scale/keys.json` sits in the directory you would most naturally wipe, so **do not use
@@ -172,6 +184,11 @@ timestamped backup rather than deleting it.
 ## Usage
 
 ### Configure the models (fixed two-tier policy)
+
+**`/scale-settings` does all of this in chat** — it maps "switch to opus" or "게이트를
+async로 바꿔줘" onto the same keys, and `scale config get <key> --explain` is what it reads
+to tell you whether today's value is yours, your team's, or the schema's. The CLI below is
+the same file without the conversation.
 
 ```bash
 scale config set models.intervention sonnet  # INTERVENTION: sonnet | opus   (default sonnet)
@@ -199,7 +216,13 @@ mapping. The gate's behavior lives in the same config:
 scale config set gate.assessment sync|async     # check in chat now vs unlock later
 scale config set gate.modality quiz|socratic
 scale config set gate.enforcement advisory|soft|hard
+scale config set quiz.items 3                   # MCQ items per check (1-5, default 2)
+scale config set quiz.focus rationale           # auto | structure | concepts | rationale
+scale config set quiz.grounding diff            # balanced | diff | doc
 ```
+
+`gate.*` and `budgets.*` set **how often** a check interrupts you; `quiz.*` sets
+**what it asks**.
 
 Every value you `set` becomes a **personal override**, written sparsely on top of the
 team's committed defaults in `.scale/policy.json` (see [Team policy](#team-policy)).
@@ -221,25 +244,26 @@ setting resolves at read time from schema defaults plus the repo's committed
 `.scale/policy.json` — so the gate runs with `quiz` / `sync` / `soft` out of the box and
 your user label falls back to `$USER`.
 
-Run `init` only when you want to pin that label or change a setting — `scale config
-get/set` are the one pair of commands that require it:
-
-```bash
-scale init --user <label>      # writes ~/.scale/<repo-id>/config.json (sparse: just the label)
-```
-
-It stays sparse on purpose: only explicit choices are stored, so a later team-policy
-change still reaches you instead of being shadowed by materialized defaults.
+Run **`/scale-settings`** when you want to pin that label or change a setting — it runs
+`scale init --user <label>` for you and then walks the choices in chat, one question at a
+time. (`scale init --user <label>` by hand does the same; `scale config get/set` are the
+one pair of commands that require it.) Either way the config stays sparse on purpose: only
+explicit choices are stored, so a later team-policy change still reaches you instead of
+being shadowed by materialized defaults.
 
 Then work normally in Claude Code:
 
 - **Learn:** `/scale-study [id]` (voluntary reading guide + check) or `/scale-quiz [id]`
-  (manual check) — MCQ quiz or short Socratic dialogue per `gate.modality`.
+  (manual check) — MCQ quiz (one Claude Code question card per item) or short
+  Socratic dialogue in chat, per `gate.modality`.
 - **The edit gate:** an Edit/Write into LOCKED territory (never checked, or re-locked by
-  drift) is denied. `sync` assessment: the tutor runs the check in chat and a pass
+  drift) is denied. `sync` assessment: the tutor puts the check in front of you and a pass
   unlocks the territory durably. `async` assessment: the agent teaches instead, and you
-  unlock later in the map viewer or with `/scale-study`. `scale gate defer <id>` skips —
-  a session-scoped unlock; it locks again next session.
+  unlock later with **`/scale-review`** — the owed check, in chat, run exactly as the gate
+  would have (same modality, cards, recording; only the timing differs) — or in the map
+  viewer (the deny carries a deep link plus `/scale-open <id>`), or with `/scale-study
+  <id>`. `scale gate defer <id>` skips — a session-scoped unlock; it locks again next
+  session.
 - **Drift — 함락 / 재건:** unlocking is durable but not unconditional. Every recompute measures each
   validated component's churn since the sha you validated it at, **split by author**. A
   collaborator's change past `drift.foreignRatio` re-locks the territory (SessionStart
@@ -251,9 +275,14 @@ Then work normally in Claude Code:
   the API at all. The map skins the two causes apart: a teammate's change leaves the
   territory **Fallen** (함락) with their name on it, your own rewrite leaves it **Rebuilt**
   (재건). Neither is a failure.
-- **Check progress:** `scale status` (coverage, how much territory is unlocked, what
-  drifted, and whether your git identity actually matches your commits) and
-  `scale serve` (the map).
+- **Check progress:** `/scale-status` or `scale status` (coverage, how much territory is
+  unlocked, what drifted, whether your git identity actually matches your commits — and a
+  `Map viewer:` line with the URL), and **`/scale-open`** for the map itself
+  (`/scale-open <id>` jumps to one component, `/scale-open <id> <section>` to one section of
+  its doc, `/scale-open settings` to the settings page).
+- **Post-session review in chat**: `/scale-review` runs the checks you owe — async denies
+  first, then territory touched since its last check — through the same tutor path as the
+  gate, so in-flow and post-session checks are the same process at different times.
 - **Post-session quests** (async assessment only): `scale quest generate` produces quests
   for touched components; complete them with `scale quest complete` or in the map viewer —
   passing also unlocks the territory.
@@ -340,12 +369,20 @@ A map that has drifted from the code teaches the wrong thing, which is worse tha
 | `scale context` | Print the SessionStart coverage summary injected to the agent. | ⚡ |
 | `scale doc show <id> [--lang en\|ko] [--json] [--refresh]` | Print one component doc. `--lang ko` prints a per-user translation, cached under `~/.scale/<repo-id>/translations/`; `--refresh` rebuilds it. | ⚡/🧠 |
 | `scale estimate [--json]` | Target component count + band for this repo, and the build cost per model. | ⚡ |
-| `scale config get [key]` / `set <key> <val>` | Read/write `config.json` (condition, models, budgets, thresholds). | ⚡ |
+| `scale config get [key]` / `set <key> <val>` | Read/write `config.json` (gate, quiz shape, models, budgets, thresholds). | ⚡ |
+| `scale config get <key> --explain [--json]` | The same value **plus where it came from** — `gate.assessment = "async"  (source: user override; team default: "sync")`. With no key, every leaf. | ⚡ |
+| `scale setup status [--json]` | What SCALE still needs here: `initialized`, `user`, `memory`, `provider`, `keyPresent`, `gate`, `language`, `viewer`. What `/scale-settings` reads first. | ⚡ |
+| `scale keys status [--json]` | Per provider, whether a key is present. Never prints key material. | ⚡ |
+| `scale keys set <anthropic\|openai> --stdin` | Store a key read from **stdin only** — never as an argv value, which would land in shell history. | ⚡ |
+| `scale policy show` | Print `.scale/policy.json`, its `leads`, your git identity, and whether you count as a lead. | ⚡ |
 | `scale log prompt \| touch \| review` | Append a raw passive signal to `evidence.jsonl` (hook fast-append). | ⚡ |
 | `scale gate edit` | Decide if an edit into locked territory is denied (PreToolUse hook); prints one JSON line, always exit 0. | ⚡ |
 | `scale gate defer <id>` | Skip a component's check — a session-scoped unlock; it locks again next session. | ⚡ |
 | `scale record <id> [-d -s \| --socratic]` | Record a quiz/Socratic validation outcome; updates coverage. | ⚡ |
 | `scale coverage recompute` | Re-materialize `coverage.json` from `evidence.jsonl`. | ⚡ |
+| `scale review queue [--json] [--limit N]` | What to review now: owed async checks first, then touched-since-last-check territory below the bar. Same picker as quest generation. | ⚡ |
+| `scale review start <id>` | Print the check brief for a component — the deny reason's twin — and open the intervention in the accounting stream. | ⚡ |
+| `scale review diff <id> [--max-bytes N]` | The code changed in that territory since its last check (commits + working tree), for grounding. | ⚡ |
 | `scale quest generate [-k N]` | Generate quests for touched, low-coverage components. | 🧠 |
 | `scale quest list` | List pending/completed quests from `quests.json`. | ⚡ |
 | `scale quest complete <id> --results \| --socratic` | Record a quest outcome, mark it completed, update coverage. | ⚡ |
@@ -353,7 +390,11 @@ A map that has drifted from the code teaches the wrong thing, which is worse tha
 | `scale map index` | Build the file→component reverse index → `.scale/index.json`. | ⚡ |
 | `scale map check [--json]` | Hold a built `.scale/` to the sizing contract; non-zero exit when it does not hold. | ⚡ |
 | `scale map drift` | Flag components whose sources changed since the build SHA (minimal stub). | ⚡ |
-| `scale serve [-p 4318] [--host <addr>] [--token <t>]` | Serve the local web map viewer + JSON API. | ⚡/🧠 |
+| `scale serve [-p 4318] [--host <addr>] [--token <t>]` | Serve the local web map viewer + JSON API, in the **foreground**. | ⚡/🧠 |
+| `scale serve ensure [--json] [--idle-minutes <n>]` | Reuse a live viewer for this repo, or start a detached one; prints the URL. Never hangs > ~3 s. What the SessionStart hook runs. | ⚡/🧠 |
+| `scale serve url [--component <id> [--section <slug>]] [--settings <tab>] [--json]` | Where the viewer is, without starting anything — with the hash deep link appended. | ⚡ |
+| `scale serve open [--component <id> [--section <slug>]] [--settings <tab>]` | `ensure`, then open it in the system browser; prints the URL. This is what `/scale-open` calls. | ⚡/🧠 |
+| `scale serve stop` | Stop the detached viewer named in `serve.json` (only if it is ours) and remove the file. | ⚡ |
 | `scale config unset <key>` | Drop one personal override so the team default applies again. | ⚡ |
 | `scale telemetry summary [--json]` | Counts and learning-vs-avoidance ratios from the local study log. | ⚡ |
 | `scale reset [-y]` | Delete the `~/.scale/<repo-id>/` state dir (demo/pilot reset). | ⚡ |
@@ -367,6 +408,38 @@ Bearer` or `?token=`), the page keeps it for the tab, and the static bundle stay
 Anyone holding the URL can read your coverage and write your settings — treat it like a
 password. `--token` pins a value of your own.
 
+**You rarely type any of that.** The SessionStart hook runs `scale serve ensure`, so the
+viewer is already up by the time you read the banner, and **`/scale-open`** is the normal
+way in. `ensure` reuses a viewer whose `/api/health` reports *this* repo-id, adopts one
+already answering on the port, walks 4319–4328 when the port is held by something else,
+and otherwise spawns a fully detached `scale serve`. It records the result in
+`~/.scale/<repo-id>/serve.json` (`pid`, `port`, `host`, `url`, `startedAt`, `idleMinutes`,
+`version`) — transient state, not something to back up. A detached viewer exits after
+**240 idle minutes** by default (`--idle-minutes`, `0` to disable), because nobody is
+watching it; a foreground `scale serve` never times out unless you ask it to.
+`scale serve stop` ends it early. Bare `scale serve` — foreground, and `--host 0.0.0.0`
+for the phone — stays exactly as it was, for when you want the log in front of you.
+
+**Deep links.** The viewer's routes are in the URL hash, so any of them can be handed to
+you as a link: `#/c/<component-id>` opens that component's panel,
+`#/c/<component-id>/<section>` opens it scrolled to one section of the doc, `#/settings`
+the Settings modal, `#/settings/<tab>` one of `general` | `gate` | `checks` | `team`. The
+section vocabulary is stable and **English** — derived from the doc's English source, so a
+link survives translation: `concepts`, `decisions`, and the body heading slugs `summary`,
+`what-it-does`, `related-components`, `how-it-works`, `design-decisions`, `where-it-sits`.
+A section a doc does not have opens the doc from the top rather than erroring. The hash is
+kept in sync as you click, so a URL you copy out of the address bar reopens what you were
+looking at. `scale serve url --component <id> [--section <slug>]` / `--settings <tab>`
+build them for you, and the gate's deny message carries one for the component it just
+denied.
+
+**Reading docs in the viewer.** A doc's **Related components** links are live: clicking one
+opens that component's panel and selects it on the map, and the back button walks the docs
+you came through (map clicks are browsing and do not add history). The **📖 Docs** button
+in the header lists every component doc grouped by province, so a README is reachable
+without finding its castle first. `GET /api/docs` is the index behind both
+(`{ id, title, province, dir }` per component).
+
 **Owed checks.** When an async user is denied an edit, the component is written to
 `pendingUnlocks` in `locks.json`. The next `SessionStart` says how many territories still
 owe a check (`Unlocked for editing: 3/37. 1 territory still owes a check…`), SessionEnd
@@ -377,7 +450,9 @@ runner. Passing there — graded server-side — unlocks the edit for the next s
 **Where a setting comes from.** The Settings modal marks every gate and budget knob
 `default` / `team default` / `yours`. `yours` means your own config pins it, so a later
 team change will not move you; the ↺ button beside it (or `scale config unset <key>`)
-drops the pin and the team value shows through. If the phone tab outlives the server,
+drops the pin and the team value shows through. `scale config get <key> --explain` prints
+the same provenance in one line (`--json` for `{ key, value, source, policyValue?,
+defaultValue? }`), which is how `/scale-settings` answers "why is it set to that?". If the phone tab outlives the server,
 the page says its key expired instead of rendering an empty map.
 
 ## Study telemetry (local only)
@@ -407,9 +482,11 @@ is transmitted; the collection path is a separate decision (PLAN-GATE §15).
 
 ## Settings
 
-Everything below lives in `~/.scale/<repo-id>/config.json`. Edit it with `scale config
-set <key> <value>`, or open the **⚙ Settings** modal in `scale serve` — a **Language**
-row at the top, then the rest — same file, same validation, no terminal needed.
+Everything below lives in `~/.scale/<repo-id>/config.json`. Three ways in, same file and
+same validation: **`/scale-settings`** in chat (plain language, any language — "switch to
+opus", "게이트를 async로 바꿔줘"), the **⚙ Settings** modal in the viewer (`/scale-open
+settings`, a **Language** row at the top then the rest), or `scale config set <key>
+<value>` in a terminal. No terminal is needed for any of it.
 
 | Setting | Values | What it changes |
 |---|---|---|
@@ -418,6 +495,9 @@ row at the top, then the rest — same file, same validation, no terminal needed
 | `gate.assessment` | `sync` \| `async` | Where the check runs after a deny: in chat right now, vs. teach now + unlock later (map viewer / `/scale-study`). |
 | `gate.modality` | `quiz` \| `socratic` | Multiple choice vs. dialogue. |
 | `gate.enforcement` | `advisory` \| `soft` \| `hard` | Note-only, block-with-skip, or block-without-skip. There is no absolute lock: your own `enforcement` override is the sanctioned pressure valve. |
+| `quiz.items` | 1–5 | MCQ items per check (default 2). Quiz modality only — a Socratic dialogue is capped at 3 exchanges instead. |
+| `quiz.focus` | `auto` \| `structure` \| `concepts` \| `rationale` | Which coverage dimension the items probe. `auto` (default) targets your weakest dimension and varies across items; naming one drills that dimension only — the knob for "I keep failing on rationale", which frequency settings could never answer. |
+| `quiz.grounding` | `balanced` \| `diff` \| `doc` | What the questions are about. `balanced` (default) grounds in the doc and sharpens with the change you just made; `diff` makes every question about that change; `doc` asks about the documented design only and never shows your diff to the model. |
 | `drift.foreignRatio` | 0–1 | A **collaborator's** churn ÷ component size that re-locks it (default 0.25). Low on purpose — their change is code you have never read, and re-locking only costs you if you go on to edit that territory. |
 | `drift.selfRatio` | 0–1 | The same for **your own** churn (default 0.8). Much higher: the gate cleared you before you wrote it, so this only catches a wholesale rewrite of something you unlocked with one check. |
 | `drift.trigger` | `ratio` \| `any-foreign-commit` | `any-foreign-commit` re-locks on a single foreign commit. Measured here, one commit touches ~7.9 of 37 components and the busiest are touched by ~60% of commits, so on a real team it re-locks the same territory daily. Available, not the default. |
@@ -441,8 +521,8 @@ enforce. Only interventions follow `models.provider`.
 ### Team policy
 
 A team lead sets DEFAULTS — not rules — by committing `.scale/policy.json` to the repo
-(PLAN-GATE §2). It may carry the `gate`, `unlock`, `exempt`, `budgets`, and `thresholds`
-sections; personal keys (`user`, `language`, `models`) are ignored if present. Precedence,
+(PLAN-GATE §2). It may carry the `gate`, `quiz`, `unlock`, `exempt`, `drift`, `budgets`, and
+`thresholds` sections; personal keys (`user`, `language`, `models`) are ignored if present. Precedence,
 per leaf key:
 
 ```
@@ -452,7 +532,9 @@ schema defaults  <  .scale/policy.json (committed)  <  ~/.scale/<repo-id>/config
 ```jsonc
 // .scale/policy.json — guard it with CODEOWNERS if the lead should approve changes
 {
+  "leads": ["lead@example.com"],
   "gate": { "assessment": "async", "enforcement": "soft" },
+  "quiz": { "items": 3, "grounding": "diff" },
   "budgets": { "maxPerSession": 3 },
   "exempt": { "paths": ["**/*.md"] }
 }
@@ -463,6 +545,38 @@ personal override on top of these defaults — including `gate.enabled: false` f
 who doesn't want to gate themselves. The user file stays sparse, so a later policy change
 reaches everyone who hasn't explicitly overridden that key. A policy that fails to parse
 is ignored whole (fail open) and `scale status` says so.
+
+#### Who is a lead — `leads`
+
+`leads` is the one policy key that is **not** a config section: a list of git email
+addresses, matched case-insensitively against the same identity drift attribution uses
+(`git config user.email` plus your `identity.emails`). It never merges into anyone's
+config and never shows up in provenance.
+
+```bash
+scale policy show     # the policy, the leads list, your git identity, and your role
+```
+
+**The bootstrap rule:** with no policy file, an unparseable one, or an empty `leads`,
+**everyone is a lead**. A repo that has never thought about roles must not be one nobody
+can configure. The first person to add themselves to `leads` closes it — a positive act by
+a named human, recorded in git history like any other policy change. Removing the last
+lead reopens it, deliberately: a lead who leaves the team should not be able to strand it.
+
+**This is a UX gate, not a security boundary.** `leads` decides who gets an editable Team
+tab in the Settings modal (and who the `/api/policy` writes behind it accept); it decides
+nothing about the file. `.scale/policy.json` is ordinary JSON in the repo, so anyone who
+can write the working tree can edit it in an editor. The point is to stop a member
+retuning the team's defaults from a settings screen while thinking they are changing their
+own. **Real control over this path is git — review and CODEOWNERS on `.scale/policy.json`.**
+
+**The Team tab** (`/scale-open settings team`, or Settings → Team in the viewer) is a
+convenience over that same file.
+It shows your git identity and role, the leads list, and every team default beside the
+schema default it falls back to. A non-lead sees all of it **read-only** — knowing what
+your team decided is useful whether or not you may change it. Saving writes the file and
+leaves it uncommitted; the tab says so, because nothing reaches your teammates until
+someone commits and pushes it.
 
 `language` never touches the coverage memory: the `.scale/` component docs are always
 written in English — they are repo-shared state, and `language` is a per-user interaction
@@ -484,13 +598,21 @@ Interventions (Socratic dialogue, LLM-written quests, doc translation) need a ke
 selected provider:
 
 1. **Environment** — `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Always wins.
-2. **Settings modal** — ⚙ in `scale serve`. Stored in `~/.scale/keys.json` at mode `0600`,
-   user-global (a key is an account credential, not project state).
+2. **Settings modal** — ⚙ in the viewer (`/scale-open settings`). Stored in
+   `~/.scale/keys.json` at mode `0600`, user-global (a key is an account credential, not
+   project state).
+3. **Your own terminal** — `scale keys set anthropic --stdin` (or `openai`), which reads
+   the key from **stdin only**. There is deliberately no way to pass a key as an argument,
+   where it would land in shell history and process listings.
+
+**A key never goes in chat.** `/scale-settings` will offer you path 2 or path 3 and then
+verify with `scale keys status --json`; it will not take a key you paste into the
+conversation. `scale keys status` reports only `{ present }` per provider.
 
 The key is never returned by the API and never logged — the UI only ever shows a masked
 tail (`sk-…9f2A`) and where it came from. With no key, quest generation falls back to
 deterministic doc-grounded items, translation falls back to the English source with a note,
-and the Socratic runner says exactly what's missing and links to Settings.
+and the Socratic runner says exactly what's missing and names `/scale-settings`.
 
 ---
 
@@ -519,6 +641,12 @@ completion path, both unlock) → pending-unlock surfacing (SessionStart count, 
 viewer, `/api/locks`) → server-side quiz grading → LAN bearer token for a phone → web map
 viewer + JSON API → settings provenance + reset → local study telemetry (overrides,
 denies, skips, redirects, out-of-band edits, unlocks, re-locks, session tallies).
+
+Also works today, and the reason none of that needs a terminal: the SessionStart hook
+starts the viewer (`scale serve ensure`) and prints its URL, **`/scale-settings`** runs
+first-run setup and every later settings change in chat, **`/scale-open`** opens the map
+or any single component, and every message SCALE writes — the session banner, `scale
+status`, a gate deny — carries a clickable deep link.
 
 **Known limitation — the gate only sees `Edit` / `Write` / `MultiEdit`.** Those are the
 matchers on the `PreToolUse` hook, so a change the agent makes through **Bash** instead

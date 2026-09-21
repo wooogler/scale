@@ -19,6 +19,11 @@ called out in [What works / not yet](#what-works--not-yet).
 
 ## 1. One-time setup
 
+**Just using SCALE?** Skip this section. Install the plugin (§4), reopen Claude
+Code, and run `/scale-settings` — the plugin ships a self-contained `scale` CLI
+and the built map viewer, so there is no clone and no `npm install`. The steps
+below are for working *on* SCALE.
+
 Requires Node 18+ (the CLI and web app are TypeScript; npm workspaces).
 
 ```bash
@@ -47,6 +52,11 @@ repo folder name).
 ---
 
 ## 2. Configure the models
+
+**The short path: run `/scale-settings` in Claude Code.** It inits the state, then asks
+for your label, language, the gate's shape and the model — one question at a time, in
+chat — and never asks for an API key there (see §5). Everything below is the same
+settings from a terminal, and the reference for what each key means.
 
 `scale init` writes a default `config.json`; `scale config` reads/writes it. You
 must `scale init` before `config get/set` will work.
@@ -84,6 +94,29 @@ scale config set gate.modality quiz|socratic
 scale config set gate.enforcement advisory|soft|hard
 scale config set gate.enabled false              # opt yourself out entirely
 ```
+
+`gate.*` and `budgets.*` decide **how often** a check interrupts you; `quiz.*`
+decides **what it asks** (quiz modality only):
+
+```bash
+scale config set quiz.items 3                             # MCQ items per check (1-5, default 2)
+scale config set quiz.focus auto|structure|concepts|rationale
+scale config set quiz.grounding balanced|diff|doc         # theme of the questions
+```
+
+To see **where a value came from** rather than just what it is:
+
+```bash
+scale config get gate.assessment --explain
+# gate.assessment = "async"  (source: user override; team default: "sync")
+scale config get gate.assessment --explain --json
+# {"key":"gate.assessment","value":"async","source":"user","policyValue":"sync"}
+scale config get --explain                    # every leaf, one line each
+```
+
+`source` is `default` (schema), `policy` (the committed `.scale/policy.json`), or `user`
+(yours). This is what `/scale-settings` reads before it changes anything, and what the
+Settings modal's `default` / `team default` / `yours` chips show.
 
 ---
 
@@ -156,7 +189,27 @@ every recompute.
 
 ---
 
-## 4. Junior flow — plugin (and optionally init)
+## 4. Junior flow — install the plugin, then `/scale-settings`
+
+**The whole first run, without a terminal:**
+
+1. Install the plugin (below), then **quit and reopen Claude Code** — hooks load
+   at session start.
+2. The SessionStart hook starts the map viewer and prints one line, e.g.
+   `SCALE · map viewer: http://localhost:4318 · settings in chat:
+   /scale-settings`. If the repo is not set up yet it says so instead: *"SCALE is
+   not set up for this repo yet — run /scale-settings to set it up in chat"*.
+3. Run **`/scale-settings`**. It walks the choices one question at a time — label,
+   language, `gate.assessment` / `gate.modality` / `gate.enforcement`, provider and
+   intervention tier — and confirms each stored value back.
+4. The **API key is the one step that never happens in chat.** `/scale-settings`
+   offers exactly two paths: the viewer's settings page (it opens
+   `#/settings/general` for you), or `scale keys set anthropic --stdin` — `openai`
+   for the other provider — in *your own* terminal, which reads the key from stdin
+   only. Then it verifies with `scale keys status --json`.
+5. **`/scale-open`** opens the map any time after that; `/scale-open <component-id>`
+   jumps straight to one territory, and `/scale-open <component-id> <section>` to one
+   section of its doc.
 
 Per-user state at `~/.scale/<repo-id>/` is created on first use — building the map
 or the first hook run is enough, and `coverage.json` / `session.json` /
@@ -164,8 +217,8 @@ or the first hook run is enough, and `coverage.json` / `session.json` /
 defaults plus the repo's `.scale/policy.json`, so the gate works with no
 `config.json` at all and the user label falls back to `$USER`.
 
-Run `init` only to pin that label or to change a setting (`scale config get/set`
-refuse to run without it):
+`/scale-settings` runs `init` for you; by hand it is one command, and it is what
+`scale config get/set` refuse to run without:
 
 ```bash
 scale init --user <label>   # writes ~/.scale/<repo-id>/config.json — sparse, just the label
@@ -198,12 +251,26 @@ hooks **fail open** — a missing/slow CLI degrades to a no-op and never blocks 
 
 ### Comprehension checks (quiz / socratic)
 
-Both modalities run in chat via the `scale-tutor` skill, grounded in the
-component doc (`concepts` + `rationale`). The active modality is
+Both modalities run inside Claude Code via the `scale-tutor` skill, grounded in
+the component doc (`concepts` + `rationale`). The active modality is
 `gate.modality`:
 
-- **quiz** — 1–2 grounded multiple-choice items.
-- **socratic** — a short capped dialogue (≤3 exchanges).
+- **quiz** — grounded multiple-choice items: `quiz.items` of them (default 2),
+  aimed at `quiz.focus` and themed by `quiz.grounding`. Each item is one
+  Claude Code question card (`AskUserQuestion`): pick an option, or type into
+  **Other** — `skip` / "not now" defers the check, "I don't know" counts as an
+  attempt, and a reason written alongside your pick can earn partial credit.
+  Dismissing the card (Escape) also counts as a skip. Where the card cannot be
+  shown (headless runs, subagents) the same item falls back to A–D in chat.
+- **socratic** — a short capped dialogue (≤3 exchanges) in chat.
+
+Every reveal, synthesis, and reading guide ends with a **읽어볼 곳 / Read more**
+line: a map-viewer link straight to the doc section it drew on
+(`…/#/c/<component-id>/<section>` — the viewer shows the doc in your language,
+no code to open), and, when the point was about code, a clickable
+`file:line` link into the source. In a quiz the pointers come *after* the
+reveal, so an item is never a lookup; in a Socratic dialogue you may be asked to
+read a section before answering.
 
 Two ways to trigger a check yourself (available in every condition, no budget):
 
@@ -211,6 +278,10 @@ Two ways to trigger a check yourself (available in every condition, no budget):
   doc, then a check. Passing records a validation with `--origin voluntary`.
 - `/scale-quiz [component-id]` — a manual/testing shortcut into the same tutor
   path without waiting for the gate.
+- `/scale-review [component-id]` — **post-session review**: the checks you owe
+  (async denies first, then territory you touched since its last check), run in
+  chat one component at a time, identical to the in-flow check. `scale review
+  queue` lists them; `scale review diff <id>` is the code you changed there.
 
 To read a doc on its own, with no check attached:
 
@@ -240,8 +311,14 @@ checked or skipped). What happens next depends on `gate.assessment`:
 - **sync** — the tutor runs the check right there in chat; a pass unlocks the
   territory durably and the retried edit goes through.
 - **async** — the agent TEACHES the component instead (no quiz in chat), and you
-  unlock later: in the map viewer's quest runner, or with `/scale-study` in a
-  later session. The edit stays blocked for now unless you skip.
+  unlock later: run **`/scale-review`** in a later session and the owed check is
+  put in front of you in chat, **exactly as the gate would have** — same
+  modality, same cards, same recording; only the timing differs. The map
+  viewer's quest runner and `/scale-study` remain as alternatives. The edit
+  stays blocked for now unless you skip. The deny text carries the way back
+  in — a `#/c/<component-id>` deep link into the viewer, `/scale-open
+  <component-id>` to open it, and `/scale-review` / `/scale-study
+  <component-id>` to do the check in chat.
 
 To skip (under `soft` enforcement — `hard` disables it):
 
@@ -294,23 +371,83 @@ lock you out of your own codebase.
 
 ## 5. The map viewer
 
+**Normally you do not start it.** The SessionStart hook runs `scale serve ensure`,
+so a viewer for this repo is already up when the session banner appears, and
+`/scale-open` opens it:
+
+```
+/scale-open                              # the map
+/scale-open <component-id>               # straight to one territory  (#/c/<id>)
+/scale-open <component-id> <section>     # …to one section of its doc (#/c/<id>/<section>)
+/scale-open settings gate                # straight to a settings tab (#/settings/gate)
+```
+
+From a terminal the same three things are `scale serve ensure` (reuse or start a
+detached one, print the URL), `scale serve url [--component <id> [--section <slug>]
+| --settings <tab>] [--json]` (just tell me where it is) and `scale serve open
+[...]` (ensure + open a browser). `ensure` reuses a server whose `/api/health` reports *this*
+repo-id, adopts one already answering on the port, walks 4319–4328 if the port is
+taken, and never hangs more than ~3 s. It writes
+`~/.scale/<repo-id>/serve.json` — `{ pid, port, host, url, startedAt, idleMinutes,
+version }` — which is transient state; `scale serve stop` kills that server and
+removes it. A detached viewer exits after **240 idle minutes** by default
+(`--idle-minutes <n>`, `0` for never), because nobody is watching it.
+
+To watch the log yourself, or to reach the map from a phone, run it in the
+foreground — this is the original behavior, unchanged, and it has no idle timeout:
+
 ```bash
 scale serve --port 4318   # reads .scale/ from cwd + ~/.scale/<repo-id>/ state
 ```
 
 Serves the React map app (build it first with `npm run build -w @scale/web`) plus
-a JSON API (`/api/map`, `/api/coverage`, `/api/doc/:id`,
+a JSON API (`/api/map`, `/api/coverage`, `/api/docs`, `/api/doc/:id`,
 `POST /api/doc/:id/translation`, `/api/quests`, `/api/locks`, `/api/settings`).
 Provinces are tinted regions; components are nodes sized by importance and colored
 by state (fog / explored / validated / 함락·재건). A 🔒 badge marks a territory that
 still **owes a check** from a denied edit; the header counts them. Click a node for
 its rendered component doc — including its `Design decisions` entries — plus dev
 stats and any quests. When your `language` is `ko` the panel shows the translation,
-with a toggle back to the original.
+with a toggle back to the original — including the concept and design-decision lists.
+
+The panel is a **doc reader**, not just a card. The links in a doc's *Related
+components* section are live: click one and that component's panel opens and its
+castle is selected, with the back button walking the docs you came through (a map
+click is browsing, and does not add a history entry). Links to `http(s)` open in a
+new tab; a link to a component this repo does not have stays plain text rather than
+pretending to be clickable. The **📖 Docs** button in the header lists every
+component doc grouped by province, so any README is one click away without hunting
+for it on the map.
 The quiz runner sends your picks to the server, which grades them and returns the
 reveal (the answer key never reaches the browser); the socratic runner proxies the
 intervention model server-side (needs an API key — see below). Passing either
 unlocks the component for editing.
+
+**Deep links.** Every screen of the viewer has a URL hash, so anything SCALE says
+can hand you a link straight to it:
+
+| hash | opens |
+|---|---|
+| `#/c/<component-id>` | that component selected, panel open |
+| `#/c/<component-id>/<section>` | …scrolled to one section of its doc, briefly highlighted |
+| `#/settings` | the Settings modal, General tab |
+| `#/settings/<tab>` | Settings on `general` \| `gate` \| `checks` \| `team` |
+
+`<section>` is stable and **English**, derived from the doc's English source so the
+link keeps working when the panel is showing a Korean translation:
+
+| section | what it anchors |
+|---|---|
+| `concepts` | the declared concepts list |
+| `decisions` | the design-rationale list |
+| `summary`, `what-it-does`, `related-components`, `how-it-works`, `design-decisions`, `where-it-sits` | the body headings, kebab-cased (any sub-heading too) |
+
+A section a doc does not have is not an error — the doc opens from the top.
+
+The hash follows you as you click and close, so a URL copied from the address bar
+reopens what you were looking at. `scale serve url --component <id> [--section
+<slug>]` and `--settings <tab>` build them, `/scale-open` opens them, and a gate
+deny carries one for the component it just denied.
 
 The server binds **loopback only** by default. To open the map on your phone:
 
@@ -327,13 +464,22 @@ Every gate and budget knob in Settings shows where its value comes from —
 `default`, `team default`, or `yours` — and a `↺` beside anything that is yours
 puts the team default back (CLI: `scale config unset gate.enforcement`).
 
-### Settings (⚙ in the header)
+### Settings (⚙ in the header, or `/scale-open settings`)
 
 Everything in `config.json` is editable from the browser — interaction language
 (the **Language** row at the top), condition (timing × modality), in-flow
 triggers, interruption budgets, and the model policy — plus API keys. Changes
 save immediately and are re-validated server-side against the schema, so an
-invalid value is rejected instead of landing on disk.
+invalid value is rejected instead of landing on disk. Four tabs: **General**
+(language, keys, model), **Edit gate**, **Checks**, and **Team**.
+
+**Team.** The last tab edits the *shared* `.scale/policy.json` rather than your
+own config. Who may edit it is the policy's own `leads` list (git email
+addresses); while nobody is listed, anyone can — add yourself to close it, and
+run `scale policy show` to see where you stand. A non-lead still sees every team
+default, read-only. It is a UX gate over a file in the repo, not a permission
+system: git review / CODEOWNERS on `.scale/policy.json` is the real control, and
+a save there is uncommitted until someone commits it (the tab says so).
 
 **Language.** `scale config set language ko` (or the Language row in the modal)
 switches everything SCALE says to you into Korean — the web UI, quiz items,
@@ -350,7 +496,19 @@ in Settings. The key comes from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` if set
 (these always win), otherwise from what you type in Settings, which is stored at
 `~/.scale/keys.json` mode `0600`. The key is never returned by the API and never
 logged — the UI shows only a masked tail. Start a Socratic dialogue with no key and
-it tells you exactly what's missing with a button straight to the key field.
+it tells you exactly what's missing, with a button straight to the key field and
+`/scale-settings` named as the way back.
+
+From a terminal the equivalent is:
+
+```bash
+scale keys set anthropic --stdin    # or: openai — reads the key from stdin ONLY
+scale keys status --json            # {"anthropic":{"present":true},"openai":{"present":false}}
+```
+
+There is deliberately no flag that takes the key as an argument — argv lands in
+shell history and process listings — and `/scale-settings` will never accept a key
+pasted into the conversation. `status` reports presence, never key material.
 
 ---
 
@@ -385,12 +543,15 @@ like an in-chat check.
 
 **Works today**
 
-- CLI: `init`, `config get/set` (layered over `.scale/policy.json`), `log
-  prompt|touch|review`, `gate edit`, `gate defer`, `record`, `coverage recompute`,
-  `estimate`, `map layout|index`, `doc show`, `quest generate|list|complete`,
-  `serve`, `reset`.
+- CLI: `init`, `setup status`, `config get/set/unset` (layered over
+  `.scale/policy.json`, with `get --explain` for provenance), `keys status|set`,
+  `log prompt|touch|review`, `gate edit`, `gate defer`, `record`,
+  `coverage recompute`, `estimate`, `map layout|index`, `doc show`,
+  `quest generate|list|complete`, `serve` + `serve ensure|stop|url|open`, `reset`.
 - Plugin: all hooks (fail-open) + `/scale-map`, `/scale-status`, `/scale-study`,
-  `/scale-quiz`. (`/scale-status` reports via `scale status`.)
+  `/scale-quiz`, `/scale-settings`, `/scale-open`. (`/scale-status` reports via
+  `scale status`.) SessionStart starts the viewer and prints its URL; the gate's
+  deny text carries a deep link to the component it denied.
 - The edit gate: deterministic lock/deny with the per-user unlock ledger
   (`locks.json`), team-policy defaults + personal overrides, budget enforcement,
   and session-scoped `gate defer`.

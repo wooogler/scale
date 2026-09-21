@@ -177,8 +177,9 @@ Condition is read from `config.json`; each cell is fully functional.
 
 | | **Quiz** (lightweight, LingoQ-style) | **Socratic** (dialogic, comprehension-demanding) |
 |---|---|---|
-| **In-flow** (in Claude Code, at boundaries) | tutor skill asks 1–2 grounded MCQ/short items in chat | tutor skill runs a capped dialogue (≤ 3 exchanges) in chat |
-| **Post-session** (web map, after session) | quest = quiz cards on the map | quest = chat-style Socratic session in the web app (server proxies Claude API) |
+| **In-flow** (in Claude Code, at boundaries) | tutor skill asks `quiz.items` grounded MCQ items, one `AskUserQuestion` card per item (chat-text fallback where the tool is unavailable) | tutor skill runs a capped dialogue (≤ 3 exchanges) in chat |
+| **Post-session** (in Claude Code, `/scale-review` in a later session) | tutor skill runs the SAME check as in-flow — same brief generator, cards, recording — for owed / touched components | tutor skill runs the same capped dialogue as in-flow |
+| **Post-session** (web map, alternative surface) | quest = quiz cards on the map | quest = chat-style Socratic session in the web app (server proxies Claude API) |
 
 Both modalities: grounded in the component's paper (`concepts` + rationale) and, when available, the session's actual diff; graded per-dim; results recorded via `scale record` → coverage update → map state change. Intervention delivery language follows `config.language` (per-user, default `en`): with `ko` the whole check — items, dialogue, feedback — runs in Korean, keeping code identifiers and established dev terms English (the `.scale/` papers are repo-shared state and stay English regardless).
 
@@ -202,6 +203,8 @@ Gate policy (shared across triggers):
 ### 6.2 Post-session pipeline
 
 (Post-session conditions only.) `SessionEnd` hook → `scale quest generate` (detached, async — never blocks exit): pick top-K (default 3) components by (touched this session) × (low coverage or stale) × importance → generate items in the configured modality on the **intervention tier** (`models.provider`: Anthropic Sonnet 5 / Opus 4.8, or the matching GPT-5.6 model; the build runs on the Claude Code session's own model, chosen with `/model`) → `quests.json` → appears on the map as pending quests. Rebellion quests are generated from drift independent of sessions. In in-flow conditions no quests are ever generated; stale components surface through map state, re-encounter gates, and voluntary learning.
+
+**Chat surface (primary for the study).** `/scale-review` → `scale review queue` picks with the SAME `pickComponents` as quest generation (owed `pendingUnlocks` first, then touched-since-last-check × low coverage × importance) → per component, `scale review start <id>` prints a **brief** built by the same generator as the gate's deny reason (`checkBrief`, cause `review`: the head names why it is here; body, quiz shape, skip rule, language and viewer lines are byte-identical to the sync deny) and opens the intervention (`requested`, trigger `review`) → the tutor runs the unchanged protocol, grounded in `scale review diff <id>` where the gate path used the live diff → `scale record` / `scale gate defer` as in-flow. Process parity between timings is a design invariant, enforced at the generator, not by instruction.
 
 ### 6.3 Voluntary learning (user-initiated, available in every condition)
 
