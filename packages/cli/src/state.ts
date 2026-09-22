@@ -81,9 +81,34 @@ export function resolveRepoId(cwd: string = process.cwd()): string {
   return slugify(path.basename(cwd));
 }
 
-/** Absolute path to `~/.scale/<repo-id>/` for the given cwd. */
+/** The environment variable that relocates every per-user file. */
+export const STATE_DIR_ENV = 'SCALE_STATE_DIR';
+
+/**
+ * The root every per-user file lives under: `~/.scale` by default, or
+ * `$SCALE_STATE_DIR` (resolved against the process cwd) when set.
+ *
+ * WHY AN OVERRIDE. Per-user state is keyed by `<root>/<repo-id>/`, and repo-id
+ * comes from the git remote, so two clones of the same repo on one machine —
+ * a "team lead" and a "member" persona in a test, or two people sharing a
+ * workstation — would otherwise share one coverage, one lock ledger, one
+ * config, and one recorded viewer. Pointing each Claude Code session at its own
+ * root (`SCALE_STATE_DIR=~/scale-member claude`) separates them completely;
+ * the hooks and the detached viewer inherit the variable, so nothing else has
+ * to know. `keys.json` follows the root too: personas do not share credentials
+ * unless the same path is given to both.
+ *
+ * Read on every call rather than cached at import: tests and the plugin's own
+ * scripts set it for one invocation at a time.
+ */
+export function scaleHome(): string {
+  const env = process.env[STATE_DIR_ENV]?.trim();
+  return env ? path.resolve(env) : path.join(os.homedir(), '.scale');
+}
+
+/** Absolute path to `<scaleHome()>/<repo-id>/` for the given cwd. */
 export function stateDir(cwd: string = process.cwd()): string {
-  return path.join(os.homedir(), '.scale', resolveRepoId(cwd));
+  return path.join(scaleHome(), resolveRepoId(cwd));
 }
 
 export const paths = {

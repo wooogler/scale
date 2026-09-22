@@ -347,6 +347,19 @@ ledger, and may override any policy key in their own config (see
 [Team policy](#team-policy)). The map is shared, the pressure is personal — which is also
 why a team lead can turn `gate.enabled` off for themselves without touching anyone else.
 
+**Two roles on one machine.** Per-user state is keyed by repo-id (from the git remote), so
+two clones of the same repo on one workstation would share one coverage, one lock ledger,
+one config and one viewer. `SCALE_STATE_DIR` relocates the whole per-user root — state,
+`keys.json`, and which viewer a session is willing to adopt — for that process and every
+hook and detached viewer it starts:
+
+```bash
+SCALE_STATE_DIR=~/scale-member claude     # a "member" persona, in a second clone with its own git user.email
+```
+
+Leave it unset for your real account (`~/.scale`). A viewer started under one root refuses
+to be adopted by a session under another, so each persona gets its own port.
+
 **Keeping the map honest as the code moves.** Component docs are anchored to source files
 at a build sha, so renames and deletions age them. `scale map check` reports the partition
 against the sizing band, anchored paths that no longer exist, and files claimed by more

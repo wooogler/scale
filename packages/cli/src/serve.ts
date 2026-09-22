@@ -1655,6 +1655,9 @@ export function startServer(opts: ServeOptions): http.Server {
     pid: process.pid,
     version: SERVE_VERSION,
     startedAt,
+    // So `serve ensure` from another persona (SCALE_STATE_DIR) does not adopt
+    // this viewer and read someone else's coverage through it.
+    stateDir: stateDir(cwd),
   };
   /**
    * Last sign of life. The idle timer reads it, and every request — static

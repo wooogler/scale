@@ -47,7 +47,10 @@ npm run cli -- <args>                     # from source via tsx (no build needed
 Below, `scale` means any of the above. Every command runs against the **current
 working directory**: the target repo's `.scale/` coverage memory plus per-user
 state under `~/.scale/<repo-id>/` (repo-id derived from the git remote, else the
-repo folder name).
+repo folder name). `SCALE_STATE_DIR=<dir>` relocates that per-user root — state,
+`keys.json` and the viewer a session will adopt — for one process and everything
+it starts; use it to run a second persona (a "member" next to your "lead") on one
+machine without the two sharing coverage or settings.
 
 ---
 

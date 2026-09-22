@@ -54,6 +54,14 @@ export interface HealthInfo {
   pid: number;
   version: string;
   startedAt: string;
+  /**
+   * The per-user state dir the server reads and writes. Two personas on one
+   * machine (`SCALE_STATE_DIR`) share a repo-id but not a state dir, and a
+   * viewer answering for the right repo from the WRONG state dir would show
+   * one persona the other's coverage and settings. Absent on older bundles,
+   * in which case callers fall back to the repo-id match alone.
+   */
+  stateDir?: string;
 }
 
 /** Where the state file lives for the repo at `cwd`. */
@@ -224,10 +232,22 @@ export async function probeHealth(base: string, timeoutMs = 300): Promise<Health
       pid: typeof body.pid === 'number' ? body.pid : 0,
       version: typeof body.version === 'string' ? body.version : '',
       startedAt: typeof body.startedAt === 'string' ? body.startedAt : '',
+      ...(typeof body.stateDir === 'string' ? { stateDir: body.stateDir } : {}),
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Does this server serve THIS persona of THIS repo? Repo-id alone was the test
+ * until `SCALE_STATE_DIR` made two state dirs per repo possible; a health
+ * body that names its state dir must name ours. One without (older bundle) is
+ * matched on repo-id, as before.
+ */
+export function servesThisState(health: HealthInfo, cwd: string): boolean {
+  if (health.repoId !== resolveRepoId(cwd)) return false;
+  return health.stateDir === undefined || path.resolve(health.stateDir) === stateDir(cwd);
 }
 
 /** Is anything listening? Distinguishes "free port" from "someone else's port". */
@@ -276,7 +296,7 @@ export async function resolveViewer(
   const state = readServeState(cwd);
   if (state) {
     const health = await probeHealth(viewerOrigin(state.host, state.port), timeoutMs);
-    if (health && health.repoId === resolveRepoId(cwd)) {
+    if (health && servesThisState(health, cwd)) {
       return { url: viewerUrl(state.url, target), running: true, port: state.port };
     }
     return {
@@ -456,7 +476,7 @@ export async function ensureServer(opts: EnsureOptions = {}): Promise<EnsureResu
   const recorded = readServeState(cwd);
   if (recorded) {
     const health = await probeHealth(viewerOrigin(recorded.host, recorded.port), 400);
-    if (health && health.repoId === repoId) {
+    if (health && servesThisState(health, cwd)) {
       return {
         url: recorded.url,
         port: recorded.port,
@@ -479,7 +499,7 @@ export async function ensureServer(opts: EnsureOptions = {}): Promise<EnsureResu
     const base = viewerOrigin(host, port);
     if (await tcpOpen(host, port, 150)) {
       const health = await probeHealth(base, 300);
-      if (health && health.repoId === repoId) {
+      if (health && servesThisState(health, cwd)) {
         // A server we did not start (or one whose state file we just pruned as
         // stale): keep whatever working URL we can still see — its own file
         // first, then the entry we read on the way in — because only those

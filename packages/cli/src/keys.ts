@@ -18,13 +18,14 @@
  */
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { LlmProvider } from '@scale/core';
 
-/** `~/.scale/keys.json` — user-global, mode 0600. */
+import { scaleHome } from './state.js';
+
+/** `<scaleHome()>/keys.json` — user-global, mode 0600 (`~/.scale/keys.json` unless `SCALE_STATE_DIR` relocates the root). */
 export function keysPath(): string {
-  return path.join(os.homedir(), '.scale', 'keys.json');
+  return path.join(scaleHome(), 'keys.json');
 }
 
 /** Env var consulted first for each provider. */
