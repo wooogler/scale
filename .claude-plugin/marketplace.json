@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "SCALE \u2014 Scaffolded Coverage-Aware Learning Engine. A Claude Code plugin that helps a junior engineer build genuine comprehension of a codebase, guided by an LLM-built coverage memory and visualized as a territory map.",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "plugins": [
     {
       "name": "scale",
       "source": "./packages/plugin",
-      "description": "Hooks that capture coverage evidence and gate commits, skills (scale-map, scale-tutor), /scale-* commands, and a bundled `scale` CLI + web map. Self-contained \u2014 no monorepo required."
+      "description": "Hooks that capture coverage evidence and gate edits into locked territory, skills (scale-map, scale-tutor, scale-settings), /scale-* commands (map, status, study, quiz, review, settings, open), and a bundled `scale` CLI + web map viewer. Self-contained \u2014 no monorepo required."
     }
   ]
 }

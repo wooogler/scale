@@ -1,6 +1,6 @@
 {
   "name": "scale",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "SCALE — Scaffolded Coverage-Aware Learning Engine. Hooks that capture coverage evidence and gate edits, plus skills: scale-map (Mode B coverage-memory builder), scale-tutor (junior-side quiz & Socratic learning) and scale-settings (conversational setup and settings). Commands: /scale-map, /scale-status, /scale-study, /scale-quiz, /scale-review (post-session checks in chat, identical to the in-flow ones), /scale-settings (set SCALE up or change any setting in chat) and /scale-open (open the map viewer on a component or the settings tabs). Ships a self-contained `scale` CLI on PATH via bin/.",
   "author": {
     "name": "SCALE"
