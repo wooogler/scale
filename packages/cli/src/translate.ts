@@ -17,6 +17,22 @@
  * window and nothing to run to clear it. Deleting the whole directory costs
  * exactly one re-translation per doc actually read.
  *
+ * A team can go one step further and COMMIT a rendering: `README.<lang>.md`
+ * next to the English doc (`scale doc translate`, file format in core's
+ * `doc-translation.ts`). That one is shared — every reader gets the same text,
+ * with no API key and no wait — and it is looked up FIRST. The lookup order is
+ * the whole contract, and it lives here so the viewer and `scale doc show`
+ * cannot disagree about it:
+ *
+ *   1. committed `README.<lang>.md` whose `source_sha` is the current English
+ *      sha                                                  → `source: 'committed'`
+ *   2. this reader's cache entry for the current sha         → `source: 'cache'`
+ *   3. the model                                             → `source: 'llm'`
+ *
+ * A committed rendering with a different sha is STALE and is skipped, not
+ * served: it describes text that no longer exists, and `scale map check` is
+ * the place that says so. `refresh` skips both 1 and 2.
+ *
  * Every failure degrades to the ENGLISH SOURCE with a named error rather than
  * throwing. A reader who set `language: ko` and has no API key still gets the
  * doc; the line above it says why it is in English. `translateDoc` never throws.
@@ -27,7 +43,13 @@ import path from 'node:path';
 
 import { z } from 'zod';
 import {
+  committedTranslationState,
+  parseCommittedTranslation,
+  renderCommittedTranslation,
   resolveInterventionModel,
+  translationFileName,
+  type CommittedTranslation,
+  type CommittedTranslationState,
   type DocFrontmatter,
   type Language,
   type LoadedDoc,
@@ -65,11 +87,19 @@ export interface TranslationError {
  * read to recover from a failure. That is the whole reason the failure path is
  * modelled as a result rather than an exception.
  */
+/**
+ * Where a successful translation came from — in lookup order. Surfaced to the
+ * reader because the three are not equally trustworthy: a committed rendering
+ * went through the team's review, a cached or fresh one did not.
+ */
+export type TranslationSource = 'committed' | 'cache' | 'llm';
+
 export type TranslationResult =
   | {
       translated: true;
-      /** Served from `~/.scale/<repo-id>/translations/`, i.e. no API call. */
+      /** No API call was made for this read (`source` is `committed` or `cache`). */
       cached: boolean;
+      source: TranslationSource;
       /** Concrete model id that produced it (the cached one, on a hit). */
       model: string;
       frontmatter: DocFrontmatter;
@@ -160,6 +190,119 @@ function readmePath(doc: LoadedDoc): string {
     /* fall through to the conventional name */
   }
   return path.join(doc.path, 'README.md');
+}
+
+// ---------------------------------------------------------------------------
+// Committed renderings — `README.<lang>.md` beside the English doc
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a doc's committed rendering lives. An existing file is matched
+ * case-insensitively, the same courtesy the loader extends to `README.md`;
+ * a new one is written under the canonical name.
+ */
+export function committedTranslationPath(doc: LoadedDoc, lang: string): string {
+  const want = translationFileName(lang);
+  try {
+    const hit = fs
+      .readdirSync(doc.path, { withFileTypes: true })
+      .find((e) => e.isFile() && e.name.toLowerCase() === want.toLowerCase());
+    if (hit) return path.join(doc.path, hit.name);
+  } catch {
+    /* fall through to the canonical name */
+  }
+  return path.join(doc.path, want);
+}
+
+export interface CommittedLookup {
+  state: CommittedTranslationState;
+  /** Present only when `state` is `current`. */
+  translation?: CommittedTranslation;
+}
+
+/**
+ * Read and judge a doc's committed rendering against the CURRENT English bytes.
+ * Never throws. `sourceSha` may be passed when the caller already has it.
+ */
+export function readCommittedTranslation(
+  doc: LoadedDoc,
+  lang: string,
+  sourceSha: string = sourceShaOf(doc),
+): CommittedLookup {
+  let text: string;
+  try {
+    text = fs.readFileSync(committedTranslationPath(doc, lang), 'utf8');
+  } catch {
+    return { state: 'missing' };
+  }
+  const parsed = parseCommittedTranslation(text);
+  const state = committedTranslationState(parsed, doc.frontmatter, lang, sourceSha);
+  return state === 'current' && parsed ? { state, translation: parsed } : { state };
+}
+
+/**
+ * Write a doc's committed rendering atomically (temp file + rename) — this file
+ * is about to be `git add`ed, and a half-written one would be committed as is.
+ * Throws on an fs failure; the caller turns that into a `failed` line.
+ */
+export function writeCommittedTranslation(
+  doc: LoadedDoc,
+  lang: string,
+  t: { frontmatter: DocFrontmatter; body: string; model: string; sourceSha: string; translatedAt: string },
+): string {
+  const target = committedTranslationPath(doc, lang);
+  const text = renderCommittedTranslation({
+    meta: {
+      lang,
+      sourceLang: 'en',
+      sourceSha: t.sourceSha,
+      model: t.model,
+      translatedAt: t.translatedAt,
+    },
+    frontmatter: t.frontmatter,
+    body: t.body,
+  });
+  const tmp = `${target}.tmp.${process.pid}.${Date.now().toString(36)}`;
+  try {
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* nothing to clean up */
+    }
+    throw err;
+  }
+  return target;
+}
+
+/**
+ * A committed rendering as a reader-facing frontmatter. The machine fields come
+ * from the ENGLISH doc, never from the file — the same rule `mergeFrontmatter`
+ * applies to a model's reply, for the same reason: a committed file is repo
+ * content anyone can edit, and a field that must not differ is safest when the
+ * copy that could differ is never consulted.
+ */
+function committedFrontmatter(english: DocFrontmatter, t: CommittedTranslation): DocFrontmatter {
+  const fm = t.frontmatter;
+  return {
+    id: english.id,
+    sources: english.sources,
+    title: fm.title,
+    concepts: english.concepts.map((c, i) => ({ id: c.id, name: fm.concepts[i]?.name ?? c.name })),
+    rationale: english.rationale.map((r, i) => {
+      const x = fm.rationale[i];
+      return {
+        decision: x?.decision ?? r.decision,
+        ...((x?.why ?? r.why) !== undefined ? { why: x?.why ?? r.why } : {}),
+        ...((x?.alternatives ?? r.alternatives) !== undefined
+          ? { alternatives: x?.alternatives ?? r.alternatives }
+          : {}),
+        provenance: r.provenance,
+      };
+    }),
+  };
 }
 
 /**
@@ -689,11 +832,25 @@ async function translateUncached(
   const { doc, lang, config, dir, refresh } = opts;
   try {
     if (!refresh) {
+      // 1. The team's committed rendering — no key, no call, same text for all.
+      const committed = readCommittedTranslation(doc, lang, sourceSha);
+      if (committed.translation) {
+        return {
+          translated: true,
+          cached: true,
+          source: 'committed',
+          model: committed.translation.meta.model,
+          frontmatter: committedFrontmatter(doc.frontmatter, committed.translation),
+          body: committed.translation.body,
+        };
+      }
+      // 2. This reader's own cache.
       const hit = readCache(dir, doc.id, lang, sourceSha);
       if (hit) {
         return {
           translated: true,
           cached: true,
+          source: 'cache',
           model: hit.model,
           frontmatter: hit.frontmatter,
           body: hit.body,
@@ -742,7 +899,7 @@ async function translateUncached(
     // back as a cache hit forever.
     writeCache(dir, rec);
 
-    return { translated: true, cached: false, model, frontmatter, body };
+    return { translated: true, cached: false, source: 'llm', model, frontmatter, body };
   } catch (err) {
     if (err instanceof MissingKeyError) {
       return english({ code: 'missing-key', message: err.message });
@@ -765,4 +922,137 @@ async function translateUncached(
       message: (err as Error)?.message ?? 'translation failed',
     });
   }
+}
+
+/**
+ * The one line that says which text the reader is looking at, printed BEFORE
+ * the doc. A silent fallback to English is the failure mode worth spending a
+ * line on: the reader asked for Korean, and a doc that merely "looks
+ * untranslated" is indistinguishable from one whose translation quietly failed.
+ * The three translated sources are named apart because they differ in who has
+ * vouched for the text — the team (committed), or nobody yet.
+ */
+export function provenanceLine(result: TranslationResult, lang: string): string {
+  if (result.translated) {
+    const where =
+      result.source === 'committed'
+        ? `committed README.${lang}.md`
+        : result.source === 'cache'
+          ? 'your cached translation'
+          : 'freshly translated';
+    return `(${lang} · ${where} · ${result.model})`;
+  }
+  return result.error ? `(English source — ${result.error.message})` : '(English source)';
+}
+
+// ---------------------------------------------------------------------------
+// `scale doc translate` — render committed files
+// ---------------------------------------------------------------------------
+
+/** Languages a committed rendering can be made in (`en` is the source). */
+export function isTargetLang(lang: string): boolean {
+  return TARGET_LANGS.has(lang);
+}
+
+export type RenderOutcome =
+  | { id: string; status: 'up-to-date' }
+  | { id: string; status: 'written'; source: TranslationSource; path: string }
+  | { id: string; status: 'failed'; error: string };
+
+export interface RenderReport {
+  lang: string;
+  written: string[];
+  upToDate: string[];
+  failed: { id: string; error: string }[];
+}
+
+export interface RenderCommittedOpts {
+  docs: LoadedDoc[];
+  lang: Language;
+  config: ScaleConfig;
+  dir: string;
+  /** Re-render even a current file, bypassing the per-user cache too. */
+  refresh?: boolean;
+  /** Called once per doc as it finishes — the CLI streams its lines from here. */
+  onOutcome?: (o: RenderOutcome) => void;
+  /** Injectable clock for `translated_at`. */
+  now?: () => Date;
+}
+
+/**
+ * Render `README.<lang>.md` for each doc. Never throws; never stops early.
+ *
+ * Sequential on purpose: a team lead runs this once over the whole tree, and
+ * firing every doc at the provider at once trades a few minutes of wall clock
+ * for rate-limit failures halfway through — the one outcome that leaves the
+ * tree half-rendered.
+ *
+ * The translation itself goes through {@link translateDoc}, so a doc the lead
+ * has already read in Korean costs nothing (their cache is reused) and a file
+ * rendered here is byte-for-byte what a reader without a key will see.
+ */
+export async function renderCommittedTranslations(o: RenderCommittedOpts): Promise<RenderReport> {
+  const report: RenderReport = { lang: o.lang, written: [], upToDate: [], failed: [] };
+  const now = o.now ?? (() => new Date());
+  const emit = (r: RenderOutcome): void => {
+    if (r.status === 'up-to-date') report.upToDate.push(r.id);
+    else if (r.status === 'written') report.written.push(r.id);
+    else report.failed.push({ id: r.id, error: r.error });
+    o.onOutcome?.(r);
+  };
+
+  for (const doc of o.docs) {
+    const sourceSha = sourceShaOf(doc);
+    if (!o.refresh && readCommittedTranslation(doc, o.lang, sourceSha).state === 'current') {
+      emit({ id: doc.id, status: 'up-to-date' });
+      continue;
+    }
+    const result = await translateDoc({
+      doc,
+      lang: o.lang,
+      config: o.config,
+      dir: o.dir,
+      refresh: !!o.refresh,
+    });
+    if (!result.translated) {
+      emit({
+        id: doc.id,
+        status: 'failed',
+        error: result.error?.message ?? 'no translation was produced',
+      });
+      continue;
+    }
+    try {
+      const written = writeCommittedTranslation(doc, o.lang, {
+        frontmatter: result.frontmatter,
+        body: result.body,
+        model: result.model,
+        sourceSha,
+        translatedAt: now().toISOString(),
+      });
+      emit({ id: doc.id, status: 'written', source: result.source, path: written });
+    } catch (err) {
+      emit({
+        id: doc.id,
+        status: 'failed',
+        error: oneLine((err as Error)?.message ?? 'could not write the file'),
+      });
+    }
+  }
+  return report;
+}
+
+/** Per-language missing/stale ids for `scale map check`. Pure fs reads. */
+export function committedTranslationGaps(
+  docs: LoadedDoc[],
+  lang: string,
+): { missing: string[]; stale: string[] } {
+  const missing: string[] = [];
+  const stale: string[] = [];
+  for (const doc of docs) {
+    const { state } = readCommittedTranslation(doc, lang);
+    if (state === 'missing') missing.push(doc.id);
+    else if (state === 'stale') stale.push(doc.id);
+  }
+  return { missing: missing.sort(), stale: stale.sort() };
 }

@@ -87,7 +87,11 @@ the value as JSON when it can, so numbers and booleans are written bare
 | `models.openaiModel` | model id | unset | escape hatch to pin an OpenAI model the tier map doesn't know |
 
 **Policy-settable sections** — `gate`, `quiz`, `unlock`, `exempt`, `drift`,
-`budgets`, `thresholds`.
+`budgets`, `thresholds`, `docs`. `docs.languages` (e.g. `["ko"]`) declares the
+languages this repo commits doc renderings in (`README.<lang>.md` beside each
+English README, produced by `scale doc translate --lang <lang> --all`); with it
+set, `scale map check` fails on a missing or stale rendering. A team-level
+decision — a member asking for it is asking for the Team tab or the lead.
 
 | Key | Values | Default | Meaning |
 |---|---|---|---|

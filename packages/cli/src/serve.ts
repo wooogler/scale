@@ -856,6 +856,7 @@ async function handleSettingsPatch(
     'unlock',
     'exempt',
     'drift',
+    'docs',
     'budgets',
     'thresholds',
     'models',

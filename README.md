@@ -380,7 +380,8 @@ A map that has drifted from the code teaches the wrong thing, which is worse tha
 | `scale init [--user <l>] [--force]` | Create `~/.scale/<repo-id>/` with a default `config.json`. | ⚡ |
 | `scale status [--json]` | Coverage at a glance: unification progress, per-province states, stale territory, pending quests. | ⚡ |
 | `scale context` | Print the SessionStart coverage summary injected to the agent. | ⚡ |
-| `scale doc show <id> [--lang en\|ko] [--json] [--refresh]` | Print one component doc. `--lang ko` prints a per-user translation, cached under `~/.scale/<repo-id>/translations/`; `--refresh` rebuilds it. | ⚡/🧠 |
+| `scale doc show <id> [--lang en\|ko] [--json] [--refresh]` | Print one component doc. `--lang ko` prints the committed `README.ko.md` when current, else a per-user translation cached under `~/.scale/<repo-id>/translations/`; `--refresh` rebuilds it. | ⚡/🧠 |
+| `scale doc translate [<id>…] --lang ko [--all] [--refresh] [--json]` | Write committed renderings `README.<lang>.md` beside the English docs (lead, once per build/sync); skips ones already current. | 🧠 |
 | `scale estimate [--json]` | Target component count + band for this repo, and the build cost per model. | ⚡ |
 | `scale config get [key]` / `set <key> <val>` | Read/write `config.json` (gate, quiz shape, models, budgets, thresholds). | ⚡ |
 | `scale config get <key> --explain [--json]` | The same value **plus where it came from** — `gate.assessment = "async"  (source: user override; team default: "sync")`. With no key, every leaf. | ⚡ |
@@ -534,7 +535,7 @@ enforce. Only interventions follow `models.provider`.
 ### Team policy
 
 A team lead sets DEFAULTS — not rules — by committing `.scale/policy.json` to the repo
-(PLAN-GATE §2). It may carry the `gate`, `quiz`, `unlock`, `exempt`, `drift`, `budgets`, and
+(PLAN-GATE §2). It may carry the `gate`, `quiz`, `unlock`, `exempt`, `drift`, `budgets`, `docs`, and
 `thresholds` sections; personal keys (`user`, `language`, `models`) are ignored if present. Precedence,
 per leaf key:
 
@@ -594,6 +595,17 @@ someone commits and pushes it.
 `language` never touches the coverage memory: the `.scale/` component docs are always
 written in English — they are repo-shared state, and `language` is a per-user interaction
 preference.
+
+**Committed renderings — Korean docs for a Korean team.** A team that reads in Korean
+sets `docs.languages: ["ko"]` in `.scale/policy.json`; the lead then runs
+`scale doc translate --lang ko --all` once (their key, once) and commits the resulting
+`README.ko.md` next to every English README. Each rendering carries the English file's
+sha, so `scale map check` fails on a missing or stale one and the `/scale-map` skill
+re-renders after a build or sync. A reader with `language: ko` gets the committed file
+first — in the viewer, in `scale doc show --lang ko`, and in the tutor's reading
+pointers — with no API key and no wait; the per-user translation below is the fallback
+for repos that have not committed one. The English file stays the source: slugs, drift,
+and every check still read it.
 
 **Reading a doc in your language.** With `language: ko`, the viewer panel and `scale doc
 show <id> --lang ko` render a per-user translation — `POST /api/doc/:id/translation`

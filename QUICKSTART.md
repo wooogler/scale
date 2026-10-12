@@ -293,10 +293,15 @@ scale doc show <component-id>             # the English source
 scale doc show <component-id> --lang ko   # per-user translation (--refresh rebuilds)
 ```
 
-A non-English `--lang` calls the intervention model once and caches the result in
+A non-English `--lang` first looks for a **committed rendering** —
+`README.ko.md` beside the English README, written by the lead with
+`scale doc translate --lang ko --all` when the team policy sets
+`docs.languages: ["ko"]` — and prints that when it is current (no key, no wait).
+Otherwise it calls the intervention model once and caches the result in
 `~/.scale/<repo-id>/translations/`, keyed by a hash of the doc file, so editing the
-doc invalidates it; with no API key you get the English source plus a note. Checks
-are always grounded in the English source, never in the translation.
+doc invalidates it; with no API key you get the English source plus a note. The
+first line says which of the three you got. Checks are always grounded in the
+English source, never in a translation.
 
 Passing a check is recorded by the tutor via `scale record`, which updates
 coverage (per-dim EMA), can move a territory fog → explored → validated — and,
@@ -490,9 +495,15 @@ Socratic dialogue, and in-flow check delivery — while code identifiers, file
 paths, and established dev terms (EMA, hook, commit…) stay English. Default is
 `en` (pure English). The `.scale/` component docs always stay English regardless:
 the coverage memory is repo-shared, and `language` is a per-user preference — a
-`ko` reading of a doc is a per-user translation rendered on the way to the screen
-and cached under `~/.scale/<repo-id>/translations/`, never written back to `.scale/`
-and never used to ground a check.
+`ko` reading of a doc is either the team's committed `README.ko.md` (when the
+policy sets `docs.languages` and the lead has run `scale doc translate`) or a
+per-user translation rendered on the way to the screen and cached under
+`~/.scale/<repo-id>/translations/`. Neither is ever used to ground a check.
+
+**For a Korean study group**, the committed route is the one to use: participants
+need no API key for reading, the viewer and the tutor's reading pointers open the
+Korean file directly, and `scale map check` keeps it in step with the English
+source.
 
 **API keys.** Interventions run on Anthropic (default) or OpenAI; pick the provider
 in Settings. The key comes from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` if set

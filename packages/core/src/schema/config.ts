@@ -221,6 +221,31 @@ export const LanguageSchema = z.enum(['en', 'ko']);
 export type Language = z.infer<typeof LanguageSchema>;
 
 /**
+ * Committed renderings of the component docs — a TEAM fact, so policy-settable.
+ *
+ * `languages` names the languages this repo COMMITS a rendering in, next to
+ * each English doc as `README.<lang>.md` (`scale doc translate`). The English
+ * file stays the source of truth; a rendering records the sha of the English
+ * bytes it was made from, so an English edit makes it stale by construction.
+ *
+ * Why this exists alongside the per-user cache: a study participant reading in
+ * Korean should need no API key and wait for nothing, and the only way to give
+ * every reader the same Korean text is to put it in the repo. Listing a
+ * language here is a promise `scale map check` holds the repo to — it fails
+ * while any component's rendering is missing or stale. Empty (the default)
+ * means the repo makes no such promise and the check says nothing about it.
+ *
+ * `en` is accepted (it is a Language) but meaningless — English is the source,
+ * not a rendering — and every consumer skips it.
+ */
+export const DocsConfigSchema = z
+  .object({
+    languages: z.array(LanguageSchema).default([]),
+  })
+  .default({});
+export type DocsConfig = z.infer<typeof DocsConfigSchema>;
+
+/**
  * Interruption budget constants (all tunable). Every field is a non-negative
  * count: 0 is a meaningful "off" (never deny, no cooldown) but a negative value
  * is nonsense the gate would silently misread, so the schema rejects it — these
@@ -447,6 +472,7 @@ export const ScaleConfigSchema = z.preprocess(
     unlock: UnlockConfigSchema,
     exempt: ExemptConfigSchema,
     drift: DriftConfigSchema,
+    docs: DocsConfigSchema,
     budgets: BudgetsSchema.default({}),
     thresholds: ThresholdsSchema.default({}),
     models: ModelsConfigSchema,

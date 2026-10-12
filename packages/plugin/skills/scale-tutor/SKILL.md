@@ -160,11 +160,15 @@ Three kinds of pointer, in this order of preference:
    Slugs stay English even when the junior reads in Korean. Prefer
    `design-decisions` / `decisions` for a rationale item, `how-it-works` for
    structure, `concepts` for a concept item.
-2. **Doc file link** — for a junior who prefers the source doc in their editor:
+2. **Doc file link** — for a junior who prefers the doc in their editor:
    `[<title> · <Section>](.scale/<province>/<folder>/README.md:<line>)` where
    `<line>` is the heading's line, found with
    `grep -n '^## <Section>' <path>`. Claude Code renders `[label](path:line)`
-   as a link that opens the file at that line.
+   as a link that opens the file at that line. **When the language is `ko` and
+   a committed rendering `README.ko.md` exists in that folder, link to it
+   instead** (its headings are Korean — grep the Korean heading, or take the
+   k-th `^## ` line, since translation preserves heading order). Your own
+   grounding still comes from the English README.
 3. **Code link** — one function or block from the doc's `sources`, found with
    `grep -n` in that file, as `[<file>:<line>](<relative/path>:<line>)`. Only
    when the point is about the code itself (a structure item, or a diff-grounded

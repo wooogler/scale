@@ -560,6 +560,10 @@ body {
   padding: 1px 8px;
   color: var(--explored);
 }
+.translate-badge-committed {
+  border-style: solid;
+  border-color: var(--explored);
+}
 .translate-cached {
   color: var(--text-dim);
   font-size: 10px;

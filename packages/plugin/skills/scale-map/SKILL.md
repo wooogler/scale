@@ -221,7 +221,7 @@ in `scale estimate`), so the user must see the cost and pick the build model fir
    the model you just named, do they want to run the (paid) build now?
 5. **Do not begin Survey (or any repo analysis / doc writing) until the user
    explicitly confirms.** If they decline, stop cleanly. This gate is mandatory
-   on every fresh build; only **Sync mode** (§5, updating an existing `.scale/`)
+   on every fresh build; only **Sync mode** (§6, updating an existing `.scale/`)
    skips it, since sync touches only drifted docs, not a full build.
 
 ### 1. Survey  →  propose, get approval
@@ -308,10 +308,14 @@ finishing.
 Docs are **always written in English**, regardless of the per-user
 `config.language` setting: the coverage memory is repo-shared state, while
 `language` is a per-user *interaction* preference (it changes what the tutor and
-the web UI say to the junior, not what the memory contains), and per-user
-translation now happens at render time — the viewer panel and `/scale-study` show
-a cached translation from `~/.scale/<repo-id>/translations/`, so the shared memory
-stays English. A Korean-language session must not drift into Korean docs.
+the web UI say to the junior, not what the memory contains). A Korean-language
+session must not drift into Korean docs. Korean READERS are served two ways,
+both from the English source: a per-user render-time translation cached under
+`~/.scale/<repo-id>/translations/`, and — when the team policy declares
+`docs.languages` (e.g. `["ko"]`) — a **committed rendering** `README.ko.md`
+beside each English README, produced by step 5 below so that readers need no
+API key and no first-read wait. Never hand-write a `README.<lang>.md`; it is
+generated from the English file and carries that file's sha.
 
 Also write the province READMEs (orienting the province, linking its components)
 and the root `.scale/README.md` (orienting the whole realm, linking provinces).
@@ -364,7 +368,25 @@ scale map index      # file→component reverse index (index.json, gitignored)
 Commit `.scale/` (docs + `map.json`). `index.json` is gitignored and rebuilt on
 demand.
 
-### 5. Sync mode  →  update after code changes (later runs)
+### 5. Translate  →  committed renderings, when the policy asks for them
+
+After Layout and a clean `scale map check`, run `scale policy show` (or read
+`.scale/policy.json`): if `docs.languages` lists any language, run
+
+```
+scale doc translate --lang <lang> --all
+```
+
+once per listed language. It writes `README.<lang>.md` next to every English
+README whose rendering is missing or stale (the file records the English
+source's sha), skips the ones already current, and needs an API key for the
+intervention model — yours, once, so that no reader needs one. Then re-run
+`scale map check`: with `docs.languages` set it fails on any missing or stale
+rendering, so the build is not done until it passes. Commit the `README.<lang>.md`
+files with the rest of `.scale/`. If the policy lists no languages, skip this
+step entirely.
+
+### 6. Sync mode  →  update after code changes (later runs)
 
 When invoked after the code has changed, do **not** rebuild from scratch. Instead:
 
@@ -383,6 +405,9 @@ When invoked after the code has changed, do **not** rebuild from scratch. Instea
 4. Re-verify no dead links.
 
 ---
+
+In sync mode, every English doc you rewrite makes its committed renderings
+stale; finish a sync the same way as a build — step 5, then `scale map check`.
 
 ## Quality bar (self-check before you finish)
 

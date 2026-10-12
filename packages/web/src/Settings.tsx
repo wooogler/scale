@@ -640,6 +640,7 @@ function TeamPanel({ onPolicyChanged }: { onPolicyChanged: () => void }): JSX.El
     unlock: raw.unlock,
     exempt: raw.exempt,
     drift: raw.drift,
+    docs: raw.docs,
     budgets: raw.budgets,
     thresholds: raw.thresholds,
   });
@@ -908,6 +909,20 @@ function TeamPanel({ onPolicyChanged }: { onPolicyChanged: () => void }): JSX.El
             { min: 0 },
           )}
         </div>
+
+        {/* `docs.languages` is a list, but SCALE renders into exactly one
+            language today (English is the source), so the row is a single
+            commit / per-reader toggle for Korean. */}
+        {choice<'on' | 'off'>(
+          'docs.languages',
+          S.set.committedDocs,
+          [
+            { value: 'on', label: S.set.committedDocsOn, hint: S.set.committedDocsOnHint },
+            { value: 'off', label: S.set.committedDocsOff, hint: S.set.committedDocsOffHint },
+          ],
+          (v) => ({ docs: { languages: v === 'on' ? ['ko'] : [] } }),
+          (stored) => (Array.isArray(stored) && stored.includes('ko') ? 'on' : 'off'),
+        )}
       </section>
 
       <p className="set-where">

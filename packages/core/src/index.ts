@@ -22,6 +22,8 @@ export * from './index-map.js';
 
 // Coverage-memory (.scale/) loader.
 export * from './doc-loader.js';
+// The committed `README.<lang>.md` rendering format (pure text in/out).
+export * from './doc-translation.js';
 export * from './grounding.js';
 
 // Deterministic frozen map layout.

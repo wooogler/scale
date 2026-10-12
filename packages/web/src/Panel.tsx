@@ -303,9 +303,17 @@ export function Panel({
             <div className="translate-bar">
               {translating && <span className="translate-status">{S.translating}</span>}
               {showingTranslation && (
-                <span className="translate-badge">
-                  {S.translatedBadge}
-                  {translated.cached && (
+                // Committed vs cached is a TRUST distinction, not a speed one:
+                // a committed rendering went through the team's review and every
+                // reader sees the same text; a cached one was made for this
+                // reader alone. An older server sends no `source`, so `cached`
+                // still marks the latter.
+                <span
+                  className={`translate-badge${translated.source === 'committed' ? ' translate-badge-committed' : ''}`}
+                  title={translated.source === 'committed' ? S.committedBadgeTip : undefined}
+                >
+                  {translated.source === 'committed' ? S.committedBadge : S.translatedBadge}
+                  {translated.source !== 'committed' && translated.cached && (
                     <span className="translate-cached">{S.cachedBadge}</span>
                   )}
                 </span>

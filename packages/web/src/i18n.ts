@@ -97,6 +97,10 @@ export interface Strings {
   translating: string;
   /** Badge on a doc rendered from the translation rather than the source. */
   translatedBadge: string;
+  /** Badge when the translation is the repo's committed README.<lang>.md. */
+  committedBadge: string;
+  /** Hover text on the committed badge — what "committed" means. */
+  committedBadgeTip: string;
   /** Subtle note beside the badge when the translation came from the cache. */
   cachedBadge: string;
   /** Toggle: currently showing the translation → go back to the English source. */
@@ -256,6 +260,12 @@ export interface Strings {
     removeLead: (email: string) => string; // aria-label
     lastLeadWarning: string;
     defaultsHeading: string;
+    /** Team row: does the repo commit Korean renderings of its docs (`docs.languages`)? */
+    committedDocs: string;
+    committedDocsOn: string;
+    committedDocsOnHint: string;
+    committedDocsOff: string;
+    committedDocsOffHint: string;
     /** Chip on a row the policy does not set. */
     notSetChip: string;
     /** Clears one policy leaf. */
@@ -363,6 +373,9 @@ export const STRINGS: Record<Language, Strings> = {
     noDoc: 'No doc found for this component.',
     translating: 'Translating…',
     translatedBadge: 'Translated',
+    committedBadge: 'Translated · committed',
+    committedBadgeTip:
+      'The team\u2019s reviewed translation, committed beside the English doc. Every reader sees this same text.',
     cachedBadge: 'cached',
     showOriginal: 'Show original',
     showTranslation: 'Show translation',
@@ -405,7 +418,7 @@ export const STRINGS: Record<Language, Strings> = {
       loadingSettings: 'Loading settings…',
       language: 'Language',
       languageNote:
-        'Applies to everything SCALE says to you. Component docs stay English in the repo (shared state); when your language is not English the panel shows a per-user translation of the doc it renders.',
+        'Applies to everything SCALE says to you. Component docs stay English in the repo (shared state); when your language is not English the panel shows the team\u2019s committed translation if the repo has one, else a per-user translation of the doc it renders.',
       apiKeysHeading: 'API keys',
       keysNotePre: 'Used for the Socratic tutor and LLM-written quests. Stored in',
       keysNotePost:
@@ -502,6 +515,13 @@ export const STRINGS: Record<Language, Strings> = {
       removeLead: (email: string) => `Remove ${email} from leads`,
       lastLeadWarning: 'No leads are listed any more - anyone can now edit the team policy.',
       defaultsHeading: 'Team defaults',
+      committedDocs: 'Committed Korean docs',
+      committedDocsOn: 'Commit',
+      committedDocsOnHint:
+        'The repo ships README.ko.md beside each doc, so Korean readers need no API key. `scale map check` fails until every one is current - render them with `scale doc translate --lang ko --all`.',
+      committedDocsOff: 'Per reader',
+      committedDocsOffHint:
+        'Nothing is committed; each Korean reader translates on first read with their own key.',
       notSetChip: 'not set (schema default)',
       removeLeaf: '\u21ba remove',
       readOnlyNote:
@@ -515,7 +535,7 @@ export const STRINGS: Record<Language, Strings> = {
       tipShow: 'What does this do?',
       tipHide: 'Hide explanation',
       tipLanguage:
-        'Switches everything SCALE says to you: this screen, quiz items, and the tutor\u2019s messages in chat.\nCode identifiers, file paths and established dev terms stay English either way.\nComponent docs under .scale/ stay English on disk - a Korean reading is translated on the way to your screen, never written back.',
+        'Switches everything SCALE says to you: this screen, quiz items, and the tutor\u2019s messages in chat.\nCode identifiers, file paths and established dev terms stay English either way.\nComponent docs under .scale/ stay English on disk - a Korean reading comes from the team\u2019s committed README.ko.md when there is a current one, else it is translated on the way to your screen, never written back.',
       tipKeys:
         'Used for two things: the Socratic tutor\u2019s replies, and quiz items written by the model.\nQuizzes still work with no key - SCALE falls back to items generated offline from your component docs, and you can see one on the Checks tab.\nThe model that BUILDS the coverage memory is not set here: /scale-map runs inside your Claude Code session and uses whatever model that session is on.',
       tipModel:
@@ -625,6 +645,9 @@ export const STRINGS: Record<Language, Strings> = {
     noDoc: '이 컴포넌트의 문서를 찾을 수 없습니다.',
     translating: '번역 중…',
     translatedBadge: '번역됨',
+    committedBadge: '번역됨 · 저장소',
+    committedBadgeTip:
+      '팀이 검토해 영어 문서 옆에 커밋한 번역입니다. 모든 독자가 같은 텍스트를 봅니다.',
     cachedBadge: '캐시',
     showOriginal: '원문 보기',
     showTranslation: '번역 보기',
@@ -666,7 +689,7 @@ export const STRINGS: Record<Language, Strings> = {
       loadingSettings: '설정을 불러오는 중…',
       language: '언어',
       languageNote:
-        'SCALE이 당신에게 말하는 모든 문구에 적용됩니다. 컴포넌트 문서는 저장소에서 영어 원문으로 유지되며(공유 상태), 언어가 영어가 아닐 때 패널에서 사용자별 번역을 보여 줍니다.',
+        'SCALE이 당신에게 말하는 모든 문구에 적용됩니다. 컴포넌트 문서는 저장소에서 영어 원문으로 유지되며(공유 상태), 언어가 영어가 아닐 때 패널은 저장소에 커밋된 팀 번역이 있으면 그것을, 없으면 사용자별 번역을 보여 줍니다.',
       apiKeysHeading: 'API 키',
       keysNotePre: 'Socratic 문답과 LLM 작성 퀴즈에 사용됩니다. 이 컴퓨터의',
       keysNotePost:
@@ -763,6 +786,13 @@ export const STRINGS: Record<Language, Strings> = {
       removeLead: (email: string) => `리드에서 ${email} 제거`,
       lastLeadWarning: '이제 리드가 아무도 없습니다 — 누구나 팀 정책을 수정할 수 있습니다.',
       defaultsHeading: '팀 기본값',
+      committedDocs: '한국어 문서 커밋',
+      committedDocsOn: '커밋',
+      committedDocsOnHint:
+        '저장소가 각 문서 옆에 README.ko.md를 함께 배포하므로 한국어 독자는 API key 없이 읽습니다. 모든 파일이 최신이 될 때까지 `scale map check`가 실패합니다 — `scale doc translate --lang ko --all`로 만드세요.',
+      committedDocsOff: '독자별',
+      committedDocsOffHint:
+        '아무것도 커밋하지 않습니다. 한국어 독자는 처음 읽을 때 자신의 key로 번역합니다.',
       notSetChip: '미설정 (스키마 기본값)',
       removeLeaf: '↺ 해제',
       readOnlyNote:
@@ -776,7 +806,7 @@ export const STRINGS: Record<Language, Strings> = {
       tipShow: '어떤 설정인가요?',
       tipHide: '설명 접기',
       tipLanguage:
-        'SCALE이 나에게 말하는 모든 것의 언어를 바꿉니다: 이 화면, 퀴즈 문항, 채팅에서 튜터가 보내는 메시지까지.\ncode identifier, 파일 경로, 굳어진 기술 용어는 어느 쪽이든 영어로 남습니다.\n.scale/ 아래 컴포넌트 문서는 디스크에서 계속 영어입니다 — 한국어로 보는 것은 화면으로 오는 길에 번역된 결과일 뿐, 파일에 쓰이지 않습니다.',
+        'SCALE이 나에게 말하는 모든 것의 언어를 바꿉니다: 이 화면, 퀴즈 문항, 채팅에서 튜터가 보내는 메시지까지.\ncode identifier, 파일 경로, 굳어진 기술 용어는 어느 쪽이든 영어로 남습니다.\n.scale/ 아래 컴포넌트 문서는 디스크에서 계속 영어입니다 — 한국어로 보는 것은 최신 README.ko.md가 커밋되어 있으면 그 팀 번역이고, 없으면 화면으로 오는 길에 번역된 결과일 뿐 파일에 쓰이지 않습니다.',
       tipKeys:
         '두 곳에 쓰입니다: Socratic 튜터의 답변, 그리고 모델이 작성하는 퀴즈 문항.\n키가 없어도 퀴즈는 동작합니다 — 컴포넌트 문서에서 오프라인으로 만든 문항으로 대체되며, "이해도 확인" 탭에서 샘플을 볼 수 있습니다.\n커버리지 메모리를 "빌드하는" 모델은 여기서 정하지 않습니다: /scale-map은 Claude Code 세션 안에서 실행되어 그 세션의 모델을 그대로 씁니다.',
       tipModel:

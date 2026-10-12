@@ -7,6 +7,7 @@ import {
   UnlockConfigSchema,
   ExemptConfigSchema,
   DriftConfigSchema,
+  DocsConfigSchema,
   BudgetsSchema,
   ThresholdsSchema,
   type ScaleConfig,
@@ -52,6 +53,10 @@ export const POLICY_SECTIONS = [
   'unlock',
   'exempt',
   'drift',
+  // Which languages the repo commits doc renderings in. A team fact by nature —
+  // the files are in the repo — so it is defaulted here like everything else; a
+  // member who overrides it only changes what THEIR `map check` holds them to.
+  'docs',
   'budgets',
   'thresholds',
 ] as const;
@@ -98,6 +103,7 @@ export const PolicyFileSchema = z
     unlock: UnlockConfigSchema.optional(),
     exempt: ExemptConfigSchema.optional(),
     drift: DriftConfigSchema.optional(),
+    docs: DocsConfigSchema.optional(),
     budgets: BudgetsSchema.optional(),
     thresholds: ThresholdsSchema.optional(),
   })

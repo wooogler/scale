@@ -79,7 +79,13 @@ import {
   DEFAULT_DIFF_MAX_BYTES,
 } from './review.js';
 import { loadDependsOnEdges, DEPS_MIN_COUNT } from './deps.js';
-import { translateDoc } from './translate.js';
+import {
+  committedTranslationGaps,
+  isTargetLang,
+  renderCommittedTranslations,
+  provenanceLine,
+  translateDoc,
+} from './translate.js';
 import {
   loadFileComponentIndex,
   recomputeCoverageFromDisk,
@@ -2342,15 +2348,23 @@ quest
 
 // ---------------------------------------------------------------------------
 // doc show  (REAL) — read a component doc, optionally translated (🧠 LLM)
+// doc translate (REAL) — render committed README.<lang>.md files (🧠 LLM)
 // ---------------------------------------------------------------------------
-const doc = program.command('doc').description('Read the component docs in `.scale/`');
+const doc = program
+  .command('doc')
+  .description(
+    'Read the component docs in `.scale/` (`doc show`), and render the committed ' +
+      'translations a team ships beside them (`doc translate`)',
+  );
+
 
 doc
   .command('show')
   .description(
-    'Print a component doc. With --lang ko it is translated at RENDER TIME and ' +
-      'cached per user — the committed doc itself always stays English (🧠 LLM ' +
-      'on a cache miss; no key just means you get the English source).',
+    'Print a component doc. With --lang ko it reads the committed README.ko.md ' +
+      'when one matches the current English doc, else your per-user cache, else ' +
+      'translates at RENDER TIME — the English doc itself is never rewritten (🧠 LLM ' +
+      'only on a miss; no key just means you get the English source).',
   )
   .argument('<id>', 'component id (the frontmatter `id`, not the folder name)')
   .option(
@@ -2358,7 +2372,11 @@ doc
     "render language: 'en' or 'ko'. Defaults to your effective config.language",
   )
   .option('--json', 'emit the whole TranslationResult as JSON', false)
-  .option('--refresh', 'ignore any cached translation and translate again', false)
+  .option(
+    '--refresh',
+    'ignore the committed rendering and any cached translation, and translate again',
+    false,
+  )
   .action(async (id: string, opts: { lang?: string; json?: boolean; refresh?: boolean }) => {
     const cwd = process.cwd();
     const dir = stateDir(cwd);
@@ -2391,21 +2409,102 @@ doc
       return;
     }
 
+    // Which text this is, BEFORE the doc — see `provenanceLine`.
+    console.log(provenanceLine(result, lang));
     console.log(result.frontmatter.title);
-    // One line that says, always, which text the reader is looking at. A
-    // silent fallback to English is the failure mode worth spending a line on:
-    // the reader asked for Korean, and a doc that merely "looks untranslated"
-    // is indistinguishable from one whose translation quietly failed.
-    console.log(
-      result.translated
-        ? `(translated · ${result.cached ? 'cached' : 'fresh'} · ${result.model})`
-        : result.error
-          ? `(English source — ${result.error.message})`
-          : '(English source)',
-    );
     console.log('');
     console.log(result.body);
   });
+
+doc
+  .command('translate')
+  .description(
+    'Render committed translations: write .scale/<province>/<folder>/README.<lang>.md ' +
+      'beside each English doc, stamped with the sha of the English bytes it renders. ' +
+      'A file that already matches the current English doc is left alone (no API call); ' +
+      'the translation reuses your per-user cache when it can (🧠 LLM otherwise). ' +
+      'Commit the files — every reader with that language then gets them with no key.',
+  )
+  .argument('[ids...]', 'component ids to render (the frontmatter `id`)')
+  .requiredOption('--lang <lang>', "language to render into (currently 'ko')")
+  .option('--all', 'render every component doc', false)
+  .option('--refresh', 're-render even up-to-date files, bypassing your cache too', false)
+  .option('--json', 'emit { lang, written, upToDate, failed } instead of lines', false)
+  .action(
+    async (
+      ids: string[],
+      opts: { lang: string; all?: boolean; refresh?: boolean; json?: boolean },
+    ) => {
+      const cwd = process.cwd();
+      const dir = stateDir(cwd);
+      const config = loadEffectiveConfig(cwd, dir).config;
+      const usage = (msg: string): void => {
+        if (opts.json) console.log(JSON.stringify({ ok: false, error: msg }, null, 2));
+        else console.error(`scale: ${msg}`);
+        process.exitCode = 1;
+      };
+
+      const lang = opts.lang;
+      if (lang === 'en') {
+        usage("--lang en: English is the source, not a rendering — pick a target language (e.g. 'ko').");
+        return;
+      }
+      if (lang !== 'ko' || !isTargetLang(lang)) {
+        usage(`unsupported --lang "${lang}" (SCALE renders docs into: ko).`);
+        return;
+      }
+      if (!opts.all && ids.length === 0) {
+        usage('name the component ids to render, or pass --all.');
+        return;
+      }
+
+      const loaded = loadScaleDir(cwd);
+      if (loaded.docs.length === 0) {
+        usage(`no component docs in ${path.join(cwd, '.scale')} — nothing to translate.`);
+        return;
+      }
+
+      // Unknown ids are reported as failures in the same list rather than
+      // aborting the run: one typo should not cost the other docs their turn.
+      const unknown: { id: string; error: string }[] = [];
+      const targets = opts.all
+        ? loaded.docs
+        : ids.flatMap((id) => {
+            const found = loaded.docs.find((d) => d.id === id);
+            if (!found) unknown.push({ id, error: `no component doc with id "${id}"` });
+            return found ? [found] : [];
+          });
+
+      const line = (id: string, status: string): void => {
+        if (!opts.json) console.log(`  ${id}  ${status}`);
+      };
+      for (const u of unknown) line(u.id, `failed: ${u.error}`);
+
+      const report = await renderCommittedTranslations({
+        docs: targets,
+        lang,
+        config,
+        dir,
+        refresh: !!opts.refresh,
+        onOutcome: (o) =>
+          line(o.id, o.status === 'failed' ? `failed: ${o.error}` : o.status),
+      });
+      report.failed.unshift(...unknown);
+
+      if (opts.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(
+          `scale: ${lang} — ${report.written.length} written, ` +
+            `${report.upToDate.length} up-to-date, ${report.failed.length} failed` +
+            (report.written.length > 0
+              ? ` (commit the README.${lang}.md files under .scale/)`
+              : ''),
+        );
+      }
+      if (report.failed.length > 0) process.exitCode = 1;
+    },
+  );
 
 // ---------------------------------------------------------------------------
 // map layout|drift|index  (STUB; `index` builds file→component from .scale/)
@@ -2522,8 +2621,9 @@ map
   .command('check')
   .description(
     'Hold a built .scale/ to the sizing contract: partition size against ' +
-      '`scale estimate`, components per source file, and children per group. ' +
-      'Pure fs scan + arithmetic — no LLM, no git.',
+      '`scale estimate`, components per source file, and children per group — ' +
+      'and, when `docs.languages` is set, that every component has a current ' +
+      'committed README.<lang>.md. Pure fs scan + arithmetic — no LLM, no git.',
   )
   .option('--json', 'emit machine-readable JSON instead of the report', false)
   .action((opts: { json?: boolean }) => {
@@ -2609,6 +2709,44 @@ map
       target,
     ));
 
+    // Committed renderings — only when the repo has PROMISED them
+    // (`docs.languages`, normally set in the team policy). A failure, not a
+    // warning: a listed language means readers are told they will get that
+    // text with no key, and a missing or stale file silently breaks that. A
+    // stale file is never served (the reader falls back to their cache, the
+    // model, or English), so it is as broken as a missing one — but it is
+    // named apart, because "re-render" and "never rendered" read differently in
+    // a PR. `en` is the source and is never a rendering.
+    const docLangs = [
+      ...new Set(loadEffectiveConfig(cwd, stateDir(cwd)).config.docs.languages),
+    ].filter((l) => l !== 'en');
+    const translations: Record<string, { missing: string[]; stale: string[] }> = {};
+    for (const lang of docLangs) {
+      const gaps = committedTranslationGaps(loaded.docs, lang);
+      translations[lang] = gaps;
+      const hint = `run: scale doc translate --lang ${lang} --all`;
+      const sample = (ids: string[]): string =>
+        ids.slice(0, 3).join(', ') + (ids.length > 3 ? ', …' : '');
+      if (gaps.missing.length > 0) {
+        findings.push({
+          level: 'fail',
+          code: 'translation-missing',
+          message:
+            `${gaps.missing.length} of ${built} component(s) have no README.${lang}.md ` +
+            `(${sample(gaps.missing)}) — ${hint}`,
+        });
+      }
+      if (gaps.stale.length > 0) {
+        findings.push({
+          level: 'fail',
+          code: 'translation-stale',
+          message:
+            `${gaps.stale.length} of ${built} component(s) have a stale README.${lang}.md — ` +
+            `the English doc changed since it was rendered (${sample(gaps.stale)}) — ${hint}`,
+        });
+      }
+    }
+
     if (opts.json) {
       console.log(
         JSON.stringify(
@@ -2623,6 +2761,7 @@ map
             groups,
             worst,
             findings,
+            ...(docLangs.length > 0 ? { translations } : {}),
           },
           null,
           2,
@@ -2648,6 +2787,15 @@ map
       `  shape            ${target.depth} grouping level(s), ${target.topGroups} at the top` +
         (target.needsHierarchy ? ' — needs more than a flat province layer' : ''),
     );
+    for (const lang of docLangs) {
+      const g = translations[lang]!;
+      const current = built - g.missing.length - g.stale.length;
+      out.push(
+        `  ${`README.${lang}.md`.padEnd(17)}${current}/${built} current` +
+          (g.missing.length > 0 ? `, ${g.missing.length} missing` : '') +
+          (g.stale.length > 0 ? `, ${g.stale.length} stale` : ''),
+      );
+    }
     if (worst.length > 0 && worst[0]!.n > 1) {
       out.push('');
       out.push('  files claimed by more than one component:');

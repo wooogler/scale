@@ -60,8 +60,14 @@ export interface DocTranslationResponse {
   id: string;
   lang: string;
   translated: boolean;
-  /** Present on a successful translation: served from the on-disk cache. */
+  /** Present on a successful translation: no API call was made for this read. */
   cached?: boolean;
+  /**
+   * Present on a successful translation: where it came from, in lookup order —
+   * the repo's committed `README.<lang>.md` (reviewed, shared by every reader),
+   * this reader's per-user cache, or a fresh model call.
+   */
+  source?: 'committed' | 'cache' | 'llm';
   /** Present on a successful translation: the model that wrote it. */
   model?: string;
   error?: {
@@ -401,6 +407,7 @@ export interface SettingsPatch {
   unlock?: Partial<ScaleConfig['unlock']>;
   exempt?: Partial<ScaleConfig['exempt']>;
   drift?: Partial<ScaleConfig['drift']>;
+  docs?: Partial<ScaleConfig['docs']>;
   budgets?: Partial<ScaleConfig['budgets']>;
   thresholds?: Partial<ScaleConfig['thresholds']>;
   models?: Partial<ScaleConfig['models']>;
@@ -522,6 +529,7 @@ export interface PolicyRaw {
   unlock?: Partial<ScaleConfig['unlock']>;
   exempt?: Partial<ScaleConfig['exempt']>;
   drift?: Partial<ScaleConfig['drift']>;
+  docs?: Partial<ScaleConfig['docs']>;
   budgets?: Partial<ScaleConfig['budgets']>;
   thresholds?: Partial<ScaleConfig['thresholds']>;
 }

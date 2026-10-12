@@ -13,6 +13,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
+
+import { renderCommittedTranslation } from '@scale/core';
 
 const CLI = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -23,12 +26,16 @@ const CLI = path.resolve(
 );
 
 let repo: string;
+let home: string;
 
 /** Run the command; never throws, so a non-zero exit is data rather than a failure. */
 function check(json = true): { code: number; out: string } {
   try {
     const out = execFileSync('node', [CLI, 'map', 'check', ...(json ? ['--json'] : [])], {
       cwd: repo,
+      // An empty HOME, so the effective config is the schema defaults plus the
+      // repo's own policy — never whatever the person running the suite set.
+      env: { ...process.env, HOME: home, SCALE_STATE_DIR: '' },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -81,9 +88,11 @@ function source(rel: string, lines: number): void {
 
 beforeEach(() => {
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'scale-mapcheck-'));
+  home = fs.mkdtempSync(path.join(os.tmpdir(), 'scale-mapcheck-home-'));
 });
 afterEach(() => {
   fs.rmSync(repo, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
 });
 
 describe('exit code is the contract', () => {
@@ -168,5 +177,102 @@ describe('--json answers on every path', () => {
     const human = check(false).out;
     expect(human).toContain(`${j.built} components`);
     for (const f of j.findings) expect(human).toContain(f.message.slice(0, 40));
+  });
+});
+
+describe('committed translations (docs.languages)', () => {
+  /** A rendering of the doc's English bytes — or of `sha`, to fake a stale one. */
+  function render(prov: string, id: string, sha?: string): void {
+    const d = path.join(repo, '.scale', prov, id);
+    const english = fs.readFileSync(path.join(d, 'README.md'));
+    fs.writeFileSync(
+      path.join(d, 'README.ko.md'),
+      renderCommittedTranslation({
+        meta: {
+          lang: 'ko',
+          sourceLang: 'en',
+          sourceSha: sha ?? crypto.createHash('sha256').update(english).digest('hex'),
+          model: 'm',
+          translatedAt: '2026-10-11T00:00:00.000Z',
+        },
+        frontmatter: {
+          id,
+          title: `${id} (ko)`,
+          sources: [`src/${id}.ts`],
+          concepts: [{ id: `${id}-c`, name: '개념' }],
+          rationale: [{ decision: '결정', why: '이유', provenance: 'inferred' }],
+        },
+        body: '\n본문.\n',
+      }),
+    );
+  }
+
+  function healthyRepo(): void {
+    for (let i = 0; i < 6; i++) {
+      source(`src/m${i}.ts`, 280);
+      doc('core', `m${i}`, [`src/m${i}.ts`]);
+    }
+  }
+
+  function policy(languages: string[]): void {
+    fs.writeFileSync(
+      path.join(repo, '.scale', 'policy.json'),
+      JSON.stringify({ docs: { languages } }, null, 2),
+    );
+  }
+
+  it('says nothing about translations when docs.languages is empty', () => {
+    healthyRepo();
+    render('core', 'm0', 'f'.repeat(64)); // a stale file nobody promised
+    const r = check();
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out)).not.toHaveProperty('translations');
+    expect(check(false).out).not.toContain('README.ko.md');
+  });
+
+  it('fails on missing and stale renderings, and names them', () => {
+    healthyRepo();
+    policy(['ko']);
+    for (let i = 0; i < 4; i++) render('core', `m${i}`);
+    render('core', 'm4', 'f'.repeat(64)); // renders an older English doc
+    // m5: never rendered
+
+    const r = check();
+    expect(r.code).toBe(1);
+    const j = JSON.parse(r.out) as {
+      translations: Record<string, { missing: string[]; stale: string[] }>;
+      findings: { level: string; code: string; message: string }[];
+    };
+    expect(j.translations).toEqual({ ko: { missing: ['m5'], stale: ['m4'] } });
+    expect(codes()).toEqual(['fail:translation-missing', 'fail:translation-stale']);
+    for (const f of j.findings) {
+      expect(f.message).toContain('run: scale doc translate --lang ko --all');
+    }
+
+    const human = check(false).out;
+    expect(human).toContain('README.ko.md     4/6 current, 1 missing, 1 stale');
+    expect(human).toContain('FAIL');
+  });
+
+  it('passes once every rendering is current — and an English edit makes it stale again', () => {
+    healthyRepo();
+    policy(['ko', 'en']); // `en` is the source, never a rendering — ignored
+    for (let i = 0; i < 6; i++) render('core', `m${i}`);
+    const ok = check();
+    expect(ok.code).toBe(0);
+    expect(JSON.parse(ok.out).translations).toEqual({ ko: { missing: [], stale: [] } });
+
+    fs.appendFileSync(path.join(repo, '.scale', 'core', 'm2', 'README.md'), '\nOne more line.\n');
+    const after = check();
+    expect(after.code).toBe(1);
+    expect(JSON.parse(after.out).translations).toEqual({ ko: { missing: [], stale: ['m2'] } });
+  });
+
+  it('the renderings do not change the partition itself', () => {
+    healthyRepo();
+    const before = JSON.parse(check().out) as Record<string, unknown>;
+    for (let i = 0; i < 6; i++) render('core', `m${i}`);
+    const after = JSON.parse(check().out) as Record<string, unknown>;
+    expect(after).toEqual(before);
   });
 });

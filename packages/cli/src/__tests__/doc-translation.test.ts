@@ -18,6 +18,9 @@ import os from 'node:os';
 import path from 'node:path';
 import type http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import crypto from 'node:crypto';
+
+import { renderCommittedTranslation } from '@scale/core';
 
 import { startServer } from '../serve.js';
 
@@ -207,5 +210,87 @@ describe('POST /api/doc/:id/translation', () => {
     expect(body.frontmatter.id).toBe('alpha');
     expect(body.body).toContain('The English body.');
     expect((await fetch(`${base}/api/doc/nope`)).status).toBe(404);
+  });
+});
+
+describe('POST /api/doc/:id/translation — a committed README.ko.md', () => {
+  const KEY_VARS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
+  const saved: Record<string, string | undefined> = {};
+  const docDir = (): string => path.join(repo, '.scale', 'prov', 'alpha');
+
+  function commit(sha?: string): void {
+    const english = fs.readFileSync(path.join(docDir(), 'README.md'));
+    fs.writeFileSync(
+      path.join(docDir(), 'README.ko.md'),
+      renderCommittedTranslation({
+        meta: {
+          lang: 'ko',
+          sourceLang: 'en',
+          sourceSha: sha ?? crypto.createHash('sha256').update(english).digest('hex'),
+          model: 'committed-model',
+          translatedAt: '2026-10-11T00:00:00.000Z',
+        },
+        frontmatter: {
+          id: 'alpha',
+          title: '알파',
+          sources: ['src/alpha.ts'],
+          concepts: [{ id: 'first-concept', name: '첫 번째 아이디어' }],
+          rationale: [{ decision: '이렇게 한다', provenance: 'inferred' }],
+        },
+        body: '\n# 알파\n\n한국어 본문.\n',
+      }),
+    );
+  }
+
+  beforeAll(() => {
+    // "No API key configured" for real: HOME is already empty, and the env
+    // fallbacks are cleared for the duration.
+    for (const k of KEY_VARS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterAll(() => {
+    for (const k of KEY_VARS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    fs.rmSync(path.join(docDir(), 'README.ko.md'), { force: true });
+  });
+
+  it('is served with no key — `missing-key` never fires while a current rendering exists', async () => {
+    commit();
+    const base = await listen();
+    const res = await post(base, 'alpha', { lang: 'ko' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown> & {
+      frontmatter: { title: string; sources: string[] };
+      body: string;
+    };
+    expect(body).toMatchObject({
+      id: 'alpha',
+      lang: 'ko',
+      translated: true,
+      cached: true,
+      source: 'committed',
+      model: 'committed-model',
+    });
+    expect(body.error).toBeUndefined();
+    expect(body.frontmatter.title).toBe('알파');
+    expect(body.frontmatter.sources).toEqual(['src/alpha.ts']);
+    expect(body.body).toContain('한국어 본문.');
+  });
+
+  it('a STALE rendering is not served: with no key the reader gets English and the reason', async () => {
+    commit('f'.repeat(64));
+    const base = await listen();
+    const body = (await (await post(base, 'alpha', { lang: 'ko' })).json()) as {
+      translated: boolean;
+      error?: { code: string };
+      frontmatter: { title: string };
+    };
+    expect(body.translated).toBe(false);
+    expect(body.error?.code).toBe('missing-key');
+    expect(body.frontmatter.title).toBe('Alpha');
   });
 });

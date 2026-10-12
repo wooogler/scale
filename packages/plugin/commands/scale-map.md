@@ -14,7 +14,9 @@ Use the **scale-map** skill now.
   the cost gate) → **Survey** (propose that many components, grouped into
   provinces, for approval) → **Write** (subagent fan-out, one province each) →
   **Link** (Related components, no dead links) → **Layout** (`scale map layout` to
-  freeze `map.json`) → **Check** (`scale map check` must exit zero).
+  freeze `map.json`) → **Check** (`scale map check` must exit zero) →
+  **Translate** (only when `.scale/policy.json` sets `docs.languages`: `scale doc
+  translate --lang <lang> --all`, then `scale map check` again).
 - If `.scale/` already exists → run **sync mode**: `scale map drift` to find
   components whose sources changed, update those component docs progressively
   up/down the tree, place any new components incrementally, re-verify links.

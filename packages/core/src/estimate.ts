@@ -469,7 +469,14 @@ export interface PartitionFinding {
     | 'undersized-group'
     | 'granularity-limited'
     /** Emitted by the CLI, which is the layer that can see the filesystem. */
-    | 'stale-anchor';
+    | 'stale-anchor'
+    /**
+     * Also CLI-emitted, and only when the effective `docs.languages` is
+     * non-empty: a component has no committed `README.<lang>.md`, or has one
+     * that renders an older English doc.
+     */
+    | 'translation-missing'
+    | 'translation-stale';
   message: string;
 }
 
